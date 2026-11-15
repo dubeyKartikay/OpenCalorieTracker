@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Calorie tracker capability landscape</title>
+  <style>
+    :root { color-scheme: light dark; font-family: var(--font-sans); color: var(--foreground); }
+    body { margin: 0; }
+    p { line-height: 1.5; }
+    .muted { color: var(--muted-foreground); font-size: 12px; }
+    .chart { background: var(--card); border-radius: var(--radius); padding: 16px; }
+    .row { display: grid; grid-template-columns: minmax(100px,1.2fr) repeat(3,minmax(55px,1fr)); gap: 8px; align-items: center; min-height: 54px; border-bottom: 1px solid var(--border); }
+    .row:last-child { border: 0; }
+    .head { font-size: 11px; color: var(--muted-foreground); line-height: 1.4; }
+    .app { font-weight: 600; font-size: 13px; }
+    .cell { font-size: 12px; line-height: 1.4; }
+    .yes { color: var(--success); }
+    .paid { color: var(--warning); }
+    .exp { color: var(--info); }
+    a { color: var(--primary); }
+    .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 14px; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <p><strong>AI capture and barcode scanning are already established.</strong></p>
+  <div class="chart" role="table" aria-label="Selected documented calorie tracker capabilities">
+    <div class="row head" role="row"><span role="columnheader">Selected apps</span><span role="columnheader">Photo meal AI</span><span role="columnheader">Barcode scanner</span><span role="columnheader">Voice meal entry</span></div>
+    <div class="row" role="row"><span class="app" role="rowheader">MyFitnessPal</span><span class="cell paid" role="cell">Paid</span><span class="cell paid" role="cell">Paid</span><span class="cell paid" role="cell">Paid</span></div>
+    <div class="row" role="row"><span class="app" role="rowheader">Cronometer</span><span class="cell yes" role="cell">Offered*</span><span class="cell yes" role="cell">Free</span><span class="cell yes" role="cell">Offered*</span></div>
+    <div class="row" role="row"><span class="app" role="rowheader">Foodnoms</span><span class="cell yes" role="cell">Offered*</span><span class="cell yes" role="cell">Offered*</span><span class="cell" role="cell">Not assessed</span></div>
+    <div class="row" role="row"><span class="app" role="rowheader">OpenNutriTracker</span><span class="cell exp" role="cell">Experimental†</span><span class="cell yes" role="cell">Free</span><span class="cell exp" role="cell">OS dictation†</span></div>
+    <div class="legend"><span class="yes">● Documented</span><span class="paid">● Documented paid tier</span><span class="exp">● Qualified capability</span></div>
+  </div>
+  <p class="muted">Qualitative capability matrix, not ratings, market share, or an accuracy benchmark. Checked 16 Nov 2026. “Not assessed” does not mean absent. *Offered: availability documented; tier/platform parity not asserted here. †Experimental AI requires a configured provider/server; dictation is platform speech recognition, not the same service as meal inference.</p>
+  <p class="muted">Sources: <a href="https://www.myfitnesspal.com/premium">MyFitnessPal</a> · <a href="https://cronometer.com/">Cronometer</a> · <a href="https://foodnoms.com/">Foodnoms</a> / <a href="https://foodnoms.com/help/barcode-scanning">scanner help</a> · <a href="https://github.com/simonoppowa/OpenNutriTracker">OpenNutriTracker</a></p>
+</body>
+</html>
