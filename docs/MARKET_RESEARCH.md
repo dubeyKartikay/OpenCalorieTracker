@@ -4,7 +4,7 @@ Research checked: 16 November 2026.
 
 Purpose: define product scope, not estimate total addressable market or claim clinical efficacy.
 
-Companion decision document: [PRODUCT_SCOPE.md](./PRODUCT_SCOPE.md).
+Companion decision document: [PRD_V1.md](./PRD_V1.md), which now includes the product scope.
 
 ## 1. Method and evidence quality
 
