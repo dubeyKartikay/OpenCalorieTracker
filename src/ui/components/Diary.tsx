@@ -1,8 +1,8 @@
 import { View, Text } from 'react-native';
 import type { GoalPeriod, NutrientAggregate } from '../../domain';
-import { useAction, useAppRuntime } from '../../app/AppRuntimeContext';
+import { useAction, useAppRuntime, usePreferences } from '../../app/AppRuntimeContext';
 import { colors, macroColors, spacing } from '../tokens';
-import { Button, Card, ErrorMessage, Label, Muted, number, ui } from './primitives';
+import { Button, Card, energy, energyValue, ErrorMessage, Label, Muted, number, ui } from './primitives';
 export function MacroRow({ totals, goal }: { totals: NutrientAggregate; goal?: GoalPeriod | null }) {
   return <View style={ui.wrap}>{([
     ['P', 'protein_g', macroColors.protein], ['C', 'carbs_g', macroColors.carbs], ['F', 'fat_g', macroColors.fat], ['Fiber', 'fiber_g', colors.muted],
@@ -12,12 +12,13 @@ export function MacroRow({ totals, goal }: { totals: NutrientAggregate; goal?: G
   </View>)}</View>;
 }
 export function Budget({ totals, goal }: { totals: NutrientAggregate; goal: GoalPeriod | null }) {
+  const unit = usePreferences().value?.energyUnit ?? 'kcal';
   const target = goal?.target_kcal;
   const consumed = totals.nutrients?.kcal;
   const remaining = target != null ? target - (consumed ?? 0) : consumed;
   return <Card><Muted>{target == null ? 'CONSUMED · OBSERVE' : 'REMAINING'}</Muted>
-    <Text style={[ui.number, { fontSize: 48, fontWeight: '800' }]}>{number(remaining)} <Text style={{ fontSize: 16 }}>kcal</Text></Text>
-    <Label style={ui.number}>{number(consumed)} logged{target != null ? ` / ${number(target)} target` : ''}</Label>
+    <Text style={[ui.number, { fontSize: 40, fontWeight: '800' }]}>{number(energyValue(remaining, unit))} <Text style={{ fontSize: 16 }}>{unit}</Text></Text>
+    <Label style={ui.number}>{energy(consumed, unit)} logged{target != null ? ` / ${energy(target, unit)} target` : ''}</Label>
     {target != null && <View accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: target, now: consumed ?? 0 }} style={{ height: 4, backgroundColor: colors.track }}>
       <View style={{ height: 4, width: `${Math.min(100, Math.max(0, (consumed ?? 0) / target * 100))}%`, backgroundColor: (consumed ?? 0) > target ? colors.danger : colors.accent }} />
     </View>}

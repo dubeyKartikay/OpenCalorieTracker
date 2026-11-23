@@ -2,10 +2,11 @@ import { router } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
 import { useState } from 'react';
 import { Switch, Text, View } from 'react-native';
-import { useAction, useAppRuntime, usePacksManager, useTodayDiary } from '../src/app/AppRuntimeContext';
-import { localDate } from '../src/app/controller';
-import type { GoalPeriod } from '../src/domain';
-import { Badge, Button, Card, ErrorMessage, Heading, Input, Label, Muted, Page, ui } from '../src/ui/components/primitives';
+import { useAction, useAppRuntime, usePacksManager, usePreferences, useTodayDiary } from '../src/app/AppRuntimeContext';
+import { localDate, type AppPreferences } from '../src/app/controller';
+import type { GoalPeriod, TargetEstimate } from '../src/domain';
+import { InlineKeypad } from '../src/ui/components/doop';
+import { Badge, Button, Card, energy, ErrorMessage, Heading, Input, Label, Muted, number, Page, ui } from '../src/ui/components/primitives';
 import { colors, MIN_TOUCH_TARGET } from '../src/ui/tokens';
 
 function FoodDatabases() {
@@ -45,35 +46,88 @@ function FoodDatabases() {
     <Button label="Import sample custom pack" disabled={action.busy} onPress={() => void action.run(() => runtime.importSampleCustomPack())} />
   </Card>;
 }
-function DailyTargets() {
+function DailyTargets({ goal, preferences }: { goal: GoalPeriod | null; preferences: AppPreferences }) {
   const { controller } = useAppRuntime();
-  const today = useTodayDiary();
-  const [mode, setMode] = useState<GoalPeriod['mode']>('observe');
-  const [fields, setFields] = useState({ target_kcal: '', protein_g: '', carbs_g: '', fat_g: '', fiber_g: '' });
-  const [initialized, setInitialized] = useState(false);
+  const [mode, setMode] = useState<GoalPeriod['mode']>(goal?.mode ?? 'observe');
+  const [fields, setFields] = useState({ target_kcal: goal?.target_kcal?.toString() ?? '', protein_g: goal?.protein_g?.toString() ?? '', carbs_g: goal?.carbs_g?.toString() ?? '', fat_g: goal?.fat_g?.toString() ?? '', fiber_g: goal?.fiber_g?.toString() ?? '' });
+  const [editing, setEditing] = useState<keyof typeof fields | null>(null);
+  const [entry, setEntry] = useState('');
+  const [estimator, setEstimator] = useState(false);
+  const [adult, setAdult] = useState(preferences.ageConfirmed18Plus);
+  const [coefficient, setCoefficient] = useState<5 | -161 | null>(null);
+  const [inputs, setInputs] = useState({ age: '', height: '', weight: '', activity: '1.2', rate: '0.25' });
+  const [estimate, setEstimate] = useState<TargetEstimate | null>(null);
   const [saved, setSaved] = useState(false);
   const action = useAction();
-  if (!initialized && today.value) {
-    const goal = today.value.goal;
-    if (goal) {
-      setMode(goal.mode);
-      setFields({ target_kcal: goal.target_kcal?.toString() ?? '', protein_g: goal.protein_g?.toString() ?? '',
-        carbs_g: goal.carbs_g?.toString() ?? '', fat_g: goal.fat_g?.toString() ?? '', fiber_g: goal.fiber_g?.toString() ?? '' });
-    }
-    setInitialized(true);
-  }
-  return <Card><Heading>Daily Targets</Heading><View style={ui.wrap}>{(['lose', 'maintain', 'gain', 'observe'] as const).map(value =>
-    <Button key={value} label={value[0]!.toUpperCase() + value.slice(1)} selected={mode === value} onPress={() => { setMode(value); setSaved(false); }} />)}</View>
-    {([['target_kcal', 'Calories (kcal)'], ['protein_g', 'Protein (g)'], ['carbs_g', 'Carbs (g)'], ['fat_g', 'Fat (g)'], ['fiber_g', 'Fiber (g)']] as const).map(([key, label]) =>
-      <Input key={key} label={label} value={key === 'target_kcal' && mode === 'observe' ? '' : fields[key]} editable={key !== 'target_kcal' || mode !== 'observe'} keyboardType="decimal-pad"
-        onChangeText={value => { setSaved(false); setFields(old => ({ ...old, [key]: value })); }} />)}
-    <Muted>Effective from {localDate()}. Earlier days keep their targets. Blank macro targets are unset. Observe mode has no calorie budget.</Muted>
-    <ErrorMessage message={action.error ?? today.error} /><Button label="Save targets from today" primary disabled={action.busy || !initialized} onPress={() => void action.run(async () => {
-      if (mode !== 'observe' && !fields.target_kcal.trim()) throw new Error('Enter a calorie target or choose Observe');
-      await controller.saveGoal({ mode, target_kcal: mode === 'observe' ? null : Number(fields.target_kcal),
-        protein_g: fields.protein_g.trim() ? Number(fields.protein_g) : null, carbs_g: fields.carbs_g.trim() ? Number(fields.carbs_g) : null,
-        fat_g: fields.fat_g.trim() ? Number(fields.fat_g) : null, fiber_g: fields.fiber_g.trim() ? Number(fields.fiber_g) : null }); setSaved(true);
+  const energyUnit = preferences.energyUnit;
+  const weightFactor = preferences.weightUnit === 'lb' ? 2.2046226218 : 1;
+  const makeGoal = (target = fields.target_kcal) => ({ mode, target_kcal: mode === 'observe' ? null : target.trim() ? Number(target) : null,
+    protein_g: fields.protein_g.trim() ? Number(fields.protein_g) : null, carbs_g: fields.carbs_g.trim() ? Number(fields.carbs_g) : null,
+    fat_g: fields.fat_g.trim() ? Number(fields.fat_g) : null, fiber_g: fields.fiber_g.trim() ? Number(fields.fiber_g) : null });
+  const changeInputs = (key: keyof typeof inputs, value: string) => { setInputs(old => ({ ...old, [key]: value })); setEstimate(null); };
+  return <Card><Heading>Goals &amp; Estimator</Heading><View style={ui.wrap}>{(['lose', 'maintain', 'gain', 'observe'] as const).map(value =>
+    <Button key={value} label={value[0]!.toUpperCase() + value.slice(1)} selected={mode === value} onPress={() => { setMode(value); setEstimate(null); setSaved(false); }} />)}</View>
+    {([['target_kcal', 'Energy'], ['protein_g', 'Protein'], ['carbs_g', 'Carbs'], ['fat_g', 'Fat'], ['fiber_g', 'Fiber']] as const).map(([key, label]) =>
+      <Button key={key} label={`${label} · ${key === 'target_kcal' && mode === 'observe' ? 'Observe' : key === 'target_kcal' ? energy(fields[key] ? Number(fields[key]) : null, energyUnit) : `${number(fields[key] ? Number(fields[key]) : null, 1)} g`}`}
+        disabled={key === 'target_kcal' && mode === 'observe'} onPress={() => {
+          setEditing(value => value === key ? null : key);
+          setEntry(fields[key] ? String(key === 'target_kcal' && energyUnit === 'kJ' ? Number(fields[key]) * 4.184 : Number(fields[key])) : '');
+        }} />)}
+    {editing && <><Muted>{editing === 'target_kcal' ? energyUnit : 'grams'}</Muted><InlineKeypad value={entry} onChange={setEntry} maxDecimals={1} />
+      <View style={ui.wrap}><Button label="Apply value" onPress={() => {
+        setFields(old => ({ ...old, [editing]: entry.trim() && entry !== '.' ? String(Number(entry) / (editing === 'target_kcal' && energyUnit === 'kJ' ? 4.184 : 1)) : '' })); setEditing(null); setSaved(false);
+      }} /><Button label="Clear target" onPress={() => { setFields(old => ({ ...old, [editing]: '' })); setEditing(null); setSaved(false); }} /></View></>}
+    <Muted>Effective from {localDate()}. Earlier days retain their targets.</Muted>
+    <Button label="Save targets from today" primary disabled={action.busy} onPress={() => void action.run(async () => {
+      if (mode !== 'observe' && !fields.target_kcal.trim()) throw new Error('Enter an energy target or choose Observe');
+      await controller.saveGoal(makeGoal()); setSaved(true);
     })} />{saved && <Muted>Targets saved.</Muted>}
+    <Button label={estimator ? 'Close estimator' : 'Mifflin–St Jeor estimator'} selected={estimator} onPress={() => setEstimator(value => !value)} />
+    {estimator && <><Button label="I am 18 or older" selected={adult} onPress={() => { setAdult(value => !value); setEstimate(null); }} />
+      <Input label="Age (years)" keyboardType="decimal-pad" value={inputs.age} onChangeText={value => changeInputs('age', value)} />
+      <Input label="Height (cm)" keyboardType="decimal-pad" value={inputs.height} onChangeText={value => changeInputs('height', value)} />
+      <Input label={`Weight (${preferences.weightUnit})`} keyboardType="decimal-pad" value={inputs.weight} onChangeText={value => changeInputs('weight', value)} />
+      <Muted>Equation coefficient</Muted><View style={ui.wrap}>{([5, -161] as const).map(value => <Button key={value} label={value === 5 ? '+5' : '−161'} selected={coefficient === value} onPress={() => { setCoefficient(value); setEstimate(null); }} />)}</View>
+      <Input label="Activity multiplier (1–3)" keyboardType="decimal-pad" value={inputs.activity} onChangeText={value => changeInputs('activity', value)} />
+      {(mode === 'lose' || mode === 'gain') && <Input label={`Weekly change (${preferences.weightUnit}/week)`} keyboardType="decimal-pad" value={inputs.rate} onChangeText={value => changeInputs('rate', value)} />}
+      <Muted>BMR = 10 × kg + 6.25 × cm − 5 × age + coefficient. Maintenance = BMR × activity. Target adjusts maintenance by weekly change × 7,700 ÷ 7.</Muted>
+      <Muted>Starter estimate · {energy(1500, energyUnit)} floor · 1% body weight/week cap.</Muted>
+      <Button label="Preview estimate" disabled={action.busy || !adult || coefficient === null} onPress={() => void action.run(async () => {
+        if (!adult || coefficient === null) throw new Error('Confirm adult age and select an equation coefficient');
+        if (![inputs.age, inputs.height, inputs.weight, inputs.activity].every(value => value.trim())) throw new Error('Enter age, height, weight and activity');
+        setEstimate(controller.estimateTargetPreview({ adultConfirmed: true, ageYears: Number(inputs.age), heightCm: Number(inputs.height), weightKg: Number(inputs.weight) / weightFactor,
+          equationCoefficient: coefficient, activityFactor: Number(inputs.activity), activityAssumption: 'User selected activity multiplier', mode, weeklyRateKg: mode === 'lose' || mode === 'gain' ? Number(inputs.rate) / weightFactor : 0 }));
+      })} />
+      {estimate && <><Label style={ui.number}>BMR {energy(estimate.bmrKcal, energyUnit)} · Maintenance {energy(estimate.maintenanceKcal, energyUnit)}</Label>
+        <Heading>{estimate.targetKcal === null ? 'Observe · no energy budget' : energy(estimate.targetKcal, energyUnit)}</Heading>
+        {estimate.notices.map(notice => <Muted key={notice}>{notice}</Muted>)}
+        <Button label="Use estimate" primary disabled={action.busy} onPress={() => void action.run(async () => {
+          const target = estimate.targetKcal?.toString() ?? '';
+          await controller.saveGoal(makeGoal(target)); setFields(old => ({ ...old, target_kcal: target })); setSaved(true);
+        })} /></>}
+    </>}
+    <ErrorMessage message={action.error} />
+  </Card>;
+}
+function Preferences({ preferences }: { preferences: AppPreferences }) {
+  const { controller } = useAppRuntime();
+  const [meals, setMeals] = useState(preferences.mealSections);
+  const [saved, setSaved] = useState(false);
+  const action = useAction();
+  return <Card><Heading>Preferences</Heading><Muted>Energy</Muted><View style={ui.wrap}>{(['kcal', 'kJ'] as const).map(energyUnit =>
+    <Button key={energyUnit} label={energyUnit} selected={preferences.energyUnit === energyUnit} disabled={action.busy} onPress={() => void action.run(() => controller.updatePreferences({ energyUnit }))} />)}</View>
+    <Muted>Weight</Muted><View style={ui.wrap}>{(['kg', 'lb'] as const).map(weightUnit =>
+      <Button key={weightUnit} label={weightUnit} selected={preferences.weightUnit === weightUnit} disabled={action.busy} onPress={() => void action.run(() => controller.updatePreferences({ weightUnit }))} />)}</View>
+    <Heading>Meal sections</Heading>{meals.map((meal, index) => <View key={index} style={[ui.row, { alignItems: 'flex-end' }]}><View style={{ flex: 1 }}><Input label={`Meal ${index + 1}`} value={meal} onChangeText={value => { setMeals(old => old.map((item, position) => position === index ? value : item)); setSaved(false); }} /></View>
+      <Button label="×" accessibilityLabel={`Remove meal ${index + 1}`} disabled={meals.length === 1} onPress={() => { setMeals(old => old.filter((_, position) => position !== index)); setSaved(false); }} /></View>)}
+    <View style={ui.wrap}><Button label="+ Meal section" onPress={() => { setMeals(old => [...old, '']); setSaved(false); }} />
+      <Button label="Save meal sections" disabled={action.busy} onPress={() => void action.run(async () => {
+        const mealSections = meals.map(meal => meal.trim());
+        if (mealSections.some(meal => !meal) || new Set(mealSections).size !== mealSections.length) throw new Error('Give each meal section a unique, non-empty name');
+        await controller.updatePreferences({ mealSections }); setSaved(true);
+      })} /></View>{saved && <Muted>Meal sections saved.</Muted>}
+    <View style={ui.wrap}><Button label="Run onboarding" onPress={() => router.push('/onboarding')} /><Button label="Recipes & batches" onPress={() => router.push('/recipes')} /></View>
+    <ErrorMessage message={action.error} />
   </Card>;
 }
 function Backup() {
@@ -108,7 +162,11 @@ function Backup() {
   </Card>;
 }
 export default function Settings() {
+  const today = useTodayDiary();
+  const preferences = usePreferences();
   return <Page title="Settings" action={<Button label="Done" onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)')} />}>
-    <FoodDatabases /><DailyTargets /><Backup />
+    <ErrorMessage message={today.error ?? preferences.error} />
+    {today.value && preferences.value && <><DailyTargets key={`${today.value.goal?.id ?? 'new'}:${preferences.value.energyUnit}:${preferences.value.weightUnit}`} goal={today.value.goal} preferences={preferences.value} /><Preferences key={preferences.value.mealSections.join('|')} preferences={preferences.value} /></>}
+    <FoodDatabases /><Backup />
   </Page>;
 }

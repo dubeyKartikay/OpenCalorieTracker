@@ -47,6 +47,34 @@ export function useHistoryDay(date: string) {
   return useAsyncResource(useCallback(() => { void revision; return controller.day(date); }, [controller, date, revision]));
 }
 export function useTodayDiary() { return useHistoryDay(localDate()); }
+export function usePreferences() {
+  const { controller } = useAppRuntime(); const revision = controller.getRevision();
+  return useAsyncResource(useCallback(() => { void revision; return controller.getPreferences(); }, [controller, revision]));
+}
+export function useSavedMeals() {
+  const { controller } = useAppRuntime(); const revision = controller.getRevision();
+  return useAsyncResource(useCallback(() => { void revision; return controller.listSavedMeals(); }, [controller, revision]));
+}
+export function useTodaySuggestions(limit = 3) {
+  const { controller } = useAppRuntime(); const revision = controller.getRevision();
+  return useAsyncResource(useCallback(() => { void revision; return controller.getTodaySuggestions(limit); }, [controller, limit, revision]));
+}
+export function useRecipes() {
+  const { controller } = useAppRuntime(); const revision = controller.getRevision();
+  return useAsyncResource(useCallback(() => { void revision; return controller.listRecipes(); }, [controller, revision]));
+}
+export function useRecipeBatches(recipeId: string) {
+  const { controller } = useAppRuntime(); const revision = controller.getRevision();
+  return useAsyncResource(useCallback(() => { void revision; return controller.listBatches(recipeId); }, [controller, recipeId, revision]));
+}
+export function useWeekSummary(endDate = localDate()) {
+  const { controller } = useAppRuntime(); const revision = controller.getRevision();
+  return useAsyncResource(useCallback(() => { void revision; return controller.getWeekSummary(endDate); }, [controller, endDate, revision]));
+}
+export function useProgressData(range = 7, endDate = localDate()) {
+  const { controller } = useAppRuntime(); const revision = controller.getRevision();
+  return useAsyncResource(useCallback(() => { void revision; return controller.progress(range, endDate); }, [controller, range, endDate, revision]));
+}
 export function useCatalogSearch(query: string) {
   const { controller } = useAppRuntime();
   const revision = controller.getRevision();

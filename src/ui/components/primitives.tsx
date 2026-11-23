@@ -11,7 +11,7 @@ export const ui = StyleSheet.create({
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s8 },
   text: { color: colors.ink, fontSize: fontSize.t14, fontVariant: [...tabularNums.fontVariant] },
   muted: { color: colors.muted, fontSize: fontSize.t12, lineHeight: 19, fontVariant: [...tabularNums.fontVariant] },
-  title: { color: colors.ink, fontSize: fontSize.t28, fontWeight: fontWeight.bold },
+  title: { color: colors.ink, fontSize: fontSize.t28, fontWeight: fontWeight.bold, flexShrink: 1 },
   heading: { color: colors.ink, fontSize: fontSize.t16, fontWeight: fontWeight.bold, fontVariant: [...tabularNums.fontVariant] },
   number: { ...tabularNums, fontVariant: [...tabularNums.fontVariant], color: colors.ink },
   input: { minHeight: MIN_TOUCH_TARGET, borderWidth: 1, borderColor: colors.border, borderRadius: radius.r8,
@@ -20,10 +20,10 @@ export const ui = StyleSheet.create({
     borderRadius: radius.r8, paddingHorizontal: spacing.s12, paddingVertical: spacing.s10, backgroundColor: colors.raised },
   divider: { height: 1, backgroundColor: colors.hairline },
 });
-export function Page({ title, action, children }: React.PropsWithChildren<{ title: string; action?: React.ReactNode }>) {
+export function Page({ title, action, footer, children }: React.PropsWithChildren<{ title: string; action?: React.ReactNode; footer?: React.ReactNode }>) {
   return <SafeAreaView edges={['top', 'left', 'right']} style={ui.screen}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={ui.content}>
     <View style={[ui.row, { justifyContent: 'space-between' }]}><Text accessibilityRole="header" style={ui.title}>{title}</Text>{action}</View>{children}
-  </ScrollView></SafeAreaView>;
+  </ScrollView>{footer && <View style={{ paddingHorizontal: SCREEN_GUTTER, paddingBottom: spacing.s8, width: '100%', maxWidth: 840, alignSelf: 'center' }}>{footer}</View>}</SafeAreaView>;
 }
 export function Card({ children, style }: React.PropsWithChildren<{ style?: ViewStyle }>) { return <View style={[ui.card, style]}>{children}</View>; }
 export function Label({ children, style }: React.PropsWithChildren<{ style?: TextStyle }>) { return <Text style={[ui.text, style]}>{children}</Text>; }
@@ -40,3 +40,5 @@ export function ErrorMessage({ message }: { message?: string | null }) { return 
 export function Badge({ label }: { label: string }) { return <Text style={{ color: colors.muted, backgroundColor: colors.raised,
   borderRadius: radius.r8, paddingHorizontal: spacing.s8, paddingVertical: spacing.s4, fontSize: fontSize.t11 }}>{label}</Text>; }
 export const number = (value: number | null | undefined, digits = 0) => value == null ? '—' : value.toLocaleString(undefined, { maximumFractionDigits: digits });
+export const energyValue = (kcal: number | null | undefined, unit: 'kcal' | 'kJ' = 'kcal') => kcal == null ? null : kcal * (unit === 'kJ' ? 4.184 : 1);
+export const energy = (kcal: number | null | undefined, unit: 'kcal' | 'kJ' = 'kcal') => `${number(energyValue(kcal, unit))} ${unit}`;
