@@ -4,10 +4,12 @@ import { router } from 'expo-router';
 import { useAction, useAppRuntime, useHistoryDay, usePreferences, useWeekSummary } from '../../src/app/AppRuntimeContext';
 import { localDate, MEALS, shiftDate, sourceLabel } from '../../src/app/controller';
 import type { DiaryEntrySnapshot } from '../../src/domain';
-import { Budget, UndoToast } from '../../src/ui/components/Diary';
+import { MacroRow, UndoToast } from '../../src/ui/components/Diary';
 import { ActionSheetPopover, CompletenessMark, InlineKeypad, MultiSelectBar, SourceBadge, WeekDateRail } from '../../src/ui/components/doop';
 import { Button, Card, energy, ErrorMessage, Heading, Label, Muted, number, Page, ui } from '../../src/ui/components/primitives';
 import { colors, MIN_TOUCH_TARGET } from '../../src/ui/tokens';
+
+const rangeDate = (date: string) => new Date(`${date}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 
 export default function History() {
   const [date, setDate] = useState(localDate);
@@ -56,7 +58,7 @@ export default function History() {
       onDelete={() => { if (selected.length) void action.run(async () => { await controller.deleteEntries(selected); clearSelection(); }); }} onDone={clearSelection} />}
     <UndoToast /></View>}>
     <ScrollView horizontal showsHorizontalScrollIndicator={false}><WeekDateRail style={{ minWidth: 352 }} days={(week.value ?? []).map(day => ({ date: day.date, weekdayInitial: new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'narrow' }), dayNumber: day.date.slice(8), completeness: day.completeness, kcal: day.kcal ?? 0 }))}
-      selectedDate={date} rangeLabel={`${shiftDate(weekEnd, -6).slice(5)} – ${weekEnd.slice(5)}`} onSelectDate={chooseDate}
+      selectedDate={date} rangeLabel={`${rangeDate(shiftDate(weekEnd, -6))} – ${rangeDate(weekEnd)}`} onSelectDate={chooseDate}
       onPrevWeek={() => { const next = shiftDate(weekEnd, -7); setWeekEnd(next); chooseDate(next); }}
       onNextWeek={() => { const next = shiftDate(weekEnd, 7); setWeekEnd(next); chooseDate(next); }} disableNext={weekEnd >= localDate()} /></ScrollView>
     <View style={[ui.row, { justifyContent: 'space-between', flexWrap: 'wrap' }]}><Heading>{new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}</Heading>
@@ -65,7 +67,7 @@ export default function History() {
     {menu === 'day' && <ActionSheetPopover title="Day completeness" actions={(['complete', 'partial'] as const).map(value => ({ key: value, label: value === 'complete' ? 'Complete' : 'Partial', selected: result.value?.day?.completeness === value,
       onPress: () => void action.run(async () => { await controller.setCompleteness(date, value); setMenu(null); }) }))} />}
     <ErrorMessage message={action.error ?? result.error ?? week.error ?? preferences.error} />{result.loading && <Muted>Loading saved day…</Muted>}
-    {result.value && <Budget totals={result.value.totals} goal={result.value.goal} />}
+    {result.value && <Card style={{ padding: 12 }}><MacroRow totals={result.value.totals} /></Card>}
     {moving && <Card><Heading>Move selected entries</Heading><View style={ui.wrap}>{configuredMeals.map(meal => <Button key={meal} label={meal} disabled={action.busy} onPress={() => void action.run(async () => {
       await controller.moveEntries(selected, date, meal); clearSelection();
     })} />)}</View></Card>}

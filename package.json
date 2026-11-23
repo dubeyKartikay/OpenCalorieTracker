@@ -16,14 +16,18 @@
     "node": "^24.3.0 || >=26.0.0"
   },
   "dependencies": {
+    "@expo-google-fonts/manrope": "^0.4.3",
+    "@sqlite.org/sqlite-wasm": "^3.54.1-build1",
     "expo": "~58.0.26",
     "expo-asset": "~58.0.21",
     "expo-constants": "~58.0.16",
     "expo-document-picker": "~58.0.5",
     "expo-file-system": "~58.0.14",
+    "expo-font": "~58.0.12",
     "expo-haptics": "~58.0.8",
     "expo-linking": "~58.0.17",
     "expo-router": "~58.0.32",
+    "expo-secure-store": "~58.0.3",
     "expo-sqlite": "~58.0.18",
     "expo-status-bar": "~58.0.5",
     "react": "19.3.0",

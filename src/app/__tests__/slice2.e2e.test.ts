@@ -43,14 +43,14 @@ afterEach(async () => {
 describe('Slice 2 against real SQLite and compiled packs', () => {
   it('gates onboarding at 18+, and persists defaults, preferences and the initial goal across reopen', async () => {
     const path = join(directory(), 'user.db'); let app = await open(path);
-    expect(await app.getPreferences()).toEqual({ onboardingCompleted: false, ageConfirmed18Plus: false,
+    expect(await app.getPreferences()).toMatchObject({ onboardingCompleted: false, ageConfirmed18Plus: false,
       energyUnit: 'kcal', weightUnit: 'kg', mealSections: ['Breakfast', 'Lunch', 'Snack', 'Dinner'] });
     await expect(app.completeOnboarding({ ageConfirmed18Plus: false as unknown as true, goal })).rejects.toThrow('18');
     expect(await app.deps.goals.listGoalPeriods()).toEqual([]);
     await app.updatePreferences({ mealSections: ['Brunch', 'Dinner'] });
     await app.completeOnboarding({ ageConfirmed18Plus: true, goal, energyUnit: 'kJ', weightUnit: 'lb' });
     await close(app); app = await open(path);
-    expect(await app.getPreferences()).toEqual({ onboardingCompleted: true, ageConfirmed18Plus: true,
+    expect(await app.getPreferences()).toMatchObject({ onboardingCompleted: true, ageConfirmed18Plus: true,
       energyUnit: 'kJ', weightUnit: 'lb', mealSections: ['Brunch', 'Dinner'] });
     expect((await app.day(localDate())).goal).toMatchObject({ ...goal, effective_from_date: localDate() });
     await app.completeOnboarding({ ageConfirmed18Plus: true, goal: { ...goal, target_kcal: 2300 } });

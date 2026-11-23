@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 import { useAction, useAppRuntime, useAsyncResource, usePreferences, useProgressData, useTodayDiary } from '../../src/app/AppRuntimeContext';
 import { localDate, shiftDate } from '../../src/app/controller';
 import { calculateWeeklyRate } from '../../src/domain';
@@ -40,9 +40,7 @@ export default function Progress() {
   return <Page title="Progress"><View style={ui.wrap}>{[7, 30].map(days => <Button key={days} label={`${days}d`} selected={range === days} onPress={() => { setRange(days); setSelectedDay(null); }} />)}</View>
     <ErrorMessage message={result.error ?? daily.error ?? action.error ?? preferences.error ?? today.error} />
     <Muted>{value?.completeDays ?? '—'} of {range} days complete · partial/unlogged excluded</Muted>
-    <ScrollView horizontal showsHorizontalScrollIndicator><View style={{ width: range * 50 + 32 }}>
-      <CalorieBarChart days={daily.value ?? []} selectedDate={selectedDay} onSelectDay={setSelectedDay} energyUnit={energyUnit} />
-    </View></ScrollView>
+    <CalorieBarChart days={daily.value ?? []} selectedDate={selectedDay} onSelectDay={setSelectedDay} energyUnit={energyUnit} style={{ width: '100%', minWidth: 0 }} />
     <Card><Heading>Daily averages</Heading><Label style={ui.number}>{energy(value?.averages?.kcal, energyUnit)}</Label>
       <MacroProportionBar proteinG={value?.averages?.protein_g ?? 0} carbsG={value?.averages?.carbs_g ?? 0} fatG={value?.averages?.fat_g ?? 0} />
       {([['P', 'protein_g', macroColors.protein], ['C', 'carbs_g', macroColors.carbs], ['F', 'fat_g', macroColors.fat], ['Fiber', 'fiber_g', colors.muted]] as const).map(([label, key, color]) =>

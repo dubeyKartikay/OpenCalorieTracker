@@ -59,7 +59,8 @@ export default function Onboarding() {
   </View><View style={ui.wrap}>
     {(['kg', 'lb'] as const).map(value => <Button key={value} label={value} selected={weightUnit === value} onPress={() => setWeightUnit(value)} />)}
   </View></View>;
-  return <Page title="Welcome" action={step > 1 ? <Button label="Back" disabled={action.busy} onPress={() => setStep(current => (current - 1) as 1 | 2 | 3)} /> : undefined}>
+  return <Page title="Welcome" action={step > 1 ? <Button label="Back" disabled={action.busy} onPress={() => setStep(current => (current - 1) as 1 | 2 | 3)} />
+    : <Button label={router.canGoBack() ? 'Close' : 'Skip'} quiet onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)')} />}>
     <Muted>Step {step} of 4 · {step === 1 ? 'Adults only' : step === 2 ? 'Your goal' : step === 3 ? 'Your setup' : 'Ready'}</Muted>
     <Heading>Track what you eat. No account needed.</Heading>
     {step === 1 && (under18 ? <Card><Heading>This app is for adults. Nothing was saved.</Heading><Muted>Your choice hasn&apos;t created a profile or saved any health information.</Muted>

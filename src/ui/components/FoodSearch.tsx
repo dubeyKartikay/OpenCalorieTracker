@@ -39,10 +39,10 @@ export function PortionEditor({ food, meal }: { food: FoodRecord; meal: string }
   const nutrients = preview.value?.nutrients;
   return <View style={{ gap: spacing.s12 }}><View style={ui.divider} />
     <MacroProportionBar proteinG={nutrients?.protein_g ?? 0} carbsG={nutrients?.carbs_g ?? 0} fatG={nutrients?.fat_g ?? 0} />
-    <LearnedPortionChips portions={(learned.value ?? []).map((portion, index) => ({
+    {(learned.value?.length ?? 0) > 0 && <LearnedPortionChips portions={(learned.value ?? []).map((portion, index) => ({
       label: `${number(portion.amount, 2)} ${portion.unit}`, energyLabel: energy(portion.kcal, energyUnit), rankDots: index === 0 ? 3 : index === 1 ? 2 : 1,
       selected: Number(amount) === portion.amount && unit === portion.unit,
-    }))} onSelect={index => { const portion = learned.value?.[index]; if (portion) { changeAmount(String(portion.amount)); changeUnit(portion.unit); } }} onMore={() => setKeypad(value => !value)} />
+    }))} onSelect={index => { const portion = learned.value?.[index]; if (portion) { changeAmount(String(portion.amount)); changeUnit(portion.unit); } }} onMore={() => setKeypad(value => !value)} />}
     <View style={ui.wrap}>{availableUnits(food).map(label => <Button key={label} label={label} selected={unit === label} onPress={() => changeUnit(label)} />)}
       <Button label="+ Unit" selected={addingUnit} onPress={() => setAddingUnit(value => !value)} /></View>
     {addingUnit && <Card><Input label="Unit label" placeholder="katori, roti…" value={unitLabel} onChangeText={setUnitLabel} />
@@ -76,14 +76,20 @@ export function FoodRow({ candidate, expanded, onToggle, meal }: { candidate: Se
   const [hold, setHold] = useState(false);
   const action = useAction();
   const base = useAsyncResource(useCallback(() => controller.preview(food, defaultQuantity(food)), [controller, food]));
-  return <Card><Pressable accessibilityRole="button" accessibilityLabel={`Adjust ${food.name}`} accessibilityState={{ expanded }} onPress={onToggle}
-    onLongPress={() => { if (!action.busy && base.value?.nutrients) setHold(true); }} delayLongPress={300} style={[ui.row, { minHeight: MIN_TOUCH_TARGET }]}>
-    <View style={{ flex: 1, gap: spacing.s4 }}><Heading>{food.name}</Heading>
+  return <Card><View style={[ui.row, { alignItems: 'center', gap: spacing.s8 }]}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Adjust ${food.name}`} accessibilityState={{ expanded }} onPress={onToggle}
+      onLongPress={() => { if (!action.busy && base.value?.nutrients) setHold(true); }} delayLongPress={300}
+      style={{ flex: 1, minWidth: 0, minHeight: MIN_TOUCH_TARGET, justifyContent: 'center', gap: spacing.s4 }}>
+      <Heading>{food.name}</Heading>
       <Muted>{food.prep_state} · {number(portion.amount, 1)} {portion.unit}</Muted>
       <View style={ui.wrap}><SourceBadge label={sourceLabel(food)} tone={food.provenance_kind === 'user' ? 'personal' : 'neutral'} />
         {candidate.matchedAlias && <Badge label={`Alias · ${candidate.matchedAlias}`} />}</View>
-    </View><Label style={ui.number}>{energy(base.value?.nutrients?.kcal, energyUnit)}</Label>
-  </Pressable><Button label="Hold to log" disabled={action.busy || !base.value?.nutrients} onPress={() => setHold(value => !value)} />
+    </Pressable>
+    <View style={{ alignItems: 'flex-end', gap: spacing.s4 }}>
+      <Label style={ui.number}>{energy(base.value?.nutrients?.kcal, energyUnit)}</Label>
+      <Button label="Hold" disabled={action.busy || !base.value?.nutrients} onPress={() => setHold(value => !value)} />
+    </View>
+  </View>
     <ErrorMessage message={action.error ?? base.error} />
     {hold && <HoldToLogPanel foodLabel={food.name} energyUnit={energyUnit} mealLabels={meals} kcalForMultiplier={multiplier => (base.value?.nutrients?.kcal ?? 0) * multiplier}
       onDismiss={() => setHold(false)} onLog={(destination, multiplier) => { setHold(false); void action.run(async () => {

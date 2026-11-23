@@ -178,11 +178,14 @@ export function CalorieBarChart({
   const selectedDay =
     selectedDate == null ? null : (days.find(day => day.date === selectedDate) ?? null);
 
+  const dense = days.length > 10;
+  const labelStep = dense ? Math.max(2, Math.ceil(days.length / 6)) : 1;
+
   return (
     <View style={[styles.card, style]}>
       <View style={styles.cardHead}>
         <Text style={styles.cardTitle}>{energyUnit === 'kJ' ? 'ENERGY' : 'CALORIES'}</Text>
-        <Text style={styles.cardMeta}>
+        <Text numberOfLines={1} style={styles.cardMeta}>
           {targetRef == null
             ? 'no target'
             : `target ${formatNumber(displayEnergy(targetRef, energyUnit))} ${energyUnit}`}
@@ -196,7 +199,7 @@ export function CalorieBarChart({
       ) : (
         <>
           <View style={styles.plot}>
-            <View style={styles.bars}>
+            <View style={[styles.bars, dense && styles.barsDense]}>
               {days.map(day => {
                 const selected = day.date === selectedDate;
                 const height =
@@ -222,7 +225,7 @@ export function CalorieBarChart({
                     accessibilityRole={onSelectDay ? 'button' : undefined}
                     accessibilityLabel={label}
                     accessibilityState={{ selected }}
-                    hitSlop={{ left: 3, right: 3 }}
+                    hitSlop={{ left: 2, right: 2 }}
                     onPress={() => onSelectDay?.(selected ? null : day.date)}
                     style={({ pressed }) => [
                       styles.barColumn,
@@ -231,11 +234,12 @@ export function CalorieBarChart({
                     ]}
                   >
                     {day.completeness === 'none' ? (
-                      <View style={styles.emptyTick} />
+                      <View style={[styles.emptyTick, dense && styles.emptyTickDense]} />
                     ) : (
                       <View
                         style={[
                           styles.bar,
+                          dense && styles.barDense,
                           day.completeness === 'complete' ? styles.barComplete : styles.barPartial,
                           { height },
                         ]}
@@ -254,16 +258,19 @@ export function CalorieBarChart({
             )}
           </View>
 
-          <View style={styles.axisRow}>
-            {days.map(day => (
-              <Text
-                key={`axis-${day.date}`}
-                numberOfLines={1}
-                style={[styles.axisLabel, day.date === selectedDate && styles.axisLabelSelected]}
-              >
-                {day.shortLabel}
-              </Text>
-            ))}
+          <View style={[styles.axisRow, dense && styles.axisRowDense]}>
+            {days.map((day, index) => {
+              const showLabel = !dense || index === 0 || index === days.length - 1 || index % labelStep === 0;
+              return (
+                <Text
+                  key={`axis-${day.date}`}
+                  numberOfLines={1}
+                  style={[styles.axisLabel, day.date === selectedDate && styles.axisLabelSelected]}
+                >
+                  {showLabel ? day.shortLabel : ''}
+                </Text>
+              );
+            })}
           </View>
         </>
       )}
@@ -480,6 +487,8 @@ export function WeightTrendChart({
 
 const styles = StyleSheet.create({
   card: {
+    width: '100%',
+    minWidth: 0,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.hairline,
@@ -517,18 +526,26 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   plot: {
+    width: '100%',
+    minWidth: 0,
     height: CALORIE_PLOT_HEIGHT,
     position: 'relative',
     justifyContent: 'flex-end',
   },
   bars: {
+    width: '100%',
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'flex-end',
     height: CALORIE_PLOT_HEIGHT,
     gap: spacing.s6,
   },
+  barsDense: {
+    gap: spacing.s2,
+  },
   barColumn: {
     flex: 1,
+    minWidth: 0,
     height: '100%',
     alignItems: 'center',
     justifyContent: 'flex-end',
@@ -539,10 +556,17 @@ const styles = StyleSheet.create({
   },
   bar: {
     width: '56%',
-    maxWidth: 30,
-    minWidth: 8,
+    maxWidth: 26,
+    minWidth: 6,
     borderTopLeftRadius: radius.r8,
     borderTopRightRadius: radius.r8,
+  },
+  barDense: {
+    width: '78%',
+    maxWidth: 10,
+    minWidth: 3,
+    borderTopLeftRadius: 3,
+    borderTopRightRadius: 3,
   },
   barComplete: {
     backgroundColor: colors.accent,
@@ -558,6 +582,9 @@ const styles = StyleSheet.create({
     borderRadius: 1,
     backgroundColor: colors.border,
   },
+  emptyTickDense: {
+    width: 4,
+  },
   targetLine: {
     position: 'absolute',
     left: 0,
@@ -572,9 +599,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.border,
   },
   axisRow: {
+    width: '100%',
+    minWidth: 0,
     flexDirection: 'row',
     gap: spacing.s6,
     marginTop: -spacing.s4,
+  },
+  axisRowDense: {
+    gap: spacing.s2,
   },
   axisLabel: {
     flex: 1,

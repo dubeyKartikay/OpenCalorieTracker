@@ -1,10 +1,16 @@
 import { z } from 'zod';
-import { calculateBatchServing, calculateNutrition, calculateRecipeTotal, calculateWeightTrend, estimateDailyTarget, exportBundleV1Schema, foodRecordSchema, generateId, getActiveGoalForDate, isoDateSchema, resolveQuantityToBasis, scaleNutrients, sumNutrients } from '../domain';
+import { calculateBatchServing, calculateNutrition, calculateRecipeTotal, calculateWeightTrend, estimateDailyTarget, exportBundleV1Schema, foodRecordSchema, generateId, getActiveGoalForDate, isoDateSchema, nutrientKeys, resolveQuantityToBasis, scaleNutrients, sumNutrients } from '../domain';
 import type { DiaryDay, DiaryEntrySnapshot, FoodRecord, FoodUnit, GoalPeriod, NutrientAggregate, Quantity, RecipeBatch, RecipeIngredient, TargetInputs } from '../domain';
 import { UserLibraryAdapter, validatePackDatabase } from '../catalog';
 import type { FoodSourceRegistry } from '../catalog';
 import { DiaryRepo, GoalsRepo, LibraryRepo, exportBundleV1, foodKey, restoreBundleV1 } from '../storage';
 import type { PacksRepo, SavedMeal, SqlDatabase } from '../storage';
+import { BarcodeResolver, parseNutritionLabelText } from '../barcode';
+import type { BarcodeResolution } from '../barcode';
+import { AIError, OpenAIResponsesProvider, applyClarifyingAnswer, buildAuthorizationUrl, captureMealDraft, exchangeAuthorizationCode, extractNutritionLabel, generatePkcePair } from '../ai';
+import type { AIAuthMode, AIProvider, LoopbackAuthPort, MealDraftProposal, NutritionLabelExtraction } from '../ai';
+import { createMemoryCredentialStore, maskSecretKey } from './credentials';
+import type { CredentialStore } from './credentials';
 
 export const MEALS = ['Breakfast', 'Lunch', 'Snack', 'Dinner'] as const;
 export type Meal = typeof MEALS[number];
@@ -30,6 +36,11 @@ export const sourceLabel = (food: FoodRecord) => food.source_pack_id ?? (food.pr
 export interface ControllerDependencies {
   userDb: SqlDatabase; catalog: FoodSourceRegistry; diary: DiaryRepo;
   library: LibraryRepo; goals: GoalsRepo; packs: PacksRepo;
+  offCacheDb?: SqlDatabase | null;
+  barcodeResolver?: BarcodeResolver;
+  credentials?: CredentialStore;
+  aiProviderFactory?: (token: string, mode: 'chatgpt_oauth' | 'api_key') => AIProvider;
+  loopbackAuth?: LoopbackAuthPort | null;
 }
 export interface UndoAction { label: string; run: () => Promise<void> }
 
@@ -37,6 +48,8 @@ const preferencesSchema = z.strictObject({
   onboardingCompleted: z.boolean().default(false), ageConfirmed18Plus: z.boolean().default(false),
   energyUnit: z.enum(['kcal', 'kJ']).default('kcal'), weightUnit: z.enum(['kg', 'lb']).default('kg'),
   mealSections: z.array(z.string().trim().min(1)).min(1).default(() => [...MEALS]),
+  allowLiveOffLookup: z.boolean().default(false), aiModel: z.string().trim().min(1).default('gpt-5-mini'),
+  aiConsentAccepted: z.boolean().default(false),
 });
 export type AppPreferences = z.infer<typeof preferencesSchema>;
 export type BatchServingAmount = { mode: 'grams'; grams: number } | { mode: 'fraction'; fraction: number };
@@ -75,8 +88,18 @@ export class AppController {
   private listeners = new Set<() => void>();
   private revision = 0;
   private foodCounts = new Map<string, number>();
+  private readonly barcodeResolver: BarcodeResolver;
+  private readonly credentials: CredentialStore;
+  private activeDraft: { proposal: MealDraftProposal; meal: string; date: string } | null = null;
+  private draftGeneration = 0;
+  private confirmingDraft: Promise<DiaryEntrySnapshot[]> | null = null;
   undoAction: UndoAction | null = null;
-  constructor(deps: ControllerDependencies) { this.deps = deps; }
+  constructor(deps: ControllerDependencies) {
+    this.deps = deps;
+    this.credentials = deps.credentials ?? createMemoryCredentialStore();
+    this.barcodeResolver = deps.barcodeResolver ?? new BarcodeResolver({ catalog: deps.catalog,
+      offCacheDb: deps.offCacheDb ?? null, getAllowLiveOffLookup: () => this.getPreferences().then(p => p.allowLiveOffLookup) });
+  }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getRevision = () => this.revision;
   refresh = () => { this.revision++; this.listeners.forEach(listener => listener()); };
@@ -189,9 +212,13 @@ export class AppController {
     const foods: FoodRecord[] = [];
     for (const item of custom.slice(0, limit)) foods.push(await this.deps.catalog.getById(null, item.id) ?? item);
     if (foods.length < limit) {
-      // Prefixes provide real quick picks from mounted packs even before any logging history.
-      const { database } = await this.deps.catalog.search('a b c d e f g h i j k l m n o p q r s t u v w x y z 0 1 2 3 4 5 6 7 8 9', { limit });
-      foods.push(...database.slice(0, limit - foods.length).map(item => item.food));
+      // Fetch enough candidates to replace pantry ingredients and drinks with useful meal picks.
+      const { database } = await this.deps.catalog.search('a b c d e f g h i j k l m n o p q r s t u v w x y z 0 1 2 3 4 5 6 7 8 9', { limit: Math.max(50, limit * 5) });
+      const mealFoods = database.map(item => item.food).filter(food =>
+        (food.nutrients.kcal ?? 0) >= 40
+        && !/oil|fat|condiment|spice|beverage|drink|water/i.test(food.category ?? '')
+        && !/\b(oil|butter|ghee|salt|water|coffee|tea)\b/i.test(food.name));
+      foods.push(...mealFoods.slice(0, limit - foods.length));
     }
     return foods.map(food => ({ kind: 'food', id: food.id, name: food.name, food }));
   }
@@ -362,6 +389,149 @@ export class AppController {
     const food = foodRecordSchema.parse(input);
     await this.deps.library.upsertCustomFood(food); this.refresh(); return food;
   }
+  resolveBarcode(rawCode: string, symbology?: string): Promise<BarcodeResolution> { return this.barcodeResolver.resolve(rawCode, symbology); }
+  async saveCustomFoodWithBarcode(input: unknown, barcode: { rawCode: string; symbology?: string } | null): Promise<FoodRecord> {
+    const food = foodRecordSchema.parse(input);
+    await this.deps.library.upsertCustomFood(food, barcode); this.refresh(); return food;
+  }
+  parseLabelText(text: string) { return parseNutritionLabelText(text); }
+  private async aiConnection() {
+    const oauth = await this.credentials.getOAuthToken();
+    if (oauth) return { mode: 'chatgpt_oauth' as const, token: oauth };
+    const key = await this.credentials.getApiKey();
+    return key ? { mode: 'api_key' as const, token: key } : null;
+  }
+  async getAIStatus(): Promise<{ mode: AIAuthMode; model: string; consentAccepted: boolean; maskedKey: string | null; statusLabel: string }> {
+    const [connection, preferences, key] = await Promise.all([this.aiConnection(), this.getPreferences(), this.credentials.getApiKey()]);
+    return { mode: connection?.mode ?? 'disconnected', model: preferences.aiModel, consentAccepted: preferences.aiConsentAccepted,
+      maskedKey: key ? maskSecretKey(key) : null,
+      statusLabel: connection?.mode === 'chatgpt_oauth' ? 'Connected with ChatGPT' : connection ? 'Connected with OpenAI API key' : 'AI disconnected' };
+  }
+  async setAIConsent(accepted: boolean): Promise<void> { await this.updatePreferences({ aiConsentAccepted: accepted }); }
+  async setAIModel(model: string): Promise<void> { await this.updatePreferences({ aiModel: model }); }
+  async saveApiKey(apiKey: string): Promise<void> {
+    const key = apiKey.trim(); if (!key) throw new Error('Enter an OpenAI API key');
+    await this.credentials.setApiKey(key); await this.credentials.clearOAuthToken(); this.draftGeneration++; this.refresh();
+  }
+  async connectChatGPTOAuth(): Promise<{ ok: boolean; message: string }> {
+    if (!this.deps.loopbackAuth) return { ok: false, message: 'Sign in with ChatGPT requires a native mobile dev build with the 127.0.0.1 loopback listener. You can connect an OpenAI API key right now, or keep tracking manually.' };
+    const clientId = process.env.EXPO_PUBLIC_OPENAI_OAUTH_CLIENT_ID;
+    if (!clientId) return { ok: false, message: 'ChatGPT sign-in is not configured in this build. You can connect an OpenAI API key or keep tracking manually.' };
+    let session: Awaited<ReturnType<LoopbackAuthPort['listen']>> | undefined;
+    const timeout = new AbortController(); const timer = setTimeout(() => timeout.abort(), 120_000);
+    try {
+      const pkce = await generatePkcePair();
+      session = await this.deps.loopbackAuth.listen({ host: '127.0.0.1', path: '/callback', expectedState: pkce.state, signal: timeout.signal });
+      const callback = session.callback;
+      // Attach a handler before opening the browser so cancellation cannot reject unobserved.
+      void callback.catch(() => undefined);
+      const { openURL } = await import('expo-linking');
+      await openURL(buildAuthorizationUrl({ clientId, port: session.port, codeChallenge: pkce.codeChallenge, state: pkce.state }));
+      const response = await Promise.race([callback, new Promise<never>((_, reject) => {
+        const abort = () => reject(new AIError('timeout'));
+        if (timeout.signal.aborted) abort(); else timeout.signal.addEventListener('abort', abort, { once: true });
+      })]);
+      const tokens = await exchangeAuthorizationCode({ clientId, port: session.port, ...response, codeVerifier: pkce.codeVerifier, expectedState: pkce.state, signal: timeout.signal });
+      await this.credentials.setOAuthToken(tokens.access_token); this.draftGeneration++; this.refresh();
+      return { ok: true, message: 'Connected with ChatGPT.' };
+    } catch (error) { return { ok: false, message: error instanceof AIError ? error.message : 'ChatGPT sign-in could not finish. Try again or connect an OpenAI API key.' }; }
+    finally { clearTimeout(timer); await session?.close(); }
+  }
+  async disconnectAI(): Promise<void> {
+    this.draftGeneration++;
+    await Promise.all([this.credentials.clearOAuthToken(), this.credentials.clearApiKey()]); this.refresh();
+  }
+  private async connectedProvider() {
+    const connection = await this.aiConnection(); if (!connection) throw new AIError('not_connected');
+    const preferences = await this.getPreferences();
+    if (!preferences.aiConsentAccepted) throw new AIError('refusal');
+    const provider = this.deps.aiProviderFactory?.(connection.token, connection.mode)
+      ?? new OpenAIResponsesProvider({ authMode: connection.mode, getAccessToken: () => connection.mode === 'api_key' ? this.credentials.getApiKey() : this.credentials.getOAuthToken() });
+    return { provider, model: preferences.aiModel };
+  }
+  async captureMealWithAI(input: { text: string; imageDataUrl?: string; meal: string; date?: string; signal?: AbortSignal }): Promise<MealDraftProposal> {
+    const generation = ++this.draftGeneration;
+    try {
+      const date = isoDateSchema.parse(input.date ?? localDate());
+      const connection = await this.connectedProvider();
+      const proposal = await captureMealDraft({ ...input, ...connection, catalog: this.deps.catalog });
+      if (generation !== this.draftGeneration || input.signal?.aborted) throw new AIError('timeout');
+      this.activeDraft = { proposal, meal: input.meal, date }; this.refresh(); return proposal;
+    } catch (error) { throw error instanceof AIError ? error : new AIError(input.signal?.aborted ? 'timeout' : 'malformed_output'); }
+  }
+  getActiveDraft() { return this.activeDraft; }
+  async answerDraftQuestion(questionId: string, optionId: string): Promise<MealDraftProposal | null> {
+    const draft = this.activeDraft; if (!draft || this.confirmingDraft) return draft?.proposal ?? null;
+    const proposal = await applyClarifyingAnswer(draft.proposal, questionId, optionId, this.deps.catalog);
+    if (this.activeDraft !== draft) return this.activeDraft?.proposal ?? null;
+    this.activeDraft = { ...draft, proposal }; this.refresh(); return proposal;
+  }
+  private draftTotals(items: MealDraftProposal['items']) {
+    const totals = sumNutrients(items.map(item => item.nutrients));
+    for (const key of nutrientKeys) totals.unknownCount[key] = items.reduce((count, item) => count + item.unknownCount[key], 0);
+    return totals;
+  }
+  removeDraftItem(itemId: string): void {
+    const draft = this.activeDraft; if (!draft || this.confirmingDraft) return;
+    const index = /^\d+$/.test(itemId) ? Number(itemId) : draft.proposal.items.findIndex(item => item.food.id === itemId);
+    const items = draft.proposal.items.filter((_, itemIndex) => itemIndex !== index);
+    if (items.length === draft.proposal.items.length) return;
+    const proposal = draft.proposal;
+    let baseItems = proposal.base_items;
+    let questions = proposal.clarifying_questions;
+    if (index < baseItems.length) {
+      baseItems = baseItems.filter((_, baseIndex) => baseIndex !== index);
+      questions = questions.filter(question => !question.options.some(option => option.effect.targetItemIndex === index))
+        .map(question => ({ ...question, options: question.options.map(option => ({ ...option, effect: {
+          ...option.effect, ...(option.effect.targetItemIndex !== undefined && option.effect.targetItemIndex > index
+            ? { targetItemIndex: option.effect.targetItemIndex - 1 } : {}),
+        } })) }));
+    } else {
+      let addedIndex = baseItems.length;
+      questions = questions.filter(question => {
+        const effect = question.options.find(option => option.id === proposal.answers[question.id])?.effect;
+        return effect?.kind !== 'add_food' || addedIndex++ !== index;
+      });
+    }
+    // If only clarification additions remain, freeze those as the reviewed starting point.
+    if (!baseItems.length) { baseItems = items; questions = []; }
+    const answers = Object.fromEntries(Object.entries(proposal.answers).filter(([id]) => questions.some(question => question.id === id)));
+    this.activeDraft = items.length ? { ...draft, proposal: { ...proposal, items, base_items: baseItems,
+      totals: this.draftTotals(items), answers, clarifying_questions: questions } } : null;
+    this.draftGeneration++; this.refresh();
+  }
+  discardActiveDraft(): void { this.draftGeneration++; this.activeDraft = null; this.refresh(); }
+  confirmActiveDraft(idempotencyPrefix = generateId()): Promise<DiaryEntrySnapshot[]> {
+    if (this.confirmingDraft) return this.confirmingDraft;
+    const draft = this.activeDraft; if (!draft) return Promise.resolve([]);
+    const confirmation = this.deps.userDb.withTransactionAsync(async tx => {
+      const diary = new DiaryRepo(tx); const entries: DiaryEntrySnapshot[] = [];
+      for (const [index, item] of draft.proposal.items.entries()) {
+        const aggregate = this.draftTotals([item]);
+        const snapshot = this.snapshot({ food: item.food, quantity: item.quantity, meal: draft.meal, date: draft.date,
+          idempotencyKey: `${idempotencyPrefix}:${index}` }, aggregate);
+        entries.push(await diary.confirmEntry({ ...snapshot, provenance_kind: item.provenance_kind,
+          portion_certainty: item.portion_certainty,
+          estimate_range: item.estimate_range ? { min_g: item.estimate_range.min_g, max_g: item.estimate_range.max_g } : null }));
+      }
+      return entries;
+    }).then(entries => {
+      if (this.activeDraft === draft) this.activeDraft = null;
+      this.undoAction = { label: `Added ${entries.length} ${entries.length === 1 ? 'item' : 'items'} to ${draft.meal}`, run: async () => {
+        await this.deps.userDb.withTransactionAsync(async tx => {
+          const diary = new DiaryRepo(tx); for (const entry of entries) await diary.deleteEntry(entry.id);
+        });
+      } };
+      this.refresh(); return entries;
+    }).finally(() => { this.confirmingDraft = null; });
+    this.confirmingDraft = confirmation; return confirmation;
+  }
+  async extractLabelFromImage(imageDataUrl: string, signal?: AbortSignal): Promise<NutritionLabelExtraction> {
+    try {
+      const connection = await this.connectedProvider();
+      return await extractNutritionLabel({ ...connection, imageDataUrl, ...(signal ? { signal } : {}) });
+    } catch (error) { throw error instanceof AIError ? error : new AIError(signal?.aborted ? 'timeout' : 'network'); }
+  }
   async saveGoal(input: Omit<GoalPeriod, 'id' | 'effective_from_date'>, date = localDate()) {
     // A same-day edit replaces today's period, never a period effective in the past.
     const sameDay = (await this.deps.goals.listGoalPeriods()).find(goal => goal.effective_from_date === date);
@@ -410,5 +580,8 @@ export class AppController {
     if (mode === 'replace') { await this.deps.catalog.close(); this.foodCounts.clear(); }
     this.undoAction = null; this.refresh();
   }
-  async close() { await this.deps.catalog.close(); await this.deps.userDb.closeAsync(); }
+  async close() {
+    this.draftGeneration++; await this.deps.catalog.close();
+    await this.deps.offCacheDb?.closeAsync(); await this.deps.userDb.closeAsync();
+  }
 }

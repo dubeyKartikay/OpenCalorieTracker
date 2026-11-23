@@ -4,6 +4,8 @@ import { openDatabaseAsync } from 'expo-sqlite';
 import { FoodSourceRegistry } from '../catalog';
 import { createExpoSqliteDriver, DiaryRepo, GoalsRepo, LibraryRepo, migrateDatabase, PacksRepo } from '../storage';
 import { generateId } from '../domain';
+import { initOffCache } from '../barcode';
+import { createCredentialStore } from './credentials.native';
 import { AppController } from './controller';
 import type { AppRuntime } from './runtime';
 import usda from '../../assets/packs/usda-fdc-starter.octpack.sqlite';
@@ -27,11 +29,13 @@ export async function bootstrap(): Promise<AppRuntime> {
   await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
   const userDb = createExpoSqliteDriver(await openDatabaseAsync('user.db'));
   const notices: string[] = [];
+  let offCacheDb: ReturnType<typeof createExpoSqliteDriver> | null = null;
   let controller: AppController | null = null;
   try {
     await migrateDatabase(userDb);
+    offCacheDb = createExpoSqliteDriver(await openDatabaseAsync('off_cache.sqlite')); await initOffCache(offCacheDb);
     const packs = new PacksRepo(userDb);
-    const app = new AppController({ userDb, catalog: new FoodSourceRegistry(userDb),
+    const app = new AppController({ userDb, offCacheDb, credentials: createCredentialStore(), catalog: new FoodSourceRegistry(userDb),
       diary: new DiaryRepo(userDb), library: new LibraryRepo(userDb), goals: new GoalsRepo(userDb), packs });
     controller = app;
     const importPackFromFile = async (uri: string, priority = 50) => {
@@ -62,7 +66,7 @@ export async function bootstrap(): Promise<AppRuntime> {
         await FileSystem.writeAsStringAsync(path, json); return path;
       } };
   } catch (error) {
-    if (controller) await controller.close(); else await userDb.closeAsync();
+    if (controller) await controller.close(); else { await offCacheDb?.closeAsync(); await userDb.closeAsync(); }
     throw error;
   }
 }

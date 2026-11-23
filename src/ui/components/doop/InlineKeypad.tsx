@@ -193,6 +193,9 @@ export function InlineKeypad({
         {KEYPAD_ROWS.map((row, rowIndex) => (
           <View key={`row-${rowIndex}`} style={styles.gridRow}>
             {row.map(key => {
+              if (key === DECIMAL && !acceptsDecimal) {
+                return <View key={key} pointerEvents="none" style={styles.keySpacer} />;
+              }
               const muted = key === BACKSPACE;
               return (
                 <Pressable
@@ -305,6 +308,7 @@ const styles = StyleSheet.create({
   },
   grid: { gap: spacing.s6 },
   gridRow: { flexDirection: 'row', gap: spacing.s6 },
+  keySpacer: { flex: 1, minHeight: 48 },
   key: {
     flex: 1,
     minHeight: 48,

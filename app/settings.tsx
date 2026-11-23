@@ -2,7 +2,7 @@ import { router } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
 import { useState } from 'react';
 import { Switch, Text, View } from 'react-native';
-import { useAction, useAppRuntime, usePacksManager, usePreferences, useTodayDiary } from '../src/app/AppRuntimeContext';
+import { useAction, useAIStatus, useAppRuntime, usePacksManager, usePreferences, useTodayDiary } from '../src/app/AppRuntimeContext';
 import { localDate, type AppPreferences } from '../src/app/controller';
 import type { GoalPeriod, TargetEstimate } from '../src/domain';
 import { InlineKeypad } from '../src/ui/components/doop';
@@ -161,12 +161,39 @@ function Backup() {
     <ErrorMessage message={action.error} />{!!message && <Muted>{message}</Muted>}
   </Card>;
 }
+function AIAndPrivacy({ preferences }: { preferences: AppPreferences | undefined }) {
+  const { controller } = useAppRuntime();
+  const ai = useAIStatus();
+  const action = useAction();
+  return <>
+    <Card><Heading>AI · ChatGPT</Heading>
+      <View style={ui.row}><View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: ai.value && ai.value.mode !== 'disconnected' ? colors.success : colors.muted }} />
+        <Muted>{ai.loading ? 'Checking connection…' : ai.value?.mode === 'api_key' ? 'Connected · API key' : ai.value?.mode === 'chatgpt_oauth' ? 'Connected · ChatGPT plan' : 'Not connected'}</Muted></View>
+      <Button label="ChatGPT settings →" onPress={() => router.push('/chatgpt')} /><ErrorMessage message={ai.error} />
+    </Card>
+    <Card><Heading>Barcode</Heading><View style={[ui.row, { justifyContent: 'space-between' }]}>
+      <View style={{ flex: 1 }}><Label>Look up unknown barcodes on Open Food Facts</Label></View>
+      <View style={{ minWidth: MIN_TOUCH_TARGET, minHeight: MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' }}>
+        <Switch accessibilityLabel="Look up unknown barcodes on Open Food Facts" value={preferences?.allowLiveOffLookup ?? false}
+          disabled={!preferences || action.busy} trackColor={{ false: colors.track, true: colors.accent }} thumbColor={colors.ink}
+          onValueChange={allowLiveOffLookup => void action.run(() => controller.updatePreferences({ allowLiveOffLookup }))} />
+      </View></View><Muted>Sends barcode digits only to world.openfoodfacts.org; results cached separately</Muted>
+      <ErrorMessage message={action.error} />
+    </Card>
+    <Card><Heading>What&apos;s sent where</Heading>
+      <Label>OpenAI</Label><Muted>Meal text or photo, only when you use AI. Never your diary.</Muted>
+      <Label>Open Food Facts</Label><Muted>Barcode digits only, if live lookup is turned on.</Muted>
+      <Label>Food packs</Label><Muted>Stored locally on this device. Zero search traffic.</Muted>
+      <Label>Dictation</Label><Muted>Handled by your device keyboard.</Muted>
+    </Card>
+  </>;
+}
 export default function Settings() {
   const today = useTodayDiary();
   const preferences = usePreferences();
   return <Page title="Settings" action={<Button label="Done" onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)')} />}>
     <ErrorMessage message={today.error ?? preferences.error} />
     {today.value && preferences.value && <><DailyTargets key={`${today.value.goal?.id ?? 'new'}:${preferences.value.energyUnit}:${preferences.value.weightUnit}`} goal={today.value.goal} preferences={preferences.value} /><Preferences key={preferences.value.mealSections.join('|')} preferences={preferences.value} /></>}
-    <FoodDatabases /><Backup />
+    <FoodDatabases /><AIAndPrivacy preferences={preferences.value} /><Backup />
   </Page>;
 }

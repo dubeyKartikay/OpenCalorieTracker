@@ -1,7 +1,15 @@
+import { Platform } from 'react-native';
+
+// The root layout registers the Manrope alias on native and web. Keep a sans-serif
+// fallback on web while that face downloads or if a device cannot load it.
+const manrope = Platform.OS === 'web'
+  ? 'Manrope, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+  : 'Manrope';
+
 /** Text stack. Manrope carries both prose and figures. */
 export const fontFamily = {
-  body: 'Manrope',
-  number: 'Manrope',
+  body: manrope,
+  number: manrope,
 } as const;
 
 /** Font weights as React Native expects them: strings, not numbers. */

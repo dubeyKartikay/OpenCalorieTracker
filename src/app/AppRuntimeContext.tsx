@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { bootstrap } from './bootstrap';
 import type { AppRuntime } from './runtime';
 import { localDate } from './controller';
+import type { AppController } from './controller';
 import { colors, MIN_TOUCH_TARGET, spacing } from '../ui/tokens';
 
 const RuntimeContext = createContext<AppRuntime | null>(null);
@@ -97,4 +98,36 @@ export function useAction() {
     finally { pending.current = false; setBusy(false); }
   };
   return { busy, error, run };
+}
+
+export function useAIStatus() {
+  const { controller } = useAppRuntime(); const revision = controller.getRevision();
+  return useAsyncResource(useCallback(() => { void revision; return controller.getAIStatus(); }, [controller, revision]));
+}
+
+// Capture can start in Library and finish in Today. Keep its action state with the controller.
+type CaptureInput = Parameters<AppController['captureMealWithAI']>[0];
+const draftActions = new WeakMap<AppController, { busy: boolean; error: string | null; lastCapture: CaptureInput | null }>();
+export function useActiveDraft() {
+  const { controller } = useAppRuntime();
+  let state = draftActions.get(controller);
+  if (!state) { state = { busy: false, error: null, lastCapture: null }; draftActions.set(controller, state); }
+  const actionState = state;
+  const run = async <T,>(action: () => Promise<T>): Promise<T | undefined> => {
+    if (actionState.busy) return;
+    actionState.busy = true; actionState.error = null; controller.refresh();
+    try { return await action(); }
+    catch (reason) { actionState.error = reason instanceof Error ? reason.message : String(reason); return undefined; }
+    finally { actionState.busy = false; controller.refresh(); }
+  };
+  return { draft: controller.getActiveDraft(), busy: actionState.busy, error: actionState.error, lastCapture: actionState.lastCapture,
+    clearError: () => { actionState.error = null; controller.refresh(); },
+    capture: (input: CaptureInput) => run(() => { actionState.lastCapture = input; return controller.captureMealWithAI(input); }),
+    answerQuestion: (questionId: string, optionId: string) => run(() => controller.answerDraftQuestion(questionId, optionId)),
+    removeItem: (itemId: string) => controller.removeDraftItem(itemId),
+    confirmAll: (idempotencyPrefix?: string) => run(async () => {
+      const entries = await controller.confirmActiveDraft(idempotencyPrefix); actionState.lastCapture = null; return entries;
+    }),
+    discard: () => { actionState.error = null; actionState.lastCapture = null; controller.discardActiveDraft(); },
+  };
 }
