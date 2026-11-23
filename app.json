@@ -6,6 +6,13 @@
     "scheme": "opencalorietracker",
     "orientation": "default",
     "userInterfaceStyle": "dark",
+    "ios": {
+      "bundleIdentifier": "org.opencalorietracker.app",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "org.opencalorietracker.app"
+    },
     "plugins": [
       [
         "expo-router",
@@ -17,6 +24,13 @@
         "expo-sqlite",
         {
           "enableFTS": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow OpenCalorieTracker to take meal or nutrition label photos only when you choose camera capture.",
+          "photosPermission": "Allow OpenCalorieTracker to pick a meal or nutrition label photo only when you choose photo upload."
         }
       ],
       "expo-status-bar",

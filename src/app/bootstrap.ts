@@ -1,7 +1,8 @@
 import type { AppRuntime } from './runtime';
 import { Asset } from 'expo-asset';
 import { FoodSourceRegistry } from '../catalog';
-import { DiaryRepo, GoalsRepo, LibraryRepo, migrateDatabase, PacksRepo } from '../storage';
+import { DiaryRepo, GoalsRepo, HealthSyncRepo, LibraryRepo, migrateDatabase, PacksRepo, PhotoDraftRepo, WaterRepo } from '../storage';
+import { createUnavailableHealthPort } from '../health';
 import { initOffCache } from '../barcode';
 import { generateId } from '../domain';
 import { AppController } from './controller';
@@ -24,7 +25,9 @@ export async function bootstrap(): Promise<AppRuntime> {
     offCacheDb = await createWebSqliteDriver({ name: 'off_cache.sqlite' }); await initOffCache(offCacheDb);
     const packs = new PacksRepo(userDb);
     app = new AppController({ userDb, offCacheDb, credentials: createCredentialStore(), catalog: new FoodSourceRegistry(userDb),
-      diary: new DiaryRepo(userDb), library: new LibraryRepo(userDb), goals: new GoalsRepo(userDb), packs });
+      diary: new DiaryRepo(userDb), library: new LibraryRepo(userDb), goals: new GoalsRepo(userDb), packs,
+      water: new WaterRepo(userDb), healthSync: new HealthSyncRepo(userDb), photoDrafts: new PhotoDraftRepo(userDb),
+      healthPort: createUnavailableHealthPort('web') });
     const controller = app;
     const notices: string[] = [];
     const installBytes = async (bytes: Uint8Array, path: string, priority: number) => {
@@ -59,12 +62,11 @@ export async function bootstrap(): Promise<AppRuntime> {
     return { controller, notices, importPackFromFile,
       importSampleCustomPack: () => installAsset(custom, 'bundled:custom', 50),
       readTextFile: async uri => { const response = await fetch(uri); if (!response.ok) throw new Error('Backup could not be read'); return response.text(); },
-      saveBackup: async json => {
-        const label = `open-calorie-tracker-${Date.now()}.json`;
-        const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-        try { const link = document.createElement('a'); link.href = url; link.download = label; document.body.appendChild(link); link.click(); link.remove(); }
+      saveBackup: async (contents, filename = 'open-calorie-tracker-backup-v1.json') => {
+        const url = URL.createObjectURL(new Blob([contents], { type: filename.toLowerCase().endsWith('.csv') ? 'text/csv;charset=utf-8' : 'application/json' }));
+        try { const link = document.createElement('a'); link.href = url; link.download = filename; document.body.appendChild(link); link.click(); link.remove(); }
         finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
-        return label;
+        return filename;
       } };
   } catch (error) {
     if (app) await app.close(); else { await offCacheDb?.closeAsync(); await userDb.closeAsync(); }

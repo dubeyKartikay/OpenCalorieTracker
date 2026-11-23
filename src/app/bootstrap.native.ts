@@ -1,8 +1,10 @@
 import { Asset } from 'expo-asset';
+import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import { openDatabaseAsync } from 'expo-sqlite';
 import { FoodSourceRegistry } from '../catalog';
-import { createExpoSqliteDriver, DiaryRepo, GoalsRepo, LibraryRepo, migrateDatabase, PacksRepo } from '../storage';
+import { createExpoSqliteDriver, DiaryRepo, GoalsRepo, HealthSyncRepo, LibraryRepo, migrateDatabase, PacksRepo, PhotoDraftRepo, WaterRepo } from '../storage';
+import { createUnavailableHealthPort } from '../health';
 import { generateId } from '../domain';
 import { initOffCache } from '../barcode';
 import { createCredentialStore } from './credentials.native';
@@ -36,7 +38,9 @@ export async function bootstrap(): Promise<AppRuntime> {
     offCacheDb = createExpoSqliteDriver(await openDatabaseAsync('off_cache.sqlite')); await initOffCache(offCacheDb);
     const packs = new PacksRepo(userDb);
     const app = new AppController({ userDb, offCacheDb, credentials: createCredentialStore(), catalog: new FoodSourceRegistry(userDb),
-      diary: new DiaryRepo(userDb), library: new LibraryRepo(userDb), goals: new GoalsRepo(userDb), packs });
+      diary: new DiaryRepo(userDb), library: new LibraryRepo(userDb), goals: new GoalsRepo(userDb), packs,
+      water: new WaterRepo(userDb), healthSync: new HealthSyncRepo(userDb), photoDrafts: new PhotoDraftRepo(userDb),
+      healthPort: createUnavailableHealthPort(Platform.OS) });
     controller = app;
     const importPackFromFile = async (uri: string, priority = 50) => {
       const target = `${dir}${generateId()}.octpack.sqlite`;
@@ -61,9 +65,9 @@ export async function bootstrap(): Promise<AppRuntime> {
     return { controller: app, notices, importPackFromFile,
       importSampleCustomPack: () => installAsset(bundled.custom, 50),
       readTextFile: uri => FileSystem.readAsStringAsync(uri),
-      saveBackup: async json => {
-        const path = `${FileSystem.documentDirectory}open-calorie-tracker-${Date.now()}.json`;
-        await FileSystem.writeAsStringAsync(path, json); return path;
+      saveBackup: async (contents, filename = 'open-calorie-tracker-backup-v1.json') => {
+        const path = `${FileSystem.documentDirectory}${filename}`;
+        await FileSystem.writeAsStringAsync(path, contents); return path;
       } };
   } catch (error) {
     if (controller) await controller.close(); else { await offCacheDb?.closeAsync(); await userDb.closeAsync(); }

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   colors,
@@ -10,6 +10,7 @@ import {
   tabularNums,
 } from '../../tokens';
 import { SourceBadge } from '../doop';
+import { Button, Input, Muted, ui } from '../primitives';
 
 export interface SparklePromptRowProps {
   summary: string;
@@ -59,6 +60,9 @@ export interface DraftItemCardProps {
   fiberUnknown?: boolean | undefined;
   onPressEdit?: (() => void) | undefined;
   onRemove?: (() => void) | undefined;
+  currentAmount?: number | undefined;
+  currentUnit?: string | undefined;
+  onChangeAmount?: ((nextAmount: number) => void) | undefined;
 }
 
 /**
@@ -81,7 +85,14 @@ export function DraftItemCard({
   fiberUnknown,
   onPressEdit,
   onRemove,
+  currentAmount,
+  currentUnit,
+  onChangeAmount,
 }: DraftItemCardProps) {
+  const [editing, setEditing] = useState(false);
+  const [amount, setAmount] = useState('');
+  const parsedAmount = Number(amount.trim().replace(',', '.'));
+  const validAmount = amount.trim() !== '' && Number.isFinite(parsedAmount) && parsedAmount > 0;
   const estimated = portionCertainty === 'estimated';
   const showApprox =
     estimated && !energyText.startsWith('≈') && !energyText.startsWith('~');
@@ -143,7 +154,7 @@ export function DraftItemCard({
   );
 
   return (
-    <View style={styles.itemCard}>
+    <View style={{ gap: spacing.s8 }}><View style={styles.itemCard}>
       {onPressEdit != null ? (
         <Pressable
           accessibilityRole="button"
@@ -172,6 +183,19 @@ export function DraftItemCard({
           <Text style={styles.removeGlyph}>×</Text>
         </Pressable>
       ) : null}
+    </View>
+      {onChangeAmount && <View style={{ gap: spacing.s8 }}>
+        <Button label={editing ? 'Close amount' : 'Edit amount'} quiet onPress={() => { setAmount(String(currentAmount ?? '')); setEditing(value => !value); }} />
+        {editing && <>
+          <Input label={`Amount${currentUnit ? ` (${currentUnit})` : ''}`} value={amount} keyboardType="decimal-pad" onChangeText={next => {
+            setAmount(next);
+            const value = Number(next.trim().replace(',', '.'));
+            if (next.trim() && Number.isFinite(value) && value > 0) onChangeAmount(value);
+          }} />
+          {!validAmount && <Muted>Enter an amount greater than zero.</Muted>}
+          <Muted>Nutrition recalculates instantly on this device.</Muted>
+        </>}
+      </View>}
     </View>
   );
 }
@@ -244,6 +268,7 @@ export interface MealDraftPanelProps {
   onDismissAll: () => void;
   confirming?: boolean | undefined;
   children?: ReactNode | undefined;
+  onSaveAsMeal?: ((name: string) => void) | undefined;
 }
 
 /**
@@ -260,7 +285,10 @@ export function MealDraftPanel({
   onDismissAll,
   confirming,
   children,
+  onSaveAsMeal,
 }: MealDraftPanelProps) {
+  const [naming, setNaming] = useState(false);
+  const [mealName, setMealName] = useState('');
   const countText = `${itemCount} ${itemCount === 1 ? 'item' : 'items'}`;
   const hasFiberNote = fiberNote != null && fiberNote !== '';
   const confirmLabel = `Confirm to ${mealLabel}`;
@@ -289,6 +317,14 @@ export function MealDraftPanel({
 
       <Text style={styles.disclosure}>Estimates can be wrong. Not medical advice.</Text>
 
+      {onSaveAsMeal && <View style={{ gap: spacing.s8 }}>
+        <Button label={naming ? 'Close meal name' : 'Save as meal'} disabled={confirming === true} quiet onPress={() => setNaming(value => !value)} />
+        {naming && <>
+          <Input label="Saved meal name" value={mealName} onChangeText={setMealName} editable={!confirming} placeholder="e.g. My usual lunch" />
+          <View style={ui.wrap}><Button label="Save reviewed meal" disabled={confirming || !mealName.trim() || itemCount === 0} onPress={() => onSaveAsMeal(mealName.trim())} /></View>
+          <Muted>Saves these reviewed portions to your library. Confirm below to log them.</Muted>
+        </>}
+      </View>}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={confirmLabel}

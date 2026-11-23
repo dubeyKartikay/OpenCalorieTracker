@@ -1,10 +1,12 @@
 import { z } from 'zod';
-import { calculateBatchServing, calculateNutrition, calculateRecipeTotal, calculateWeightTrend, estimateDailyTarget, exportBundleV1Schema, foodRecordSchema, generateId, getActiveGoalForDate, isoDateSchema, nutrientKeys, resolveQuantityToBasis, scaleNutrients, sumNutrients } from '../domain';
-import type { DiaryDay, DiaryEntrySnapshot, FoodRecord, FoodUnit, GoalPeriod, NutrientAggregate, Quantity, RecipeBatch, RecipeIngredient, TargetInputs } from '../domain';
+import { calculateBatchServing, calculateNutrition, calculateRecipeTotal, calculateWeightTrend, estimateDailyTarget, exportBundleV1Schema, foodRecordSchema, formatDiaryCsv, formatWeightTrendsCsv, generateId, getActiveGoalForDate, isoDateSchema, nutrientKeys, resolveQuantityToBasis, scaleNutrients, sumNutrients } from '../domain';
+import type { DiaryDay, DiaryEntrySnapshot, FoodRecord, FoodUnit, GoalPeriod, NutrientAggregate, OfflinePhotoDraft, Quantity, RecipeBatch, RecipeIngredient, TargetInputs, WaterLog } from '../domain';
 import { UserLibraryAdapter, validatePackDatabase } from '../catalog';
 import type { FoodSourceRegistry } from '../catalog';
-import { DiaryRepo, GoalsRepo, LibraryRepo, exportBundleV1, foodKey, restoreBundleV1 } from '../storage';
+import { DiaryRepo, GoalsRepo, HealthSyncRepo, LibraryRepo, PhotoDraftRepo, WaterRepo, exportBundleV1, foodKey, restoreBundleV1 } from '../storage';
 import type { PacksRepo, SavedMeal, SqlDatabase } from '../storage';
+import { createUnavailableHealthPort, HealthSyncEngine } from '../health';
+import type { HealthCapability, HealthPermissionsState, HealthPermissionScope, HealthPlatformPort, HealthWeightImportResult } from '../health';
 import { BarcodeResolver, parseNutritionLabelText } from '../barcode';
 import type { BarcodeResolution } from '../barcode';
 import { AIError, OpenAIResponsesProvider, applyClarifyingAnswer, buildAuthorizationUrl, captureMealDraft, exchangeAuthorizationCode, extractNutritionLabel, generatePkcePair } from '../ai';
@@ -41,6 +43,10 @@ export interface ControllerDependencies {
   credentials?: CredentialStore;
   aiProviderFactory?: (token: string, mode: 'chatgpt_oauth' | 'api_key') => AIProvider;
   loopbackAuth?: LoopbackAuthPort | null;
+  water?: WaterRepo;
+  healthSync?: HealthSyncRepo;
+  photoDrafts?: PhotoDraftRepo;
+  healthPort?: HealthPlatformPort;
 }
 export interface UndoAction { label: string; run: () => Promise<void> }
 
@@ -50,6 +56,9 @@ const preferencesSchema = z.strictObject({
   mealSections: z.array(z.string().trim().min(1)).min(1).default(() => [...MEALS]),
   allowLiveOffLookup: z.boolean().default(false), aiModel: z.string().trim().min(1).default('gpt-5-mini'),
   aiConsentAccepted: z.boolean().default(false),
+  leadMetric: z.enum(['calories', 'protein', 'fiber', 'water']).default('calories'),
+  healthNutritionWriteEnabled: z.boolean().default(false),
+  healthWeightReadEnabled: z.boolean().default(false),
 });
 export type AppPreferences = z.infer<typeof preferencesSchema>;
 export type BatchServingAmount = { mode: 'grams'; grams: number } | { mode: 'fraction'; fraction: number };
@@ -90,12 +99,23 @@ export class AppController {
   private foodCounts = new Map<string, number>();
   private readonly barcodeResolver: BarcodeResolver;
   private readonly credentials: CredentialStore;
+  private readonly water: WaterRepo;
+  private readonly photoDrafts: PhotoDraftRepo;
+  private readonly healthPort: HealthPlatformPort;
+  private readonly healthEngine: HealthSyncEngine;
   private activeDraft: { proposal: MealDraftProposal; meal: string; date: string } | null = null;
   private draftGeneration = 0;
   private confirmingDraft: Promise<DiaryEntrySnapshot[]> | null = null;
   undoAction: UndoAction | null = null;
   constructor(deps: ControllerDependencies) {
     this.deps = deps;
+    this.water = deps.water ?? new WaterRepo(deps.userDb);
+    this.photoDrafts = deps.photoDrafts ?? new PhotoDraftRepo(deps.userDb);
+    this.healthPort = deps.healthPort ?? createUnavailableHealthPort('web');
+    this.healthEngine = new HealthSyncEngine({ port: this.healthPort,
+      records: deps.healthSync ?? new HealthSyncRepo(deps.userDb), weights: deps.goals,
+      isNutritionWriteEnabled: () => this.getPreferences().then(p => p.healthNutritionWriteEnabled),
+      isWeightReadEnabled: () => this.getPreferences().then(p => p.healthWeightReadEnabled) });
     this.credentials = deps.credentials ?? createMemoryCredentialStore();
     this.barcodeResolver = deps.barcodeResolver ?? new BarcodeResolver({ catalog: deps.catalog,
       offCacheDb: deps.offCacheDb ?? null, getAllowLiveOffLookup: () => this.getPreferences().then(p => p.allowLiveOffLookup) });
@@ -129,8 +149,12 @@ export class AppController {
       portion_certainty: 'stated', estimate_range: null, draft_state: 'confirmed',
     };
   }
-  private added(entry: DiaryEntrySnapshot) {
-    this.undoAction = { label: `Added to ${entry.meal}`, run: async () => { await this.deps.diary.deleteEntry(entry.id); } };
+  private async added(entry: DiaryEntrySnapshot) {
+    await this.healthEngine.syncEntryConfirmed(entry);
+    this.undoAction = { label: `Added to ${entry.meal}`, run: async () => {
+      await this.deps.diary.deleteEntry(entry.id);
+      await this.healthEngine.syncEntryDeleted(entry.id);
+    } };
     this.refresh();
     return entry;
   }
@@ -140,6 +164,44 @@ export class AppController {
     return this.added(await this.deps.diary.confirmEntry(this.snapshot(input, preview)));
   }
   getPreferences() { return readPreferences(this.deps.userDb); }
+  async addWater(amountMl: number, date = localDate()): Promise<WaterLog> {
+    if (!Number.isFinite(amountMl) || amountMl <= 0) throw new Error('Enter an amount greater than zero');
+    isoDateSchema.parse(date);
+    const log = await this.water.addWaterLog({ id: generateId(), date, occurred_at: new Date().toISOString(), amount_ml: amountMl });
+    this.undoAction = { label: `Added ${amountMl} ml water`, run: async () => { await this.water.deleteWaterLog(log.id); } };
+    this.refresh(); return log;
+  }
+  async deleteWaterLog(id: string): Promise<WaterLog | null> {
+    const log = await this.water.deleteWaterLog(id);
+    if (log) this.undoAction = { label: 'Water entry removed', run: async () => { await this.water.addWaterLog(log); } };
+    this.refresh(); return log;
+  }
+  async getDailyWater(date = localDate()): Promise<{ totalMl: number; logs: WaterLog[] }> {
+    const logs = await this.water.listWaterLogs(date);
+    return { totalMl: logs.reduce((total, log) => total + log.amount_ml, 0), logs };
+  }
+  async saveOfflinePhotoDraft(input: { meal: string; note?: string; imageDataUrl: string; date?: string }): Promise<OfflinePhotoDraft> {
+    const draft = await this.photoDrafts.saveDraft({ id: generateId(), date: input.date ?? localDate(), meal: input.meal,
+      note: input.note ?? '', image_data_url: input.imageDataUrl, created_at: new Date().toISOString() });
+    this.refresh(); return draft;
+  }
+  listOfflinePhotoDrafts(): Promise<OfflinePhotoDraft[]> { return this.photoDrafts.listDrafts(); }
+  async deleteOfflinePhotoDraft(id: string): Promise<OfflinePhotoDraft | null> {
+    const draft = await this.photoDrafts.deleteDraft(id); this.refresh(); return draft;
+  }
+  async getHealthStatus(): Promise<{ capability: HealthCapability; permissions: HealthPermissionsState; nutritionWriteEnabled: boolean; weightReadEnabled: boolean }> {
+    const preferences = await this.getPreferences();
+    return { capability: this.healthPort.getCapability(), permissions: await this.healthPort.getPermissions(),
+      nutritionWriteEnabled: preferences.healthNutritionWriteEnabled, weightReadEnabled: preferences.healthWeightReadEnabled };
+  }
+  async requestHealthPermissions(scopes: HealthPermissionScope[]): Promise<HealthPermissionsState> {
+    const permissions = await this.healthPort.requestPermissions(scopes); this.refresh(); return permissions;
+  }
+  async syncWeightFromHealth(sinceIsoDate?: string): Promise<HealthWeightImportResult> {
+    const result = await this.healthEngine.importWeightSamples(sinceIsoDate);
+    if (result.imported > 0) this.refresh();
+    return result;
+  }
   async updatePreferences(patch: Partial<AppPreferences>) {
     const value = await this.deps.userDb.withTransactionAsync(tx => writePreferences(tx, patch));
     this.refresh(); return value;
@@ -170,7 +232,9 @@ export class AppController {
     const meal = await this.deps.userDb.withTransactionAsync(async tx => {
       const library = new LibraryRepo(tx);
       const old = input.id ? await library.getSavedMeal(input.id) : null;
-      return library.upsertSavedMeal({ id: input.id ?? generateId(), name: input.name, items: input.items,
+      // V1 ingredients persist the frozen food basis and portion; derived draft nutrition is recalculated on reuse.
+      const items = input.items.map(({ food, quantity }) => ({ food, quantity }));
+      return library.upsertSavedMeal({ id: input.id ?? generateId(), name: input.name, items,
         pinned: input.pinned ?? old?.pinned ?? false, use_count: old?.use_count ?? 0, last_used_at: old?.last_used_at ?? null });
     });
     this.refresh(); return meal;
@@ -263,7 +327,13 @@ export class AppController {
   }
   async deleteEntry(id: string) {
     const snapshot = await this.deps.diary.deleteEntry(id);
-    if (snapshot) this.undoAction = { label: 'Entry deleted', run: async () => { await this.deps.diary.restoreEntry(snapshot); } };
+    if (snapshot) {
+      await this.healthEngine.syncEntryDeleted(id);
+      this.undoAction = { label: 'Entry deleted', run: async () => {
+        const restored = await this.deps.diary.restoreEntry(snapshot);
+        await this.healthEngine.syncEntryConfirmed(restored);
+      } };
+    }
     this.refresh();
     return snapshot;
   }
@@ -289,6 +359,7 @@ export class AppController {
       }
       return created;
     });
+    for (const entry of copies) await this.healthEngine.syncEntryConfirmed(entry);
     if (copies.length) {
       this.undoAction = {
         label: toMeal ? `Copied to ${toMeal}` : `Copied ${copies.length} ${copies.length === 1 ? 'entry' : 'entries'}`,
@@ -297,6 +368,7 @@ export class AppController {
             const diary = new DiaryRepo(tx);
             for (const entry of copies) await diary.deleteEntry(entry.id);
           });
+          for (const entry of copies) await this.healthEngine.syncEntryDeleted(entry.id);
         },
       };
     }
@@ -327,10 +399,12 @@ export class AppController {
       }
       return copies;
     });
+    for (const entry of entries) await this.healthEngine.syncEntryConfirmed(entry);
     if (entries.length) this.undoAction = { label: `Copied to ${toMeal}`, run: async () => {
       await this.deps.userDb.withTransactionAsync(async tx => {
         const diary = new DiaryRepo(tx); for (const entry of entries) await diary.deleteEntry(entry.id);
       });
+      for (const entry of entries) await this.healthEngine.syncEntryDeleted(entry.id);
     } };
     this.refresh(); return entries;
   }
@@ -340,10 +414,14 @@ export class AppController {
       for (const id of new Set(ids)) { const entry = await diary.deleteEntry(id); if (entry) deleted.push(entry); }
       return deleted;
     });
+    for (const snapshot of snapshots) await this.healthEngine.syncEntryDeleted(snapshot.id);
     if (snapshots.length) this.undoAction = { label: 'Entries deleted', run: async () => {
-      await this.deps.userDb.withTransactionAsync(async tx => {
-        const diary = new DiaryRepo(tx); for (const snapshot of snapshots) await diary.restoreEntry(snapshot);
+      const restored = await this.deps.userDb.withTransactionAsync(async tx => {
+        const diary = new DiaryRepo(tx); const entries: DiaryEntrySnapshot[] = [];
+        for (const snapshot of snapshots) entries.push(await diary.restoreEntry(snapshot));
+        return entries;
       });
+      for (const entry of restored) await this.healthEngine.syncEntryConfirmed(entry);
     } };
     this.refresh(); return snapshots;
   }
@@ -357,10 +435,12 @@ export class AppController {
       }
       return { originals, moved };
     });
+    for (const entry of result.moved) await this.healthEngine.syncEntryConfirmed(entry);
     if (result.originals.length) this.undoAction = { label: 'Entries moved', run: async () => {
       await this.deps.userDb.withTransactionAsync(async tx => {
         const diary = new DiaryRepo(tx); for (const entry of result.originals) await diary.updateEntry(entry);
       });
+      for (const entry of result.originals) await this.healthEngine.syncEntryConfirmed(entry);
     } };
     this.refresh(); return result.moved;
   }
@@ -375,7 +455,11 @@ export class AppController {
         unknown_nutrient_counts: original.unknown_nutrient_counts ?? sumNutrients([nutrients]).unknownCount });
       return { original, updated };
     });
-    this.undoAction = { label: 'Portion updated', run: async () => { await this.deps.diary.updateEntry(original); } };
+    await this.healthEngine.syncEntryConfirmed(updated);
+    this.undoAction = { label: 'Portion updated', run: async () => {
+      await this.deps.diary.updateEntry(original);
+      await this.healthEngine.syncEntryConfirmed(original);
+    } };
     this.refresh(); return updated;
   }
   async day(date: string) {
@@ -471,6 +555,29 @@ export class AppController {
     for (const key of nutrientKeys) totals.unknownCount[key] = items.reduce((count, item) => count + item.unknownCount[key], 0);
     return totals;
   }
+  updateDraftItemQuantity(itemIndex: number, quantity: Quantity): void {
+    const draft = this.activeDraft;
+    if (!draft) throw new Error('No active draft');
+    if (this.confirmingDraft) throw new Error('The draft is being confirmed');
+    if (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= draft.proposal.items.length) throw new Error('Draft item not found');
+    if (!Number.isFinite(quantity.amount) || quantity.amount <= 0) throw new Error('Enter an amount greater than zero');
+    const item = draft.proposal.items[itemIndex]!;
+    const nutrients = calculateNutrition(item.food, quantity);
+    const { unknownCount } = sumNutrients([nutrients]);
+    const updated = { ...item, quantity, nutrients, unknownCount, portion_certainty: 'stated' as const, estimate_range: null };
+    const items = [...draft.proposal.items]; items[itemIndex] = updated;
+    const baseItems = [...draft.proposal.base_items];
+    if (itemIndex < baseItems.length) baseItems[itemIndex] = updated;
+    this.activeDraft = { ...draft, proposal: { ...draft.proposal, items, base_items: baseItems, totals: this.draftTotals(items) } };
+    this.draftGeneration++; this.refresh();
+  }
+  async saveActiveDraftAsMeal(name: string): Promise<SavedMeal> {
+    if (!name.trim()) throw new Error('Enter a meal name');
+    const draft = this.activeDraft;
+    if (!draft?.proposal.items.length) throw new Error('No active draft items');
+    const items: RecipeIngredient[] = draft.proposal.items.map(({ food, quantity, nutrients }) => ({ food, quantity, nutrients }));
+    return this.saveSavedMeal({ name: name.trim(), items });
+  }
   removeDraftItem(itemId: string): void {
     const draft = this.activeDraft; if (!draft || this.confirmingDraft) return;
     const index = /^\d+$/.test(itemId) ? Number(itemId) : draft.proposal.items.findIndex(item => item.food.id === itemId);
@@ -515,12 +622,14 @@ export class AppController {
           estimate_range: item.estimate_range ? { min_g: item.estimate_range.min_g, max_g: item.estimate_range.max_g } : null }));
       }
       return entries;
-    }).then(entries => {
+    }).then(async entries => {
+      for (const entry of entries) await this.healthEngine.syncEntryConfirmed(entry);
       if (this.activeDraft === draft) this.activeDraft = null;
       this.undoAction = { label: `Added ${entries.length} ${entries.length === 1 ? 'item' : 'items'} to ${draft.meal}`, run: async () => {
         await this.deps.userDb.withTransactionAsync(async tx => {
           const diary = new DiaryRepo(tx); for (const entry of entries) await diary.deleteEntry(entry.id);
         });
+        for (const entry of entries) await this.healthEngine.syncEntryDeleted(entry.id);
       } };
       this.refresh(); return entries;
     }).finally(() => { this.confirmingDraft = null; });
@@ -569,10 +678,13 @@ export class AppController {
   async setPackEnabled(id: string, enabled: boolean) { await this.deps.catalog.setPackEnabled(id, enabled); this.refresh(); }
   async setPackPriority(id: string, priority: number) { await this.deps.catalog.setPackPriority(id, priority); this.refresh(); }
   async exportJson() { return JSON.stringify(await exportBundleV1(this.deps.userDb), null, 2); }
+  async exportDiaryCsv(): Promise<string> { return formatDiaryCsv(await this.deps.diary.listDiaryDays()); }
+  async exportWeightCsv(): Promise<string> { return formatWeightTrendsCsv(calculateWeightTrend(await this.deps.goals.listWeighIns())); }
   previewRestore(json: string) {
     const bundle = exportBundleV1Schema.parse(JSON.parse(json));
     return { bundle, days: bundle.diary_days.length, entries: bundle.diary_days.reduce((sum, day) => sum + day.entries.length, 0),
-      foods: bundle.custom_foods.length, packs: bundle.packs.length, goals: bundle.goal_periods.length, weighIns: bundle.weigh_ins.length };
+      foods: bundle.custom_foods.length, packs: bundle.packs.length, goals: bundle.goal_periods.length, weighIns: bundle.weigh_ins.length,
+      waterLogs: bundle.water_logs.length };
   }
   async restoreJson(json: string, mode: 'merge' | 'replace') {
     const { bundle } = this.previewRestore(json);

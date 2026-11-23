@@ -1,10 +1,11 @@
 import { router } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
 import { useState } from 'react';
-import { Switch, Text, View } from 'react-native';
-import { useAction, useAIStatus, useAppRuntime, usePacksManager, usePreferences, useTodayDiary } from '../src/app/AppRuntimeContext';
+import { ScrollView, Switch, Text, View } from 'react-native';
+import { useAction, useAIStatus, useAppRuntime, useHealthStatus, usePacksManager, usePreferences, useTodayDiary } from '../src/app/AppRuntimeContext';
 import { localDate, type AppPreferences } from '../src/app/controller';
 import type { GoalPeriod, TargetEstimate } from '../src/domain';
+import type { HealthPermissionScope } from '../src/health';
 import { InlineKeypad } from '../src/ui/components/doop';
 import { Badge, Button, Card, energy, ErrorMessage, Heading, Input, Label, Muted, number, Page, ui } from '../src/ui/components/primitives';
 import { colors, MIN_TOUCH_TARGET } from '../src/ui/tokens';
@@ -118,6 +119,8 @@ function Preferences({ preferences }: { preferences: AppPreferences }) {
     <Button key={energyUnit} label={energyUnit} selected={preferences.energyUnit === energyUnit} disabled={action.busy} onPress={() => void action.run(() => controller.updatePreferences({ energyUnit }))} />)}</View>
     <Muted>Weight</Muted><View style={ui.wrap}>{(['kg', 'lb'] as const).map(weightUnit =>
       <Button key={weightUnit} label={weightUnit} selected={preferences.weightUnit === weightUnit} disabled={action.busy} onPress={() => void action.run(() => controller.updatePreferences({ weightUnit }))} />)}</View>
+    <Heading>Dashboard lead metric</Heading><View style={ui.wrap}>{([['calories', 'Calories'], ['protein', 'Protein'], ['fiber', 'Fiber'], ['water', 'Water']] as const).map(([leadMetric, label]) =>
+      <Button key={leadMetric} label={label} selected={preferences.leadMetric === leadMetric} disabled={action.busy} onPress={() => void action.run(() => controller.updatePreferences({ leadMetric }))} />)}</View>
     <Heading>Meal sections</Heading>{meals.map((meal, index) => <View key={index} style={[ui.row, { alignItems: 'flex-end' }]}><View style={{ flex: 1 }}><Input label={`Meal ${index + 1}`} value={meal} onChangeText={value => { setMeals(old => old.map((item, position) => position === index ? value : item)); setSaved(false); }} /></View>
       <Button label="×" accessibilityLabel={`Remove meal ${index + 1}`} disabled={meals.length === 1} onPress={() => { setMeals(old => old.filter((_, position) => position !== index)); setSaved(false); }} /></View>)}
     <View style={ui.wrap}><Button label="+ Meal section" onPress={() => { setMeals(old => [...old, '']); setSaved(false); }} />
@@ -136,16 +139,30 @@ function Backup() {
   const [preview, setPreview] = useState<ReturnType<typeof runtime.controller.previewRestore> | null>(null);
   const [path, setPath] = useState('');
   const [message, setMessage] = useState('');
+  const [csv, setCsv] = useState('');
+  const [csvStatus, setCsvStatus] = useState('');
   const action = useAction();
   const updateJson = (text: string) => { setJson(text); setPreview(null); setMessage(''); };
+  const exportCsv = (kind: 'diary' | 'weight') => void action.run(async () => {
+    const contents = kind === 'diary' ? await runtime.controller.exportDiaryCsv() : await runtime.controller.exportWeightCsv();
+    setCsv(contents); setCsvStatus('CSV ready to copy. Saving file…');
+    const savedPath = await runtime.saveBackup(contents, `open-calorie-tracker-${kind}.csv`);
+    setCsvStatus(`${kind === 'diary' ? 'Diary' : 'Weight'} CSV saved: ${savedPath}`);
+  });
   return <Card><Heading>Data &amp; Backup</Heading>
+    <View style={ui.wrap}><Button label="Export Diary CSV" disabled={action.busy} onPress={() => exportCsv('diary')} />
+      <Button label="Export Weight CSV" disabled={action.busy} onPress={() => exportCsv('weight')} /></View>
+    {!!csvStatus && <Text selectable accessibilityLiveRegion="polite" style={ui.muted}>{csvStatus}</Text>}
+    {!!csv && <View style={{ gap: 8 }}><Muted>CSV preview · select and copy</Muted>
+      <ScrollView style={{ maxHeight: 240 }} nestedScrollEnabled><Text selectable accessibilityLabel="Exported CSV preview" style={ui.text}>{csv}</Text></ScrollView>
+    </View>}
     <Button label="Export JSON (v1)" disabled={action.busy} onPress={() => void action.run(async () => {
       const exported = await runtime.controller.exportJson();
       updateJson(exported); setPreview(runtime.controller.previewRestore(exported));
       setPath(await runtime.saveBackup(exported));
     })} />
     {!!path && <Text selectable style={ui.muted}>Saved backup: {path}</Text>}
-    <Muted>V1 includes frozen diary snapshots, custom foods, recipes, batches, goals, weigh-ins and pack metadata. Pack files, saved meals, personal units, barcode links, learned portions and local settings are not included.</Muted>
+    <Muted>V1 includes frozen diary snapshots, water logs, custom foods, recipes, batches, goals, weigh-ins and pack metadata. Pack files, saved meals, offline photo drafts, personal units, barcode links, learned portions and local settings are not included.</Muted>
     <Button label="Open JSON backup file" disabled={action.busy} onPress={() => void action.run(async () => {
       const picked = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true });
       if (!picked.canceled && picked.assets[0]) updateJson(await runtime.readTextFile(picked.assets[0].uri));
@@ -153,12 +170,48 @@ function Backup() {
     <Input label="Backup JSON · copy or paste" value={json} onChangeText={updateJson} multiline autoCapitalize="none" autoCorrect={false} style={{ minHeight: 160, maxHeight: 320, textAlignVertical: 'top' }} />
     <Button label="Validate & preview restore" disabled={action.busy || !json.trim()} onPress={() => void action.run(async () => { setPreview(runtime.controller.previewRestore(json)); })} />
     {preview && <><Label style={ui.number}>{preview.days} days · {preview.entries} entries · {preview.foods} foods · {preview.packs} pack records</Label>
-      <Muted>{preview.bundle.recipes.length} recipes · {preview.bundle.recipe_batches.length} batches · {preview.goals} goals · {preview.weighIns} weigh-ins</Muted>
+      <Muted>{preview.bundle.recipes.length} recipes · {preview.bundle.recipe_batches.length} batches · {preview.goals} goals · {preview.weighIns} weigh-ins · {preview.waterLogs} water logs</Muted>
       <Muted>Merge keeps existing records on conflicts. Replace clears existing personal data and local settings. Restored pack metadata needs its pack file imported again.</Muted>
       <View style={ui.wrap}>{(['merge', 'replace'] as const).map(mode => <Button key={mode} label={`Restore JSON · ${mode === 'merge' ? 'Merge' : 'Replace'}`} disabled={action.busy}
         onPress={() => void action.run(async () => { await runtime.controller.restoreJson(json, mode); setPreview(null); setMessage('Backup restored.'); })} />)}</View>
     </>}
     <ErrorMessage message={action.error} />{!!message && <Muted>{message}</Muted>}
+  </Card>;
+}
+function OSHealth({ preferences }: { preferences: AppPreferences | undefined }) {
+  const { controller } = useAppRuntime();
+  const health = useHealthStatus();
+  const action = useAction();
+  const [message, setMessage] = useState('');
+  const available = health.value?.capability.available === true;
+  const scopes: HealthPermissionScope[] = [];
+  if (preferences?.healthNutritionWriteEnabled) scopes.push('nutrition_write');
+  if (preferences?.healthWeightReadEnabled) scopes.push('weight_read');
+  return <Card><Heading>{health.value?.capability.label ?? 'OS Health'}</Heading>
+    <Muted>{health.loading ? 'Checking OS health support…' : health.value?.capability.description ?? 'Health status is unavailable.'}</Muted>
+    {([
+      ['healthNutritionWriteEnabled', 'Write confirmed nutrition', health.value?.permissions.nutritionWrite],
+      ['healthWeightReadEnabled', 'Read body weight', health.value?.permissions.weightRead],
+    ] as const).map(([key, label, granted]) => <View key={key} style={[ui.row, { justifyContent: 'space-between' }]}>
+      <View style={{ flex: 1 }}><Label>{label}</Label><Muted>{granted ? 'OS permission granted' : 'OS permission not granted'}</Muted></View>
+      <View style={{ minWidth: MIN_TOUCH_TARGET, minHeight: MIN_TOUCH_TARGET, justifyContent: 'center', alignItems: 'center' }}>
+        <Switch accessibilityLabel={label} value={preferences?.[key] ?? false} disabled={!preferences || action.busy || health.loading || !available}
+          trackColor={{ false: colors.track, true: colors.accent }} thumbColor={colors.ink}
+          onValueChange={enabled => void action.run(async () => { await controller.updatePreferences({ [key]: enabled }); setMessage(''); })} />
+      </View>
+    </View>)}
+    {available && <><Muted>Enable the data types you want, then request their OS permissions.</Muted>
+      <View style={ui.wrap}><Button label="Request permissions" disabled={action.busy || !scopes.length} onPress={() => void action.run(async () => {
+        const granted = await controller.requestHealthPermissions(scopes);
+        setMessage(`Nutrition write: ${granted.nutritionWrite ? 'granted' : 'not granted'} · Weight read: ${granted.weightRead ? 'granted' : 'not granted'}`);
+      })} />
+        <Button label="Sync weight now" disabled={action.busy || !preferences?.healthWeightReadEnabled || !health.value?.permissions.weightRead} onPress={() => void action.run(async () => {
+          const result = await controller.syncWeightFromHealth();
+          setMessage(`${result.imported} imported · ${result.skippedDuplicates + result.skippedOwnWrites} skipped (${result.skippedDuplicates} duplicates, ${result.skippedOwnWrites} from this app).${result.error ? ` ${result.error}` : ''}`);
+        })} /></View>
+    </>}
+    {!!message && <Text selectable accessibilityLiveRegion="polite" style={ui.muted}>{message}</Text>}
+    <ErrorMessage message={action.error ?? health.error} />
   </Card>;
 }
 function AIAndPrivacy({ preferences }: { preferences: AppPreferences | undefined }) {
@@ -185,6 +238,7 @@ function AIAndPrivacy({ preferences }: { preferences: AppPreferences | undefined
       <Label>Open Food Facts</Label><Muted>Barcode digits only, if live lookup is turned on.</Muted>
       <Label>Food packs</Label><Muted>Stored locally on this device. Zero search traffic.</Muted>
       <Label>Dictation</Label><Muted>Handled by your device keyboard.</Muted>
+      <Label>Apple Health / Health Connect</Label><Muted>Confirmed nutrition written and weight read only when you enable each permission.</Muted>
     </Card>
   </>;
 }
@@ -194,6 +248,6 @@ export default function Settings() {
   return <Page title="Settings" action={<Button label="Done" onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)')} />}>
     <ErrorMessage message={today.error ?? preferences.error} />
     {today.value && preferences.value && <><DailyTargets key={`${today.value.goal?.id ?? 'new'}:${preferences.value.energyUnit}:${preferences.value.weightUnit}`} goal={today.value.goal} preferences={preferences.value} /><Preferences key={preferences.value.mealSections.join('|')} preferences={preferences.value} /></>}
-    <FoodDatabases /><AIAndPrivacy preferences={preferences.value} /><Backup />
+    <FoodDatabases /><OSHealth preferences={preferences.value} /><AIAndPrivacy preferences={preferences.value} /><Backup />
   </Page>;
 }

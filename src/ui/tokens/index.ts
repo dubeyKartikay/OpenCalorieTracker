@@ -1,9 +1,8 @@
 /**
  * Doop "Tokyo Night" design tokens.
  *
- * Plain TypeScript constants with no React Native imports, so they can be read
- * from any layer (including pure logic and tests). Screens should import from
- * this barrel rather than from the individual modules.
+ * Shared UI constants and responsive layout helpers. Pure logic should import
+ * constant-only modules directly; screens can use this UI barrel.
  */
 import { colors, macroColors } from './colors';
 import { radius } from './radius';
@@ -16,6 +15,8 @@ export { radius } from './radius';
 export type { RadiusToken, RadiusTokenValue } from './radius';
 export { MIN_TOUCH_TARGET, SCREEN_GUTTER, spacing } from './spacing';
 export type { SpacingToken, SpacingTokenValue } from './spacing';
+export { EXPANDED_BREAKPOINT, TwoPane, useLayoutClass } from './layout';
+export type { LayoutClass, TwoPaneProps } from './layout';
 export {
   fontFamily,
   fontSize,

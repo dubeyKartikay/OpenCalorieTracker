@@ -3,6 +3,8 @@
 Status: proposed for review.  
 References: [PRD_V1.md](./PRD_V1.md) · [MARKET_RESEARCH.md](./MARKET_RESEARCH.md) · [MARKET_RESEARCH_ADDENDUM.md](./MARKET_RESEARCH_ADDENDUM.md) · Doop canvas (`App` / Icon Rail)
 
+> **Scope revision (23 November 2026).** V1 is mobile-only: iPhone, Android phone, iPad, Android tablet, Android foldable and iPhone Duo. Three items are out of V1: the desktop app and its Tauri v2 spike, optional cross-device sync (including sync hosting and sync E2EE), and the MyFitnessPal / competitor importer. Expo Web remains a developer and QA preview only, never a shipped target. Storage is local-first and single-device (`user.db` plus read-only `.octpack.sqlite` food packs), with versioned JSON backup/restore and CSV export.
+
 ---
 
 ## 1. System at a Glance
@@ -32,11 +34,12 @@ flowchart TD
 ```
 
 ### Core Invariants
-- **Offline-first, zero required backend.** Manual tracking, search, recipes, and export work with no network or account.
+- **Mobile-only, offline-first, zero required backend.** Manual tracking, search, recipes, and export work with no network or account. V1 targets iPhone, Android phone, iPad, Android tablet, Android foldable and iPhone Duo; no desktop or hosted-web client.
 - **Deterministic math only.** AI never calculates final nutrition or writes to `user.db`; it proposes drafts that require explicit user confirmation.
 - **Immutable history.** Confirmed entries store nutrition snapshots + source/version; editing recipes, custom foods, or packs never rewrites past logs.
 - **`NULL` ≠ `0`.** Unknown fiber/micronutrients stay `NULL` (shown as partial); unlogged meals/days stay empty (`—`), never `0 kcal`.
 - **Source energy preserved.** Store source `kcal` directly (do not force `4P + 4C + 9F`). Never apply a global mass↔volume density.
+- **Single device, portable data.** `user.db` on the device is the only live copy; versioned JSON backup/restore and CSV export are the movement path. No sync tables, no sync account, no E2EE in V1.
 
 ---
 
@@ -47,9 +50,12 @@ Start as **one Expo app** with enforced folder boundaries (no multi-package mono
 | Area | Choice | Notes |
 | --- | --- | --- |
 | App shell | React Native + Expo (CNG / Dev Build) | Required for SQLite FTS5, native OAuth loopback, FOSS camera decoder, OS Health |
+| Mobile targets (all of V1) | iOS: iPhone, iPad, iPhone Duo · Android: phone, tablet, foldable | One codebase, responsive and fold-aware layouts; no desktop or shipped web build |
 | Navigation & Gestures | `expo-router`, RNGH, Reanimated, `expo-haptics` | Tap and hold-and-swipe share one commit action |
 | Storage | `expo-sqlite` (FTS5 enabled) | Single source of truth; Zustand only when shared ephemeral UI state is needed |
-| Desktop (V1 candidate) | Tauri v2 + Expo Web | **Spike first:** WebView parity & native SQLite (Expo Web SQLite lacks FTS5 by default) |
+| Expo Web | Developer / QA preview only | Not a shipped target: Expo Web SQLite lacks FTS5 by default, so it can only exercise non-FTS surfaces |
+
+*Dropped 23 November 2026:* the Tauri v2 + Expo Web desktop candidate and its WebView/SQLite spike. Desktop is out of V1 scope.
 
 ```text
 src/
@@ -83,7 +89,7 @@ Separate writable personal data (`user.db`) from read-only **Food Packs** (`.oct
 | `goal_periods` | Target history | `effective_from_date` (never rewrites past targets) |
 | `weigh_ins` | Weight log | Manual + Health imports (`external_source_id` dedup); EWMA (`α=0.10`) computed in `domain` |
 
-*V1 Sync:* Defer outbox/tombstones until V1 sync protocol & E2EE choice are finalized. Ship full-fidelity versioned JSON export + tested restore in Alpha.
+*V1 Storage Scope:* V1 is local-first and single-device. `user.db` on the device is the only live copy; there is no sync outbox, no tombstone/conflict layer, and no sync E2EE decision. Portability is full-fidelity versioned JSON export + tested restore, plus CSV export, both shipped in Alpha. Sync is out of V1 scope (see the 23 November 2026 note at the top).
 
 ### `.octpack.sqlite` (Read-Only Common Pack Contract)
 ```sql
@@ -139,7 +145,7 @@ Separate **camera decoding** from **catalog resolution**; share one resolver acr
 | --- | --- | --- |
 | Android + iOS (FOSS build) | `react-native-vision-camera` + `zxing-cpp` (Apache-2.0, zero-copy YUV C++) | **100% FOSS / F-Droid clean** (requires native Dev Build & NDK testing) |
 | Expo default (`expo-camera`) | Bundled ML Kit on Android | Works without Play Services, but **bundles proprietary Google binaries** (fails F-Droid) |
-| Web / Desktop | `zxing-wasm` + image upload + manual keypad | **100% FOSS** |
+| ~~Web / Desktop~~ | ~~`zxing-wasm` + image upload + manual keypad~~ | **Removed 23 November 2026.** Neither web nor desktop ships in V1, so there is no image-upload decode path to maintain. All V1 targets use the native camera decoder above |
 
 ### Normalization & 4-Tier Cascade
 Store `(raw_code, symbology, normalized_gtin14)`—do **not** collapse into EAN-13 only (UPC-E expands to GTIN-12 → GTIN-14; EAN-8 pads directly to GTIN-8 → GTIN-14; GS1 embeds GTIN-14).
@@ -161,7 +167,14 @@ Measure **decode success rate** and **catalog match rate** separately.
 3. Compile and import a **second pack (your custom catalog)** and repeat—proving source interchangeability, cross-pack ranking, provenance, and immutable snapshots.
 
 ### Phase 0 Spikes (Before Locking Later Infrastructure)
-- [ ] **ChatGPT mobile OAuth:** `127.0.0.1` loopback listener + streaming Responses text/image + `text.format` check.
-- [ ] **FOSS barcode:** `zxing-cpp` native build + real-world decode/match test on target market products.
-- [ ] **Desktop:** Tauri v2 + native SQLite/FTS5 proof (`open pack → search → save → restart → export`).
-- [ ] **V1 Sync decision:** Decide whether V1 sync requires E2EE before designing conflict/sync tables.
+- [ ] **ChatGPT mobile OAuth:** `127.0.0.1` loopback listener + streaming Responses text/image + `text.format` check, on both iPhone and Android Dev Builds.
+- [ ] **FOSS barcode:** `zxing-cpp` native build + real-world decode/match test on target market products across phone and tablet cameras.
+- [ ] **Expo Dev Build on both mobile platforms:** native SQLite with FTS5, Vision Camera/`zxing-cpp`, OS Health, and secure credential storage all working from one codebase.
+- [ ] **Fold and split-screen state:** draft and scroll state survive fold, unfold, rotation and Android split-screen on a real foldable.
+
+*Removed 23 November 2026:* the Tauri v2 desktop spike and the "V1 sync requires E2EE" decision. Desktop and sync are both out of V1 scope, so neither spike gates the architecture. Backup/restore is a shipped V1 feature with a tested round trip, not a spike.
+
+### Review Gates
+- **Gate A (after Slice 1):** pack contract, cross-pack ranking and immutable snapshots proven; JSON export/restore round trip lossless.
+- **Gate B (Phase 0 spikes):** ChatGPT mobile OAuth, FOSS barcode and Dev Build capability all verified on physical iOS and Android devices before infrastructure is locked.
+- **Gate C (before beta):** restore onto a different mobile target reproduces every entry.

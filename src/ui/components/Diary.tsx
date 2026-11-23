@@ -12,15 +12,22 @@ export function MacroRow({ totals, goal }: { totals: NutrientAggregate; goal?: G
     {totals.unknownCount[key] > 0 && <Text style={[ui.muted, { fontSize: 10, lineHeight: 14 }]}>· {totals.unknownCount[key]} unknown</Text>}
   </View>)}</View>;
 }
-export function Budget({ totals, goal }: { totals: NutrientAggregate; goal: GoalPeriod | null }) {
+export function Budget({ totals, goal, leadMetric = 'calories', waterMl = 0 }: {
+  totals: NutrientAggregate; goal: GoalPeriod | null; leadMetric?: 'calories' | 'protein' | 'fiber' | 'water'; waterMl?: number;
+}) {
   const unit = usePreferences().value?.energyUnit ?? 'kcal';
   const target = goal?.target_kcal;
   const consumed = totals.nutrients?.kcal;
   const remaining = target != null ? target - (consumed ?? 0) : consumed;
+  const leadValue = leadMetric === 'water' ? waterMl : leadMetric === 'protein' ? totals.nutrients?.protein_g : totals.nutrients?.fiber_g;
+  const leadLabel = leadMetric === 'water' ? 'ml water' : leadMetric === 'protein' ? 'g protein' : 'g fiber';
   return <Card style={{ padding: spacing.s12, gap: spacing.s8 }}>
     <View style={[ui.row, { alignItems: 'baseline', flexWrap: 'wrap', gap: spacing.s8 }]}>
+      {leadMetric !== 'calories' && <Text style={[ui.number, { fontSize: 36, fontWeight: '800', lineHeight: 44 }]}>{number(leadValue, leadMetric === 'water' ? 0 : 1)} <Text style={{ fontSize: 16 }}>{leadLabel}</Text></Text>}
+      {leadMetric === 'calories' ? <>
       <Text style={[ui.number, { fontSize: 36, fontWeight: '800', lineHeight: 44 }]}>{number(energyValue(remaining, unit))} <Text style={{ fontSize: 16 }}>{unit}{target != null ? ' left' : ''}</Text></Text>
       {target == null && <Text style={ui.muted}>Observe · no target</Text>}
+      </> : <Text style={ui.muted}>{number(energyValue(remaining, unit))} {unit}{target != null ? ' left' : ' · observe'}</Text>}
     </View>
     {target != null && <Text style={ui.muted}>{number(energyValue(consumed, unit))} / {number(energyValue(target, unit))}</Text>}
     {target != null && <View accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: target, now: consumed ?? 0 }} style={{ height: 4, backgroundColor: colors.track }}>

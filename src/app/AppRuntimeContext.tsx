@@ -4,6 +4,9 @@ import { bootstrap } from './bootstrap';
 import type { AppRuntime } from './runtime';
 import { localDate } from './controller';
 import type { AppController } from './controller';
+import type { OfflinePhotoDraft, Quantity, WaterLog } from '../domain';
+import type { SavedMeal } from '../storage';
+import type { HealthCapability, HealthPermissionsState } from '../health';
 import { colors, MIN_TOUCH_TARGET, spacing } from '../ui/tokens';
 
 const RuntimeContext = createContext<AppRuntime | null>(null);
@@ -48,6 +51,24 @@ export function useHistoryDay(date: string) {
   return useAsyncResource(useCallback(() => { void revision; return controller.day(date); }, [controller, date, revision]));
 }
 export function useTodayDiary() { return useHistoryDay(localDate()); }
+export function useTodayWater(date = localDate()) {
+  const { controller } = useAppRuntime(); const revision = controller.getRevision();
+  return useAsyncResource<{ totalMl: number; logs: WaterLog[] }>(useCallback(() => {
+    void revision; return controller.getDailyWater(date);
+  }, [controller, date, revision]));
+}
+export function useOfflinePhotoDrafts() {
+  const { controller } = useAppRuntime(); const revision = controller.getRevision();
+  return useAsyncResource<OfflinePhotoDraft[]>(useCallback(() => {
+    void revision; return controller.listOfflinePhotoDrafts();
+  }, [controller, revision]));
+}
+export function useHealthStatus() {
+  const { controller } = useAppRuntime(); const revision = controller.getRevision();
+  return useAsyncResource<{ capability: HealthCapability; permissions: HealthPermissionsState; nutritionWriteEnabled: boolean; weightReadEnabled: boolean }>(useCallback(() => {
+    void revision; return controller.getHealthStatus();
+  }, [controller, revision]));
+}
 export function usePreferences() {
   const { controller } = useAppRuntime(); const revision = controller.getRevision();
   return useAsyncResource(useCallback(() => { void revision; return controller.getPreferences(); }, [controller, revision]));
@@ -106,7 +127,7 @@ export function useAIStatus() {
 }
 
 // Capture can start in Library and finish in Today. Keep its action state with the controller.
-type CaptureInput = Parameters<AppController['captureMealWithAI']>[0];
+type CaptureInput = { text: string; imageDataUrl?: string; meal: string; date?: string };
 const draftActions = new WeakMap<AppController, { busy: boolean; error: string | null; lastCapture: CaptureInput | null }>();
 export function useActiveDraft() {
   const { controller } = useAppRuntime();
@@ -125,6 +146,8 @@ export function useActiveDraft() {
     capture: (input: CaptureInput) => run(() => { actionState.lastCapture = input; return controller.captureMealWithAI(input); }),
     answerQuestion: (questionId: string, optionId: string) => run(() => controller.answerDraftQuestion(questionId, optionId)),
     removeItem: (itemId: string) => controller.removeDraftItem(itemId),
+    updateItemQuantity: (index: number, quantity: Quantity) => controller.updateDraftItemQuantity(index, quantity),
+    saveAsMeal: (name: string): Promise<SavedMeal> => controller.saveActiveDraftAsMeal(name),
     confirmAll: (idempotencyPrefix?: string) => run(async () => {
       const entries = await controller.confirmActiveDraft(idempotencyPrefix); actionState.lastCapture = null; return entries;
     }),

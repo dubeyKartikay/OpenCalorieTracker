@@ -7,3 +7,4 @@ export * from './recipeBatch';
 export * from './barcode';
 export * from './goals';
 export * from './weightTrend';
+export * from './csvExport';

@@ -1,6 +1,6 @@
 import type { SqlDatabase } from './driver';
 
-export const USER_SCHEMA_VERSION = 1;
+export const USER_SCHEMA_VERSION = 2;
 const migrations = [String.raw`
 CREATE TABLE diary_days (date TEXT PRIMARY KEY, completeness TEXT NOT NULL CHECK(completeness IN ('complete','partial','none')), updated_at TEXT NOT NULL);
 CREATE TABLE diary_entries (id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE NOT NULL, date TEXT NOT NULL, occurred_at TEXT NOT NULL, time_zone TEXT NOT NULL, meal TEXT NOT NULL, draft_state TEXT NOT NULL CHECK(draft_state IN ('draft','confirmed')), snapshot_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -20,6 +20,12 @@ CREATE INDEX goal_periods_date ON goal_periods(effective_from_date);
 CREATE TABLE weigh_ins (id TEXT PRIMARY KEY, date TEXT NOT NULL, measured_at TEXT NOT NULL, source TEXT NOT NULL, external_source_id TEXT UNIQUE, weigh_in_json TEXT NOT NULL);
 CREATE TABLE installed_packs (pack_id TEXT PRIMARY KEY, file_path TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, priority INTEGER NOT NULL DEFAULT 100, meta_json TEXT NOT NULL, installed_at TEXT NOT NULL);
 CREATE TABLE preferences (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL);
+`, String.raw`
+CREATE TABLE water_logs (id TEXT PRIMARY KEY, date TEXT NOT NULL, occurred_at TEXT NOT NULL, amount_ml REAL NOT NULL CHECK(amount_ml > 0));
+CREATE INDEX water_logs_date ON water_logs(date);
+CREATE TABLE health_sync_records (entry_id TEXT PRIMARY KEY, platform TEXT NOT NULL CHECK(platform IN ('apple_health','health_connect')), external_record_id TEXT NOT NULL, synced_at TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('synced','deleted')));
+CREATE TABLE offline_photo_drafts (id TEXT PRIMARY KEY, date TEXT NOT NULL, meal TEXT NOT NULL, note TEXT NOT NULL, image_data_url TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE INDEX offline_photo_drafts_created ON offline_photo_drafts(created_at DESC);
 `];
 
 export async function migrateDatabase(db: SqlDatabase): Promise<void> {

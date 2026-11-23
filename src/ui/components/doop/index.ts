@@ -4,6 +4,11 @@
  * Every component is presentational: it takes plain props, renders with the
  * shared token set, and never reaches into app state or persistence.
  */
+export { WaterCard } from './WaterCard';
+export type { WaterCardProps } from './WaterCard';
+export { MicronutrientsCard } from './MicronutrientsCard';
+export type { MicronutrientsCardProps } from './MicronutrientsCard';
+
 export { applyKeypadKey, InlineKeypad, LibV2Keypad, LibV2UnitRail } from './InlineKeypad';
 export type {
   InlineKeypadProps,

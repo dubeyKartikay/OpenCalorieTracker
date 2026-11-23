@@ -4,6 +4,6 @@ export interface AppRuntime {
   importPackFromFile(uri: string): Promise<void>;
   importSampleCustomPack(): Promise<void>;
   readTextFile(uri: string): Promise<string>;
-  saveBackup(json: string): Promise<string>;
+  saveBackup(contents: string, filename?: string): Promise<string>;
   notices: string[];
 }

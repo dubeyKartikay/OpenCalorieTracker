@@ -3,8 +3,10 @@ import { z } from 'zod';
 const nonNegative = z.number().finite().nonnegative();
 const positive = z.number().finite().positive();
 const id = z.uuid();
+export const idSchema = id;
 const text = z.string().trim().min(1);
 export const isoDateSchema = z.iso.date();
+export const isoDateTimeSchema = z.iso.datetime({ offset: true });
 export const foodBasisSchema = z.enum(['per_100g', 'per_100ml', 'per_serving']);
 export const prepStateSchema = z.enum(['raw', 'cooked', 'prepared', 'unknown']);
 export const provenanceKindSchema = z.enum(['database', 'label', 'user', 'ai_estimate', 'recipe_batch']);
@@ -108,13 +110,26 @@ export const goalPeriodSchema = z.strictObject({
 }).refine((goal) => goal.mode !== 'observe' || goal.target_kcal === null, 'Observe mode has no calorie target');
 export const weighInSchema = z.strictObject({
   id, measured_at: z.iso.datetime({ offset: true }), date: isoDateSchema,
-  weight_kg: positive, source: z.enum(['manual', 'health']),
+  weight_kg: positive, source: z.enum(['manual', 'health', 'apple_health', 'health_connect']),
   external_source_id: text.nullable(),
 }).refine((entry) => entry.source !== 'health' || entry.external_source_id !== null, 'Health imports need a deduplication id');
+export const waterLogSchema = z.strictObject({
+  id: idSchema, date: isoDateSchema, occurred_at: isoDateTimeSchema, amount_ml: positive,
+});
+export const offlinePhotoDraftSchema = z.strictObject({
+  id: idSchema, date: isoDateSchema, meal: z.string().trim().min(1),
+  note: z.string().default(''), image_data_url: z.string().min(1), created_at: isoDateTimeSchema,
+});
+export const healthSyncRecordSchema = z.strictObject({
+  entry_id: idSchema, platform: z.enum(['apple_health', 'health_connect']),
+  external_record_id: z.string().min(1), synced_at: isoDateTimeSchema,
+  status: z.enum(['synced', 'deleted']),
+});
 export const exportBundleV1Schema = z.strictObject({
   schema_version: z.literal(1), exported_at: z.iso.datetime({ offset: true }),
   diary_days: z.array(diaryDaySchema), custom_foods: z.array(foodRecordSchema),
   recipes: z.array(recipeSchema), recipe_batches: z.array(recipeBatchSchema),
   goal_periods: z.array(goalPeriodSchema), weigh_ins: z.array(weighInSchema),
   packs: z.array(packMetaSchema),
+  water_logs: z.array(waterLogSchema).default([]),
 });

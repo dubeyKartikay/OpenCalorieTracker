@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import { View } from 'react-native';
-import { useAction, useAppRuntime, usePreferences } from '../src/app/AppRuntimeContext';
+import { useAction, useAIStatus, useAppRuntime, usePreferences } from '../src/app/AppRuntimeContext';
 import { defaultQuantity } from '../src/app/controller';
 import { getFossScannerCapability, type BarcodeResolution, type ParsedNutritionLabel } from '../src/barcode';
 import { calculateNutrition, generateId, type FoodRecord, type Quantity } from '../src/domain';
 import { UndoToast } from '../src/ui/components/Diary';
 import { InlineKeypad } from '../src/ui/components/doop';
-import { BarcodeFoundCard, BarcodeNotFoundCard, CustomFoodFormCard, SegmentedSwitch, type CustomFoodFormValues } from '../src/ui/components/capture';
+import { BarcodeFoundCard, BarcodeNotFoundCard, CustomFoodFormCard, pickMealImage, SegmentedSwitch, type CustomFoodFormValues } from '../src/ui/components/capture';
 import { Badge, Button, Card, energy, ErrorMessage, Heading, Input, Muted, Page, ui } from '../src/ui/components/primitives';
 
 const samples = [
@@ -43,6 +43,7 @@ export default function Barcode() {
   const params = useLocalSearchParams<{ meal?: string }>();
   const { controller } = useAppRuntime();
   const preferences = usePreferences();
+  const ai = useAIStatus();
   const meal = params.meal?.trim() || preferences.value?.mealSections[0] || 'Lunch';
   const unit = preferences.value?.energyUnit ?? 'kcal';
   const action = useAction();
@@ -52,7 +53,7 @@ export default function Barcode() {
   const [result, setResult] = useState<BarcodeResolution | null>(null);
   const [selected, setSelected] = useState(0);
   const [labelText, setLabelText] = useState('');
-  const [custom, setCustom] = useState<{ id: string; barcode: { rawCode: string; symbology?: string } | null; label: ParsedNutritionLabel | null; energyUnit: 'kcal' | 'kJ' } | null>(null);
+  const [custom, setCustom] = useState<{ id: string; barcode: { rawCode: string; symbology?: string } | null; label: ParsedNutritionLabel | null; energyUnit: 'kcal' | 'kJ'; name?: string | null; brand?: string | null } | null>(null);
   const [notice, setNotice] = useState('');
   const [loggedHere, setLoggedHere] = useState(false);
   const scanner = getFossScannerCapability();
@@ -70,11 +71,30 @@ export default function Barcode() {
   // The form displays the chosen energy unit and returns canonical kcal.
   const field = (value: number | null | undefined) => value == null ? '' : String(value);
   const initialValues: Partial<CustomFoodFormValues> = parsed ? {
+    name: custom?.name ?? '', brand: custom?.brand ?? '',
     ...(parsed.basis ? { basis: parsed.basis } : {}), servingAmount: field(parsed.serving_g),
     kcal: field(parsed.nutrients.kcal === null ? null : parsed.nutrients.kcal * (formUnit === 'kJ' ? 4.184 : 1)),
     proteinG: field(parsed.nutrients.protein_g), carbsG: field(parsed.nutrients.carbs_g), fatG: field(parsed.nutrients.fat_g),
     fiberG: field(parsed.nutrients.fiber_g), sugarG: field(parsed.nutrients.sugar_g),
   } : {};
+  const captureLabel = (source: 'camera' | 'library') => void action.run(async () => {
+    const picked = await pickMealImage(source);
+    if (!picked) return;
+    if (!ai.value || ai.value.mode === 'disconnected' || !ai.value.consentAccepted) {
+      setNotice('Label photos need a connected AI account and your consent. Open ChatGPT settings, or paste the label text below to review it offline.');
+      return;
+    }
+    const extracted = await controller.extractLabelFromImage(picked.imageDataUrl);
+    const { name, brand, basis, serving_g, serving_ml, ...nutrients } = extracted;
+    const label: ParsedNutritionLabel = {
+      basis, serving_g, serving_ml,
+      nutrients: { ...nutrients, calcium_mg: null, iron_mg: null, potassium_mg: null },
+      warnings: ['Extracted from a photo with AI. Check the printed basis and every value before saving.',
+        ...(['fiber_g', 'sugar_g', 'sat_fat_g', 'sodium_mg'] as const).filter(key => nutrients[key] === null).map(key => `${key.replace(/_(g|mg)$/, '').replaceAll('_', ' ')} was not detected and remains unknown.`)],
+    };
+    setCustom({ id: generateId(), barcode: null, label, energyUnit: unit, name, brand });
+    setNotice('Label photo ready for review. Nothing has been logged.');
+  });
   const saveCustom = (values: CustomFoodFormValues, log: boolean) => void action.run(async () => {
     if (!custom) return;
     const servingG = values.basis === 'per_serving' ? numeric(values.servingAmount, 'serving weight')
@@ -101,7 +121,7 @@ export default function Barcode() {
   return <Page title="Barcode" action={<View style={ui.row}><Badge label={meal} /><Button label="Back" onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)')} /></View>} footer={loggedHere ? <UndoToast /> : undefined}>
     <SegmentedSwitch options={[{ value: 'barcode', label: 'Barcode' }, { value: 'label', label: 'Label text' }]} value={mode}
       onChange={value => { if (!action.busy) { setMode(value); setCustom(null); setResult(null); setNotice(''); } }} />
-    <ErrorMessage message={action.error ?? preferences.error} />
+    <ErrorMessage message={action.error ?? preferences.error ?? ai.error} />
     {!!notice && <Muted>{notice}</Muted>}
     {mode === 'barcode' ? <>
       {found && <><BarcodeFoundCard name={found.food.name} brand={found.food.brand} sourceLabel={tierLabels[found.tier]}
@@ -134,7 +154,14 @@ export default function Barcode() {
         <View style={ui.wrap}>{samples.map(sample => <Button key={sample.code} label={`${sample.label} · ${sample.code}`} disabled={action.busy}
           onPress={() => { setCode(sample.code); setSymbology(sample.symbology ?? ''); resolve(sample.code, sample.symbology ?? ''); }} />)}</View>
       </>}
-    </> : <Card><Heading>Offline label parser</Heading><Muted>Paste nutrition label text. Nothing leaves this device. Review the detected basis and values before saving.</Muted>
+    </> : <Card><Heading>Nutrition label</Heading>
+      <Muted>Photograph a label with AI, or paste text for offline parsing. Review the detected basis and values before saving.</Muted>
+      <View style={ui.wrap}><Button label="Take label photo" disabled={action.busy || ai.loading} onPress={() => captureLabel('camera')} />
+        <Button label="Pick label photo" disabled={action.busy || ai.loading} onPress={() => captureLabel('library')} /></View>
+      {(!ai.value || ai.value.mode === 'disconnected' || !ai.value.consentAccepted) && <>
+        <Muted>Photo extraction requires AI connection and consent. Pasted label text stays on this device.</Muted>
+        <Button label="Open ChatGPT settings" onPress={() => router.push('/chatgpt')} />
+      </>}
       <Input label="Nutrition label text" value={labelText} onChangeText={value => { setLabelText(value); setCustom(null); }} multiline
         style={{ minHeight: 160, textAlignVertical: 'top' }} placeholder={'Per 100 g\nEnergy 250 kcal\nProtein 8 g\nCarbohydrate 40 g\nFat 6 g'} />
       <Button label="Review label" primary disabled={action.busy || !labelText.trim()} onPress={() => void action.run(async () => {

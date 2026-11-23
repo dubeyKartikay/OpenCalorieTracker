@@ -5,6 +5,7 @@ import { DiaryRepo } from './repos/diaryRepo';
 import { GoalsRepo } from './repos/goalsRepo';
 import { LibraryRepo } from './repos/libraryRepo';
 import { PacksRepo } from './repos/packsRepo';
+import { WaterRepo } from './repos/waterRepo';
 import { nowIso } from './repos/shared';
 
 export async function exportBundleV1(db: SqlDatabase, exportedAt = nowIso()): Promise<ExportBundleV1> {
@@ -17,6 +18,7 @@ export async function exportBundleV1(db: SqlDatabase, exportedAt = nowIso()): Pr
       custom_foods: await library.listCustomFoods(), recipes: await library.listRecipes(),
       recipe_batches: await library.listRecipeBatches(), goal_periods: await goals.listGoalPeriods(),
       weigh_ins: await goals.listWeighIns(), packs: (await new PacksRepo(tx).listInstalledPacks()).map((row) => row.meta),
+      water_logs: await new WaterRepo(tx).listWaterLogs(),
     });
   });
 }
@@ -27,7 +29,7 @@ export async function restoreBundleV1(db: SqlDatabase, rawBundle: unknown, optio
   if (options.mode !== 'replace' && options.mode !== 'merge') throw new Error('Invalid restore mode');
   await db.withTransactionAsync(async (tx) => {
     if (options.mode === 'replace') {
-      for (const table of ['diary_entries', 'diary_days', 'custom_foods', 'recipes', 'recipe_batches', 'saved_meals', 'user_food_units', 'learned_portions', 'goal_periods', 'weigh_ins', 'installed_packs', 'preferences']) {
+      for (const table of ['health_sync_records', 'offline_photo_drafts', 'water_logs', 'diary_entries', 'diary_days', 'custom_foods', 'recipes', 'recipe_batches', 'saved_meals', 'user_food_units', 'learned_portions', 'goal_periods', 'weigh_ins', 'installed_packs', 'preferences']) {
         await tx.execAsync(`DELETE FROM ${table}`);
       }
     }
@@ -47,6 +49,10 @@ export async function restoreBundleV1(db: SqlDatabase, rawBundle: unknown, optio
     for (const batch of bundle.recipe_batches) if (!await library.getRecipeBatch(batch.id)) await library.upsertRecipeBatch(batch);
     for (const goal of bundle.goal_periods) await tx.runAsync('INSERT INTO goal_periods VALUES(?,?,?) ON CONFLICT(id) DO NOTHING', goal.id, goal.effective_from_date, JSON.stringify(goal));
     for (const entry of bundle.weigh_ins) if (!await tx.getFirstAsync('SELECT id FROM weigh_ins WHERE id=? OR (external_source_id IS NOT NULL AND external_source_id=?)', entry.id, entry.external_source_id)) await goals.recordWeighIn(entry);
+    for (const log of bundle.water_logs) {
+      await tx.runAsync('INSERT INTO water_logs(id,date,occurred_at,amount_ml) VALUES(?,?,?,?) ON CONFLICT(id) DO NOTHING',
+        log.id, log.date, log.occurred_at, log.amount_ml);
+    }
     for (const meta of bundle.packs) {
       if (!await tx.getFirstAsync('SELECT pack_id FROM installed_packs WHERE pack_id=?', meta.pack_id)) {
         // Requires re-import of the actual pack file on this device before enabling it.

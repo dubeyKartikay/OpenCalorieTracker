@@ -2,7 +2,7 @@ import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { TextInputProps, TextStyle, ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors, fontSize, fontWeight, MIN_TOUCH_TARGET, radius, SCREEN_GUTTER, spacing, tabularNums } from '../tokens';
+import { colors, fontSize, fontWeight, MIN_TOUCH_TARGET, radius, SCREEN_GUTTER, spacing, tabularNums, useLayoutClass } from '../tokens';
 export const ui = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.ground },
   content: { padding: SCREEN_GUTTER, gap: spacing.s20, paddingBottom: spacing.s32, width: '100%', maxWidth: 840, alignSelf: 'center' },
@@ -21,9 +21,11 @@ export const ui = StyleSheet.create({
   divider: { height: 1, backgroundColor: colors.hairline },
 });
 export function Page({ title, action, footer, children, compact = false }: React.PropsWithChildren<{ title?: string; action?: React.ReactNode; footer?: React.ReactNode; compact?: boolean }>) {
-  return <SafeAreaView edges={['top', 'left', 'right']} style={ui.screen}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[ui.content, compact && { gap: spacing.s12, paddingTop: spacing.s8 }]}>
+  const { isExpanded } = useLayoutClass();
+  const maxWidth = isExpanded ? 1080 : 540;
+  return <SafeAreaView edges={['top', 'left', 'right']} style={ui.screen}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[ui.content, { maxWidth }, compact && { gap: spacing.s12, paddingTop: spacing.s8 }]}>
     {(title || action) && <View style={[ui.row, { justifyContent: 'space-between' }]}>{title && <Text accessibilityRole="header" style={ui.title}>{title}</Text>}{action}</View>}{children}
-  </ScrollView>{footer && <View style={{ paddingHorizontal: SCREEN_GUTTER, paddingBottom: spacing.s8, width: '100%', maxWidth: 840, alignSelf: 'center' }}>{footer}</View>}</SafeAreaView>;
+  </ScrollView>{footer && <View style={{ paddingHorizontal: SCREEN_GUTTER, paddingBottom: spacing.s8, width: '100%', maxWidth, alignSelf: 'center' }}>{footer}</View>}</SafeAreaView>;
 }
 export function Card({ children, style }: React.PropsWithChildren<{ style?: ViewStyle }>) { return <View style={[ui.card, style]}>{children}</View>; }
 export function Label({ children, style }: React.PropsWithChildren<{ style?: TextStyle }>) { return <Text style={[ui.text, style]}>{children}</Text>; }

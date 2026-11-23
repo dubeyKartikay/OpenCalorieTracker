@@ -37,3 +37,5 @@ export type {
 
 export { ChatGPTConnectionCard } from './ChatGPTCards';
 export type { AIModelChoice, ChatGPTConnectionCardProps } from './ChatGPTCards';
+export { pickMealImage } from './PhotoPicker';
+export type { PickedMealImage } from './PhotoPicker';

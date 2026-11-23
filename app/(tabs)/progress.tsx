@@ -2,12 +2,13 @@ import { useCallback, useState } from 'react';
 import { View } from 'react-native';
 import { useAction, useAppRuntime, useAsyncResource, usePreferences, useProgressData, useTodayDiary } from '../../src/app/AppRuntimeContext';
 import { localDate, shiftDate } from '../../src/app/controller';
-import { calculateWeeklyRate } from '../../src/domain';
-import { CalorieBarChart, InlineKeypad, MacroProportionBar, WeightTrendChart } from '../../src/ui/components/doop';
+import { calculateWeeklyRate, nutrientKeys, type NutrientKey } from '../../src/domain';
+import { CalorieBarChart, InlineKeypad, MacroProportionBar, MicronutrientsCard, WeightTrendChart } from '../../src/ui/components/doop';
 import { Button, Card, energy, ErrorMessage, Heading, Label, Muted, number, Page, ui } from '../../src/ui/components/primitives';
-import { colors, macroColors } from '../../src/ui/tokens';
+import { colors, macroColors, spacing, TwoPane } from '../../src/ui/tokens';
 
 const KG_TO_LB = 2.2046226218;
+const ZERO_UNKNOWN = Object.fromEntries(nutrientKeys.map(key => [key, 0])) as Record<NutrientKey, number>;
 export default function Progress() {
   const { controller } = useAppRuntime();
   const revision = controller.getRevision();
@@ -37,7 +38,7 @@ export default function Progress() {
   const visibleTrend = (value?.trend ?? []).filter(point => point.weighIn.date >= shiftDate(end, 1 - range) && point.weighIn.date <= end);
   const latest = value?.trend[value.trend.length - 1];
   const weeklyRate = calculateWeeklyRate(visibleTrend);
-  return <Page title="Progress"><View style={ui.wrap}>{[7, 30].map(days => <Button key={days} label={`${days}d`} selected={range === days} onPress={() => { setRange(days); setSelectedDay(null); }} />)}</View>
+  return <Page title="Progress"><TwoPane primary={<View style={{ gap: spacing.s16 }}><View style={ui.wrap}>{[7, 30].map(days => <Button key={days} label={`${days}d`} selected={range === days} onPress={() => { setRange(days); setSelectedDay(null); }} />)}</View>
     <ErrorMessage message={result.error ?? daily.error ?? action.error ?? preferences.error ?? today.error} />
     <Muted>{value?.completeDays ?? '—'} of {range} days complete · partial/unlogged excluded</Muted>
     <CalorieBarChart days={daily.value ?? []} selectedDate={selectedDay} onSelectDay={setSelectedDay} energyUnit={energyUnit} style={{ width: '100%', minWidth: 0 }} />
@@ -48,6 +49,8 @@ export default function Progress() {
           <Label style={{ ...ui.number, color }}>{number(value?.averages?.[key], 1)} / {number(today.value?.goal?.[key], 1)} g</Label></View>)}
       {!!value?.unknownCount.fiber_g && <Muted>Fiber · {value.unknownCount.fiber_g} unknown</Muted>}
     </Card>
+    <MicronutrientsCard averages={value?.averages ?? null} unknownCount={value?.unknownCount ?? ZERO_UNKNOWN} />
+    </View>} secondary={<View style={{ gap: spacing.s16 }}>
     <Card><Heading>Weight</Heading><View style={ui.wrap}>{(['kg', 'lb'] as const).map(weightUnit => <Button key={weightUnit} label={weightUnit} selected={unit === weightUnit} disabled={action.busy}
       onPress={() => void action.run(async () => { await controller.updatePreferences({ weightUnit }); setWeight(''); })} />)}</View>
       <Label style={ui.number}>{number(latest ? latest.trendKg * factor : null, 1)} {unit} trend</Label>
@@ -60,5 +63,5 @@ export default function Progress() {
         await controller.weighIn(Number(weight) / factor); setWeight('');
       })} />
     </Card>
-  </Page>;
+    </View>} /></Page>;
 }

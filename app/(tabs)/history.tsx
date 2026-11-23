@@ -7,7 +7,7 @@ import type { DiaryEntrySnapshot } from '../../src/domain';
 import { MacroRow, UndoToast } from '../../src/ui/components/Diary';
 import { ActionSheetPopover, CompletenessMark, InlineKeypad, MultiSelectBar, SourceBadge, WeekDateRail } from '../../src/ui/components/doop';
 import { Button, Card, energy, ErrorMessage, Heading, Label, Muted, number, Page, ui } from '../../src/ui/components/primitives';
-import { colors, MIN_TOUCH_TARGET } from '../../src/ui/tokens';
+import { colors, MIN_TOUCH_TARGET, spacing, TwoPane } from '../../src/ui/tokens';
 
 const rangeDate = (date: string) => new Date(`${date}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 
@@ -57,6 +57,7 @@ export default function History() {
     {selecting && <MultiSelectBar count={selected.length} onCopyToToday={() => { if (selected.length) void action.run(bulkCopy); }} onMove={() => { if (selected.length) setMoving(value => !value); }}
       onDelete={() => { if (selected.length) void action.run(async () => { await controller.deleteEntries(selected); clearSelection(); }); }} onDone={clearSelection} />}
     <UndoToast /></View>}>
+    <TwoPane primary={<View style={{ gap: spacing.s16 }}>
     <ScrollView horizontal showsHorizontalScrollIndicator={false}><WeekDateRail style={{ minWidth: 352 }} days={(week.value ?? []).map(day => ({ date: day.date, weekdayInitial: new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'narrow' }), dayNumber: day.date.slice(8), completeness: day.completeness, kcal: day.kcal ?? 0 }))}
       selectedDate={date} rangeLabel={`${rangeDate(shiftDate(weekEnd, -6))} – ${rangeDate(weekEnd)}`} onSelectDate={chooseDate}
       onPrevWeek={() => { const next = shiftDate(weekEnd, -7); setWeekEnd(next); chooseDate(next); }}
@@ -68,6 +69,7 @@ export default function History() {
       onPress: () => void action.run(async () => { await controller.setCompleteness(date, value); setMenu(null); }) }))} />}
     <ErrorMessage message={action.error ?? result.error ?? week.error ?? preferences.error} />{result.loading && <Muted>Loading saved day…</Muted>}
     {result.value && <Card style={{ padding: 12 }}><MacroRow totals={result.value.totals} /></Card>}
+    </View>} secondary={<View style={{ gap: spacing.s16 }}>
     {moving && <Card><Heading>Move selected entries</Heading><View style={ui.wrap}>{configuredMeals.map(meal => <Button key={meal} label={meal} disabled={action.busy} onPress={() => void action.run(async () => {
       await controller.moveEntries(selected, date, meal); clearSelection();
     })} />)}</View></Card>}
@@ -78,5 +80,6 @@ export default function History() {
         { key: 'copy', label: 'Copy to Today', onPress: () => void action.run(async () => { await controller.copyMeal(date, meal, localDate(), meal); setMenu(null); }) },
         { key: 'add', label: `Add to ${meal}`, onPress: () => { setMenu(null); router.push({ pathname: '/(tabs)/library', params: { meal } }); } },
       ]} />}{entries.filter(entry => entry.meal === meal).map(renderEntry)}</View>)}
+    </View>} />
   </Page>;
 }

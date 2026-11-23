@@ -16,7 +16,7 @@ export class GoalsRepo {
   async recordWeighIn(input: WeighIn): Promise<WeighIn> {
     const entry = weighInSchema.parse(input);
     return this.db.withTransactionAsync(async (tx) => {
-      if (entry.source === 'health') {
+      if (entry.source !== 'manual' && entry.external_source_id !== null) {
         const old = await tx.getFirstAsync<{ weigh_in_json: string }>('SELECT weigh_in_json FROM weigh_ins WHERE external_source_id=?', entry.external_source_id);
         if (old) return parseJson(old.weigh_in_json, weighInSchema);
       }

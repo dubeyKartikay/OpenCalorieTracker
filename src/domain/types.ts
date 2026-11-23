@@ -19,4 +19,7 @@ export type Recipe = z.infer<typeof schemas.recipeSchema>;
 export type RecipeBatch = z.infer<typeof schemas.recipeBatchSchema>;
 export type GoalPeriod = z.infer<typeof schemas.goalPeriodSchema>;
 export type WeighIn = z.infer<typeof schemas.weighInSchema>;
+export type WaterLog = z.infer<typeof schemas.waterLogSchema>;
+export type OfflinePhotoDraft = z.infer<typeof schemas.offlinePhotoDraftSchema>;
+export type HealthSyncRecord = z.infer<typeof schemas.healthSyncRecordSchema>;
 export type ExportBundleV1 = z.infer<typeof schemas.exportBundleV1Schema>;

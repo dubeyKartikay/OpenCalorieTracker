@@ -5,4 +5,7 @@ export * from './repos/diaryRepo';
 export * from './repos/libraryRepo';
 export * from './repos/goalsRepo';
 export * from './repos/packsRepo';
+export * from './repos/waterRepo';
+export * from './repos/healthSyncRepo';
+export * from './repos/photoDraftRepo';
 export { foodKey } from './repos/shared';
