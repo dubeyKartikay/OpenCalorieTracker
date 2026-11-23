@@ -1,0 +1,72 @@
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { bootstrap } from './bootstrap';
+import type { AppRuntime } from './runtime';
+import { localDate } from './controller';
+import { colors, MIN_TOUCH_TARGET, spacing } from '../ui/tokens';
+
+const RuntimeContext = createContext<AppRuntime | null>(null);
+export function AppRuntimeProvider({ children }: React.PropsWithChildren) {
+  const [runtime, setRuntime] = useState<AppRuntime | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let active = true;
+    let opened: AppRuntime | null = null;
+    bootstrap().then(value => { opened = value; if (active) setRuntime(value); else void value.controller.close(); })
+      .catch(reason => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); });
+    return () => { active = false; if (opened) void opened.controller.close(); };
+  }, [attempt]);
+  if (!runtime) return <View style={{ flex: 1, backgroundColor: colors.ground, justifyContent: 'center', padding: spacing.s24, gap: spacing.s16 }}>
+    <Text style={{ color: colors.ink, fontSize: 24, fontWeight: '700' }}>OpenCalorieTracker</Text>
+    {error ? <><Text accessibilityRole="alert" style={{ color: colors.muted, lineHeight: 24 }}>{error}</Text>
+      <Pressable accessibilityRole="button" onPress={() => { setError(null); setAttempt(value => value + 1); }} style={{ minHeight: MIN_TOUCH_TARGET, justifyContent: 'center' }}><Text style={{ color: colors.accent }}>Retry storage initialization</Text></Pressable></>
+      : <><ActivityIndicator color={colors.accent} /><Text style={{ color: colors.muted }}>Opening your local diary…</Text></>}
+  </View>;
+  return <RuntimeContext.Provider value={runtime}>{children}</RuntimeContext.Provider>;
+}
+export function useAppRuntime() {
+  const runtime = useContext(RuntimeContext);
+  if (!runtime) throw new Error('AppRuntimeProvider is required');
+  useSyncExternalStore(runtime.controller.subscribe, runtime.controller.getRevision, runtime.controller.getRevision);
+  return runtime;
+}
+export function useAsyncResource<T>(load: () => Promise<T>) {
+  const [state, setState] = useState<{ load: () => Promise<T>; value?: T; error: string | null; loading: boolean }>({ load, error: null, loading: true });
+  useEffect(() => {
+    let active = true;
+    load().then(value => { if (active) setState({ load, value, error: null, loading: false }); })
+      .catch(error => { if (active) setState({ load, error: error instanceof Error ? error.message : String(error), loading: false }); });
+    return () => { active = false; };
+  }, [load]);
+  return state.load === load ? state : { error: null, loading: true, value: undefined };
+}
+export function useHistoryDay(date: string) {
+  const { controller } = useAppRuntime();
+  const revision = controller.getRevision();
+  return useAsyncResource(useCallback(() => { void revision; return controller.day(date); }, [controller, date, revision]));
+}
+export function useTodayDiary() { return useHistoryDay(localDate()); }
+export function useCatalogSearch(query: string) {
+  const { controller } = useAppRuntime();
+  const revision = controller.getRevision();
+  return useAsyncResource(useCallback(() => { void revision; return controller.search(query); }, [controller, query, revision]));
+}
+export function usePacksManager() {
+  const runtime = useAppRuntime();
+  const revision = runtime.controller.getRevision();
+  return { ...useAsyncResource(useCallback(() => { void revision; return runtime.controller.listPacks(); }, [runtime, revision])), runtime };
+}
+export function useAction() {
+  const pending = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async (action: () => Promise<unknown>) => {
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true); setError(null);
+    try { await action(); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { pending.current = false; setBusy(false); }
+  };
+  return { busy, error, run };
+}

@@ -1,0 +1,1702 @@
+{
+  "meta": {
+    "pack_id": "custom-home-pack",
+    "name": "Home & Regional Favourites",
+    "version": "2026.11.0",
+    "kind": "custom",
+    "region": "IN",
+    "license": "Personal / CC0",
+    "attribution_text": "Household recipes and label transcriptions, cooked weights as served. Shared as CC0 where applicable.",
+    "attribution_url": null
+  },
+  "foods": [
+    {
+      "id": "custom-dal-tadka",
+      "name": "Dal tadka",
+      "brand": null,
+      "category": "Dals & Legumes",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 150,
+      "serving_ml": null,
+      "kcal": 124,
+      "protein_g": 6.1,
+      "carbs_g": 16.2,
+      "fat_g": 4.2,
+      "fiber_g": null,
+      "sugar_g": 1.2,
+      "sat_fat_g": 1.8,
+      "sodium_mg": 268,
+      "calcium_mg": 38,
+      "iron_mg": 1.5,
+      "potassium_mg": 289,
+      "aliases": [
+        {
+          "alias": "arhar dal",
+          "lang": "hi"
+        },
+        {
+          "alias": "toor dal",
+          "lang": "hi"
+        },
+        {
+          "alias": "dal",
+          "lang": "hi"
+        },
+        {
+          "alias": "daal",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 bowl",
+          "grams": 200,
+          "ml": null
+        },
+        {
+          "label": "1 ladle",
+          "grams": 60,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-dal-makhani",
+      "name": "Dal makhani",
+      "brand": null,
+      "category": "Dals & Legumes",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 150,
+      "serving_ml": null,
+      "kcal": 152,
+      "protein_g": 6.3,
+      "carbs_g": 14.8,
+      "fat_g": 7.9,
+      "fiber_g": 4.6,
+      "sugar_g": 2.4,
+      "sat_fat_g": 4.4,
+      "sodium_mg": 312,
+      "calcium_mg": 44,
+      "iron_mg": 1.7,
+      "potassium_mg": 322,
+      "aliases": [
+        {
+          "alias": "dal makhni",
+          "lang": "hi"
+        },
+        {
+          "alias": "makhani dal",
+          "lang": "hi"
+        },
+        {
+          "alias": "black dal",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 bowl",
+          "grams": 200,
+          "ml": null
+        },
+        {
+          "label": "1 ladle",
+          "grams": 60,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-dal-fry",
+      "name": "Dal fry",
+      "brand": null,
+      "category": "Dals & Legumes",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 150,
+      "serving_ml": null,
+      "kcal": 118,
+      "protein_g": 5.8,
+      "carbs_g": 15.4,
+      "fat_g": 3.6,
+      "fiber_g": 3.9,
+      "sugar_g": 1.6,
+      "sat_fat_g": 1.4,
+      "sodium_mg": 292,
+      "calcium_mg": 36,
+      "iron_mg": 1.4,
+      "potassium_mg": 268,
+      "aliases": [
+        {
+          "alias": "daal fry",
+          "lang": "hi"
+        },
+        {
+          "alias": "yellow dal",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "dal",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 bowl",
+          "grams": 200,
+          "ml": null
+        },
+        {
+          "label": "1 ladle",
+          "grams": 60,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-dal-palak",
+      "name": "Dal palak",
+      "brand": null,
+      "category": "Dals & Legumes",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 150,
+      "serving_ml": null,
+      "kcal": 106,
+      "protein_g": 6.4,
+      "carbs_g": 13.1,
+      "fat_g": 3.2,
+      "fiber_g": 3.6,
+      "sugar_g": 1.1,
+      "sat_fat_g": 1.3,
+      "sodium_mg": 276,
+      "calcium_mg": 76,
+      "iron_mg": 2.1,
+      "potassium_mg": 304,
+      "aliases": [
+        {
+          "alias": "palak dal",
+          "lang": "hi"
+        },
+        {
+          "alias": "spinach dal",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 bowl",
+          "grams": 200,
+          "ml": null
+        },
+        {
+          "label": "1 ladle",
+          "grams": 60,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-dal-rice",
+      "name": "Dal & rice",
+      "brand": null,
+      "category": "Combo Meals",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 350,
+      "serving_ml": null,
+      "kcal": 138,
+      "protein_g": 4.6,
+      "carbs_g": 24.6,
+      "fat_g": 3.1,
+      "fiber_g": 2.2,
+      "sugar_g": 0.9,
+      "sat_fat_g": 1.2,
+      "sodium_mg": 210,
+      "calcium_mg": 32,
+      "iron_mg": 1.2,
+      "potassium_mg": 186,
+      "aliases": [
+        {
+          "alias": "dal chawal",
+          "lang": "hi"
+        },
+        {
+          "alias": "dal rice",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "dal-chawal",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 plate",
+          "grams": 350,
+          "ml": null
+        },
+        {
+          "label": "1 bowl",
+          "grams": 250,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-whole-wheat-roti",
+      "name": "Whole wheat roti",
+      "brand": null,
+      "category": "Breads",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 40,
+      "serving_ml": null,
+      "kcal": 264,
+      "protein_g": 8.9,
+      "carbs_g": 49.6,
+      "fat_g": 3.9,
+      "fiber_g": 6.1,
+      "sugar_g": 1.6,
+      "sat_fat_g": 0.6,
+      "sodium_mg": 178,
+      "calcium_mg": 28,
+      "iron_mg": 2.4,
+      "potassium_mg": 186,
+      "aliases": [
+        {
+          "alias": "chapati",
+          "lang": "hi"
+        },
+        {
+          "alias": "phulka",
+          "lang": "hi"
+        },
+        {
+          "alias": "chapatti",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "roti",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 roti",
+          "grams": 40,
+          "ml": null
+        },
+        {
+          "label": "1 large roti",
+          "grams": 55,
+          "ml": null
+        },
+        {
+          "label": "2 rotis",
+          "grams": 80,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-masala-dosa",
+      "name": "Masala dosa",
+      "brand": null,
+      "category": "South Indian",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 150,
+      "serving_ml": null,
+      "kcal": 168,
+      "protein_g": 3.9,
+      "carbs_g": 24.1,
+      "fat_g": 6.2,
+      "fiber_g": 1.8,
+      "sugar_g": 1.1,
+      "sat_fat_g": 1.2,
+      "sodium_mg": 296,
+      "calcium_mg": 24,
+      "iron_mg": 1.1,
+      "potassium_mg": 142,
+      "aliases": [
+        {
+          "alias": "dosa",
+          "lang": "ta"
+        },
+        {
+          "alias": "masala dose",
+          "lang": "kn"
+        },
+        {
+          "alias": "dose",
+          "lang": "kn"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 dosa",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 plate (2 dosas)",
+          "grams": 300,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-paneer-bhurji",
+      "name": "Paneer bhurji",
+      "brand": null,
+      "category": "Vegetarian Mains",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 150,
+      "serving_ml": null,
+      "kcal": 232,
+      "protein_g": 11.2,
+      "carbs_g": 4.8,
+      "fat_g": 18.9,
+      "fiber_g": 0.7,
+      "sugar_g": 1.4,
+      "sat_fat_g": 10.2,
+      "sodium_mg": 342,
+      "calcium_mg": 210,
+      "iron_mg": 0.5,
+      "potassium_mg": 148,
+      "aliases": [
+        {
+          "alias": "paneer bhurjee",
+          "lang": "hi"
+        },
+        {
+          "alias": "scrambled paneer",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "bhurji",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 bowl",
+          "grams": 200,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-chana-masala",
+      "name": "Chana masala",
+      "brand": null,
+      "category": "Vegetarian Mains",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 150,
+      "serving_ml": null,
+      "kcal": 148,
+      "protein_g": 6.4,
+      "carbs_g": 18.7,
+      "fat_g": 5.6,
+      "fiber_g": 5.2,
+      "sugar_g": 2.8,
+      "sat_fat_g": 0.9,
+      "sodium_mg": 318,
+      "calcium_mg": 52,
+      "iron_mg": 1.9,
+      "potassium_mg": 304,
+      "aliases": [
+        {
+          "alias": "chole",
+          "lang": "hi"
+        },
+        {
+          "alias": "chhole",
+          "lang": "hi"
+        },
+        {
+          "alias": "chickpea curry",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 bowl",
+          "grams": 200,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-chicken-tikka-masala",
+      "name": "Chicken tikka masala",
+      "brand": null,
+      "category": "Curries",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 150,
+      "serving_ml": null,
+      "kcal": 178,
+      "protein_g": 12.6,
+      "carbs_g": 6.4,
+      "fat_g": 11.5,
+      "fiber_g": 1.1,
+      "sugar_g": 2.9,
+      "sat_fat_g": 5.2,
+      "sodium_mg": 386,
+      "calcium_mg": 38,
+      "iron_mg": 1,
+      "potassium_mg": 262,
+      "aliases": [
+        {
+          "alias": "tikka masala",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "CTM",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 bowl",
+          "grams": 200,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-jeera-rice",
+      "name": "Jeera rice",
+      "brand": null,
+      "category": "Rice Dishes",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 150,
+      "serving_ml": null,
+      "kcal": 168,
+      "protein_g": 3.1,
+      "carbs_g": 28.6,
+      "fat_g": 4.2,
+      "fiber_g": 0.7,
+      "sugar_g": 0.2,
+      "sat_fat_g": 2.1,
+      "sodium_mg": 214,
+      "calcium_mg": 14,
+      "iron_mg": 0.4,
+      "potassium_mg": 62,
+      "aliases": [
+        {
+          "alias": "jeera",
+          "lang": "hi"
+        },
+        {
+          "alias": "cumin rice",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "jeera chawal",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 bowl",
+          "grams": 200,
+          "ml": null
+        },
+        {
+          "label": "1 plate",
+          "grams": 250,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-greek-yogurt-bowl",
+      "name": "Greek yogurt bowl",
+      "brand": null,
+      "category": "Breakfast",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 250,
+      "serving_ml": null,
+      "kcal": 132,
+      "protein_g": 6.9,
+      "carbs_g": 16.2,
+      "fat_g": 3.9,
+      "fiber_g": 1.4,
+      "sugar_g": 9.8,
+      "sat_fat_g": 2.1,
+      "sodium_mg": 48,
+      "calcium_mg": 92,
+      "iron_mg": 0.3,
+      "potassium_mg": 198,
+      "aliases": [
+        {
+          "alias": "yogurt bowl",
+          "lang": "en-US"
+        },
+        {
+          "alias": "greek yoghurt bowl",
+          "lang": "en-GB"
+        },
+        {
+          "alias": "yoghurt bowl",
+          "lang": "en-GB"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 bowl",
+          "grams": 250,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-egg-toast",
+      "name": "Egg toast",
+      "brand": null,
+      "category": "Breakfast",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 180,
+      "serving_ml": null,
+      "kcal": 216,
+      "protein_g": 11.8,
+      "carbs_g": 17.4,
+      "fat_g": 10.8,
+      "fiber_g": 1.1,
+      "sugar_g": 1.9,
+      "sat_fat_g": 3.4,
+      "sodium_mg": 342,
+      "calcium_mg": 76,
+      "iron_mg": 1.6,
+      "potassium_mg": 182,
+      "aliases": [
+        {
+          "alias": "egg on toast",
+          "lang": "en-US"
+        },
+        {
+          "alias": "toast and eggs",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 serving (2 eggs, 2 slices)",
+          "grams": 180,
+          "ml": null
+        },
+        {
+          "label": "1 slice",
+          "grams": 90,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-banana-oats",
+      "name": "Banana oats",
+      "brand": null,
+      "category": "Breakfast",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 300,
+      "serving_ml": null,
+      "kcal": 118,
+      "protein_g": 3.1,
+      "carbs_g": 21.4,
+      "fat_g": 2.2,
+      "fiber_g": 2.3,
+      "sugar_g": 8.4,
+      "sat_fat_g": 0.4,
+      "sodium_mg": 22,
+      "calcium_mg": 42,
+      "iron_mg": 0.8,
+      "potassium_mg": 246,
+      "aliases": [
+        {
+          "alias": "banana oatmeal",
+          "lang": "en-US"
+        },
+        {
+          "alias": "oats with banana",
+          "lang": "en-US"
+        },
+        {
+          "alias": "banana porridge",
+          "lang": "en-GB"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 bowl",
+          "grams": 300,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-halloumi-sandwich",
+      "name": "Halloumi sandwich",
+      "brand": null,
+      "category": "Sandwiches",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 160,
+      "serving_ml": null,
+      "kcal": 268,
+      "protein_g": 12.6,
+      "carbs_g": 25.4,
+      "fat_g": 13.2,
+      "fiber_g": null,
+      "sugar_g": 2.6,
+      "sat_fat_g": 7.8,
+      "sodium_mg": 528,
+      "calcium_mg": 286,
+      "iron_mg": 0.9,
+      "potassium_mg": 168,
+      "aliases": [
+        {
+          "alias": "grilled halloumi sandwich",
+          "lang": "en-GB"
+        },
+        {
+          "alias": "halloumi toastie",
+          "lang": "en-GB"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 sandwich",
+          "grams": 160,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-poha",
+      "name": "Poha",
+      "brand": null,
+      "category": "Breakfast",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 180,
+      "serving_ml": null,
+      "kcal": 142,
+      "protein_g": 2.9,
+      "carbs_g": 24.8,
+      "fat_g": 3.6,
+      "fiber_g": 1.2,
+      "sugar_g": 1.4,
+      "sat_fat_g": 0.6,
+      "sodium_mg": 268,
+      "calcium_mg": 18,
+      "iron_mg": 1,
+      "potassium_mg": 96,
+      "aliases": [
+        {
+          "alias": "pohe",
+          "lang": "mr"
+        },
+        {
+          "alias": "aval",
+          "lang": "ta"
+        },
+        {
+          "alias": "flattened rice",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 bowl",
+          "grams": 180,
+          "ml": null
+        },
+        {
+          "label": "1 plate",
+          "grams": 250,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-idli",
+      "name": "Idli",
+      "brand": null,
+      "category": "South Indian",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 40,
+      "serving_ml": null,
+      "kcal": 132,
+      "protein_g": 4.5,
+      "carbs_g": 26.4,
+      "fat_g": 0.7,
+      "fiber_g": 0.9,
+      "sugar_g": 0.4,
+      "sat_fat_g": 0.1,
+      "sodium_mg": 178,
+      "calcium_mg": 12,
+      "iron_mg": 0.6,
+      "potassium_mg": 58,
+      "aliases": [
+        {
+          "alias": "idly",
+          "lang": "ta"
+        },
+        {
+          "alias": "iddli",
+          "lang": "kn"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 idli",
+          "grams": 40,
+          "ml": null
+        },
+        {
+          "label": "1 plate (3 idlis)",
+          "grams": 120,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-sambar",
+      "name": "Sambar",
+      "brand": null,
+      "category": "South Indian",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 180,
+      "serving_ml": null,
+      "kcal": 84,
+      "protein_g": 4.2,
+      "carbs_g": 11.6,
+      "fat_g": 2.4,
+      "fiber_g": 3.1,
+      "sugar_g": 1.8,
+      "sat_fat_g": 0.5,
+      "sodium_mg": 302,
+      "calcium_mg": 42,
+      "iron_mg": 1.3,
+      "potassium_mg": 212,
+      "aliases": [
+        {
+          "alias": "sambhar",
+          "lang": "hi"
+        },
+        {
+          "alias": "sambar dal",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "sambhar dal",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 bowl",
+          "grams": 180,
+          "ml": null
+        },
+        {
+          "label": "1 ladle",
+          "grams": 60,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-curd-dahi",
+      "name": "Curd / Dahi",
+      "brand": null,
+      "category": "Eggs & Dairy",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 150,
+      "serving_ml": null,
+      "kcal": 83,
+      "protein_g": 3.6,
+      "carbs_g": 5.2,
+      "fat_g": 5.1,
+      "fiber_g": 0,
+      "sugar_g": 5.2,
+      "sat_fat_g": 3.2,
+      "sodium_mg": 46,
+      "calcium_mg": 121,
+      "iron_mg": 0.05,
+      "potassium_mg": 156,
+      "aliases": [
+        {
+          "alias": "dahi",
+          "lang": "hi"
+        },
+        {
+          "alias": "curd",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "yogurt",
+          "lang": "en-US"
+        },
+        {
+          "alias": "yoghurt",
+          "lang": "en-GB"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 bowl",
+          "grams": 200,
+          "ml": null
+        },
+        {
+          "label": "1 cup",
+          "grams": 245,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-rajma",
+      "name": "Rajma",
+      "brand": null,
+      "category": "Dals & Legumes",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 150,
+      "serving_ml": null,
+      "kcal": 127,
+      "protein_g": 6.1,
+      "carbs_g": 17.4,
+      "fat_g": 3.8,
+      "fiber_g": 5.6,
+      "sugar_g": 2.1,
+      "sat_fat_g": 0.7,
+      "sodium_mg": 284,
+      "calcium_mg": 42,
+      "iron_mg": 1.8,
+      "potassium_mg": 286,
+      "aliases": [
+        {
+          "alias": "rajma masala",
+          "lang": "hi"
+        },
+        {
+          "alias": "kidney bean curry",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "kidney beans",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 bowl",
+          "grams": 200,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-palak-paneer",
+      "name": "Palak paneer",
+      "brand": null,
+      "category": "Vegetarian Mains",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 150,
+      "serving_ml": null,
+      "kcal": 172,
+      "protein_g": 8.6,
+      "carbs_g": 6.2,
+      "fat_g": 13.1,
+      "fiber_g": 1.9,
+      "sugar_g": 1.6,
+      "sat_fat_g": 7.4,
+      "sodium_mg": 312,
+      "calcium_mg": 264,
+      "iron_mg": 1.7,
+      "potassium_mg": 208,
+      "aliases": [
+        {
+          "alias": "spinach paneer",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "palak panir",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 bowl",
+          "grams": 200,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-aloo-paratha",
+      "name": "Aloo paratha",
+      "brand": null,
+      "category": "Breads",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 100,
+      "serving_ml": null,
+      "kcal": 226,
+      "protein_g": 4.8,
+      "carbs_g": 30.2,
+      "fat_g": 9.6,
+      "fiber_g": 2.6,
+      "sugar_g": 1.2,
+      "sat_fat_g": 3.6,
+      "sodium_mg": 296,
+      "calcium_mg": 32,
+      "iron_mg": 1.2,
+      "potassium_mg": 212,
+      "aliases": [
+        {
+          "alias": "aloo parantha",
+          "lang": "hi"
+        },
+        {
+          "alias": "potato paratha",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 paratha",
+          "grams": 100,
+          "ml": null
+        },
+        {
+          "label": "1 plate (2 parathas)",
+          "grams": 200,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-amul-taaza-toned-milk",
+      "name": "Amul Taaza Toned Milk",
+      "brand": "Amul",
+      "category": "Beverages",
+      "prep_state": "prepared",
+      "basis": "per_100ml",
+      "serving_g": null,
+      "serving_ml": 200,
+      "kcal": 58,
+      "protein_g": 3.2,
+      "carbs_g": 4.7,
+      "fat_g": 3,
+      "fiber_g": null,
+      "sugar_g": 4.7,
+      "sat_fat_g": 1.9,
+      "sodium_mg": 44,
+      "calcium_mg": 120,
+      "iron_mg": 0.1,
+      "potassium_mg": 156,
+      "aliases": [
+        {
+          "alias": "taaza",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "amul toned milk",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "toned milk",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "doodh",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 glass",
+          "grams": null,
+          "ml": 200
+        },
+        {
+          "label": "1 cup",
+          "grams": null,
+          "ml": 240
+        },
+        {
+          "label": "200 ml pack",
+          "grams": null,
+          "ml": 200
+        }
+      ],
+      "barcodes": [
+        {
+          "raw_code": "8901262010016",
+          "symbology": "EAN-13"
+        }
+      ]
+    },
+    {
+      "id": "custom-millet-cookies",
+      "name": "Millet cookies",
+      "brand": "Millet Magic",
+      "category": "Snacks",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 30,
+      "serving_ml": null,
+      "kcal": 452,
+      "protein_g": 7.2,
+      "carbs_g": 66.4,
+      "fat_g": 17.6,
+      "fiber_g": 4.8,
+      "sugar_g": 28.4,
+      "sat_fat_g": 8.2,
+      "sodium_mg": 312,
+      "calcium_mg": 48,
+      "iron_mg": 2.6,
+      "potassium_mg": 264,
+      "aliases": [
+        {
+          "alias": "millet biscuit",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "ragi cookies",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "bajra cookies",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cookie",
+          "grams": 15,
+          "ml": null
+        },
+        {
+          "label": "2 cookies",
+          "grams": 30,
+          "ml": null
+        },
+        {
+          "label": "1 pack (6 cookies)",
+          "grams": 90,
+          "ml": null
+        }
+      ],
+      "barcodes": [
+        {
+          "raw_code": "8906012345677",
+          "symbology": "EAN-13"
+        }
+      ]
+    },
+    {
+      "id": "custom-lime-sparkling-water-test",
+      "name": "Sparkling water, lime",
+      "brand": "Test Pack Brand",
+      "category": "Beverages",
+      "prep_state": "prepared",
+      "basis": "per_100ml",
+      "serving_g": null,
+      "serving_ml": 355,
+      "kcal": 0,
+      "protein_g": 0,
+      "carbs_g": 0,
+      "fat_g": 0,
+      "fiber_g": 0,
+      "sugar_g": 0,
+      "sat_fat_g": 0,
+      "sodium_mg": 2,
+      "calcium_mg": 2,
+      "iron_mg": 0,
+      "potassium_mg": 2,
+      "aliases": [
+        {
+          "alias": "sparkling water",
+          "lang": "en-US"
+        },
+        {
+          "alias": "soda water",
+          "lang": "en-US"
+        },
+        {
+          "alias": "lime seltzer",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 can",
+          "grams": null,
+          "ml": 355
+        }
+      ],
+      "barcodes": [
+        {
+          "raw_code": "042100005264",
+          "symbology": "UPC-A"
+        },
+        {
+          "raw_code": "04252614",
+          "symbology": "UPC-E"
+        }
+      ]
+    },
+    {
+      "id": "custom-marie-biscuits-test",
+      "name": "Marie biscuits",
+      "brand": "Test Pack Brand",
+      "category": "Snacks",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 12,
+      "serving_ml": null,
+      "kcal": 436,
+      "protein_g": 7.4,
+      "carbs_g": 72.1,
+      "fat_g": 12.6,
+      "fiber_g": 2,
+      "sugar_g": 16.8,
+      "sat_fat_g": 6.4,
+      "sodium_mg": 396,
+      "calcium_mg": 28,
+      "iron_mg": 2.2,
+      "potassium_mg": 124,
+      "aliases": [
+        {
+          "alias": "marie biscuit",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "tea biscuits",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "2 biscuits",
+          "grams": 12,
+          "ml": null
+        },
+        {
+          "label": "1 biscuit",
+          "grams": 6,
+          "ml": null
+        }
+      ],
+      "barcodes": [
+        {
+          "raw_code": "96385074",
+          "symbology": "EAN-8"
+        }
+      ]
+    },
+    {
+      "id": "custom-paneer-tikka",
+      "name": "Paneer tikka",
+      "brand": null,
+      "category": "Starters",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 120,
+      "serving_ml": null,
+      "kcal": 216,
+      "protein_g": 13.2,
+      "carbs_g": 5.2,
+      "fat_g": 15.8,
+      "fiber_g": 0.8,
+      "sugar_g": 1.8,
+      "sat_fat_g": 9.2,
+      "sodium_mg": 396,
+      "calcium_mg": 286,
+      "iron_mg": 0.6,
+      "potassium_mg": 162,
+      "aliases": [
+        {
+          "alias": "tandoori paneer",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "paneer skewers",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 skewer",
+          "grams": 120,
+          "ml": null
+        },
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-chicken-biryani",
+      "name": "Chicken biryani",
+      "brand": null,
+      "category": "Rice Dishes",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 350,
+      "serving_ml": null,
+      "kcal": 186,
+      "protein_g": 8.4,
+      "carbs_g": 22.6,
+      "fat_g": 6.9,
+      "fiber_g": 1.1,
+      "sugar_g": 1.4,
+      "sat_fat_g": 2.6,
+      "sodium_mg": 372,
+      "calcium_mg": 28,
+      "iron_mg": 1.1,
+      "potassium_mg": 202,
+      "aliases": [
+        {
+          "alias": "biriyani",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "biryani",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 plate",
+          "grams": 350,
+          "ml": null
+        },
+        {
+          "label": "1 katori",
+          "grams": 180,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-veg-pulao",
+      "name": "Veg pulao",
+      "brand": null,
+      "category": "Rice Dishes",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 150,
+      "serving_ml": null,
+      "kcal": 156,
+      "protein_g": 3.4,
+      "carbs_g": 24.8,
+      "fat_g": 4.6,
+      "fiber_g": 1.4,
+      "sugar_g": 1.1,
+      "sat_fat_g": 2.4,
+      "sodium_mg": 288,
+      "calcium_mg": 22,
+      "iron_mg": 0.7,
+      "potassium_mg": 108,
+      "aliases": [
+        {
+          "alias": "vegetable pulao",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "pulav",
+          "lang": "hi"
+        },
+        {
+          "alias": "veg pulav",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 plate",
+          "grams": 300,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-rasam",
+      "name": "Rasam",
+      "brand": null,
+      "category": "South Indian",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 180,
+      "serving_ml": null,
+      "kcal": 42,
+      "protein_g": 1.8,
+      "carbs_g": 5.6,
+      "fat_g": 1.4,
+      "fiber_g": 1.1,
+      "sugar_g": 1.2,
+      "sat_fat_g": 0.3,
+      "sodium_mg": 348,
+      "calcium_mg": 28,
+      "iron_mg": 0.8,
+      "potassium_mg": 186,
+      "aliases": [
+        {
+          "alias": "saaru",
+          "lang": "kn"
+        },
+        {
+          "alias": "tomato rasam",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 bowl",
+          "grams": 180,
+          "ml": null
+        },
+        {
+          "label": "1 ladle",
+          "grams": 60,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-upma",
+      "name": "Upma",
+      "brand": null,
+      "category": "Breakfast",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 200,
+      "serving_ml": null,
+      "kcal": 148,
+      "protein_g": 3.6,
+      "carbs_g": 21.2,
+      "fat_g": 5.4,
+      "fiber_g": 2.1,
+      "sugar_g": 1.3,
+      "sat_fat_g": 0.9,
+      "sodium_mg": 302,
+      "calcium_mg": 24,
+      "iron_mg": 1.1,
+      "potassium_mg": 126,
+      "aliases": [
+        {
+          "alias": "uppuma",
+          "lang": "ta"
+        },
+        {
+          "alias": "rava upma",
+          "lang": "hi"
+        },
+        {
+          "alias": "semolina upma",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 bowl",
+          "grams": 200,
+          "ml": null
+        },
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-besan-chilla",
+      "name": "Besan chilla",
+      "brand": null,
+      "category": "Breakfast",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 60,
+      "serving_ml": null,
+      "kcal": 194,
+      "protein_g": 8.1,
+      "carbs_g": 16.4,
+      "fat_g": 10.2,
+      "fiber_g": 3.4,
+      "sugar_g": 1.6,
+      "sat_fat_g": 1.4,
+      "sodium_mg": 286,
+      "calcium_mg": 48,
+      "iron_mg": 1.8,
+      "potassium_mg": 246,
+      "aliases": [
+        {
+          "alias": "besan cheela",
+          "lang": "hi"
+        },
+        {
+          "alias": "gram flour pancake",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "chilla",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 chilla",
+          "grams": 60,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-masala-chai",
+      "name": "Masala chai",
+      "brand": null,
+      "category": "Beverages",
+      "prep_state": "prepared",
+      "basis": "per_100ml",
+      "serving_g": null,
+      "serving_ml": 150,
+      "kcal": 62,
+      "protein_g": 1.6,
+      "carbs_g": 8.4,
+      "fat_g": 2,
+      "fiber_g": null,
+      "sugar_g": 7.8,
+      "sat_fat_g": 1.2,
+      "sodium_mg": 24,
+      "calcium_mg": 42,
+      "iron_mg": 0.1,
+      "potassium_mg": 92,
+      "aliases": [
+        {
+          "alias": "chai",
+          "lang": "hi"
+        },
+        {
+          "alias": "tea",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "cutting chai",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": null,
+          "ml": 150
+        },
+        {
+          "label": "1 glass",
+          "grams": null,
+          "ml": 200
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-lemon-rice",
+      "name": "Lemon rice",
+      "brand": null,
+      "category": "Rice Dishes",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 150,
+      "serving_ml": null,
+      "kcal": 168,
+      "protein_g": 3.1,
+      "carbs_g": 27.4,
+      "fat_g": 5.1,
+      "fiber_g": 0.8,
+      "sugar_g": 0.6,
+      "sat_fat_g": 2.2,
+      "sodium_mg": 254,
+      "calcium_mg": 14,
+      "iron_mg": 0.5,
+      "potassium_mg": 74,
+      "aliases": [
+        {
+          "alias": "chitranna",
+          "lang": "kn"
+        },
+        {
+          "alias": "nimbu rice",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 bowl",
+          "grams": 200,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "custom-coconut-chutney",
+      "name": "Coconut chutney",
+      "brand": null,
+      "category": "South Indian",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 30,
+      "serving_ml": null,
+      "kcal": 178,
+      "protein_g": 3.2,
+      "carbs_g": 8.4,
+      "fat_g": 14.8,
+      "fiber_g": 4.2,
+      "sugar_g": 2.6,
+      "sat_fat_g": 12.4,
+      "sodium_mg": 268,
+      "calcium_mg": 18,
+      "iron_mg": 0.9,
+      "potassium_mg": 212,
+      "aliases": [
+        {
+          "alias": "nariyal chutney",
+          "lang": "hi"
+        },
+        {
+          "alias": "thengai chutney",
+          "lang": "ta"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 tbsp",
+          "grams": 15,
+          "ml": null
+        },
+        {
+          "label": "1 ladle",
+          "grams": 30,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    }
+  ]
+}

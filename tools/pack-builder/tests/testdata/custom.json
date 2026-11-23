@@ -1,0 +1,20 @@
+{
+  "pack_meta": {
+    "pack_id": "test-custom", "name": "Custom test foods", "version": "1.0.0", "kind": "custom",
+    "license": "CC0-1.0", "attribution_text": "Synthetic test data by OpenCalorieTracker contributors."
+  },
+  "foods": [
+    {
+      "id": "coffee", "name": "Café crème", "prep_state": "prepared", "basis": "per_100ml",
+      "kcal": 37, "protein_g": 1, "carbs_g": 2, "fat_g": 3,
+      "aliases": [{ "alias": "kaafi", "lang": "hi-Latn" }, { "alias": "कॉफ़ी", "lang": "hi" }],
+      "units": [{ "label": "1 cup", "ml": 150 }],
+      "barcodes": [{ "raw_code": "01234565", "symbology": "UPC-E" }]
+    },
+    {
+      "id": "water", "name": "Sparkling water", "prep_state": "unknown", "basis": "per_100ml",
+      "kcal": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0, "fiber_g": 0,
+      "barcodes": [{ "raw_code": "01234565", "symbology": "EAN-8" }]
+    }
+  ]
+}

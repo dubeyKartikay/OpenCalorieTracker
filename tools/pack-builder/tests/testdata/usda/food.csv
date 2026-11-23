@@ -1,0 +1,7 @@
+fdc_id,data_type,description,food_category_id,publication_date
+100,foundation_food,"Lentils, raw",16,2026-01-01
+101,sr_legacy_food,"Rice, cooked",20,2019-04-01
+102,foundation_food,"Beans, prepared",16,2026-01-01
+103,branded_food,Excluded branded item,,2026-01-01
+104,foundation_food,Missing protein food,,2026-01-01
+105,foundation_food,Uncooked sample,,2026-01-01

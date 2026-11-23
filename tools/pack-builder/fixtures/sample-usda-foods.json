@@ -1,0 +1,2352 @@
+{
+  "meta": {
+    "pack_id": "usda-fdc-starter",
+    "name": "USDA FoodData Central Starter",
+    "version": "2026.11.0",
+    "kind": "reference",
+    "region": "US",
+    "license": "CC0-1.0",
+    "attribution_text": "U.S. Department of Agriculture, Agricultural Research Service. FoodData Central (Foundation and SR Legacy), 2019-2026. Public domain (CC0 1.0).",
+    "attribution_url": "https://fdc.nal.usda.gov/"
+  },
+  "foods": [
+    {
+      "id": "usda-oats-rolled-dry",
+      "name": "Oats, rolled, dry",
+      "brand": null,
+      "category": "Grains & Cereals",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 40,
+      "serving_ml": null,
+      "kcal": 389,
+      "protein_g": 16.9,
+      "carbs_g": 66.3,
+      "fat_g": 6.9,
+      "fiber_g": 10.6,
+      "sugar_g": 0.99,
+      "sat_fat_g": 1.217,
+      "sodium_mg": 2,
+      "calcium_mg": 54,
+      "iron_mg": 4.72,
+      "potassium_mg": 429,
+      "aliases": [
+        {
+          "alias": "rolled oats",
+          "lang": "en-US"
+        },
+        {
+          "alias": "old-fashioned oats",
+          "lang": "en-US"
+        },
+        {
+          "alias": "oatmeal",
+          "lang": "en-US"
+        },
+        {
+          "alias": "jau",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 81,
+          "ml": null
+        },
+        {
+          "label": "1/2 cup",
+          "grams": 40,
+          "ml": null
+        },
+        {
+          "label": "1 tbsp",
+          "grams": 5,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-oats-cooked",
+      "name": "Oats, rolled, cooked with water",
+      "brand": null,
+      "category": "Grains & Cereals",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 234,
+      "serving_ml": null,
+      "kcal": 71,
+      "protein_g": 2.54,
+      "carbs_g": 12,
+      "fat_g": 1.52,
+      "fiber_g": 1.7,
+      "sugar_g": null,
+      "sat_fat_g": null,
+      "sodium_mg": 4,
+      "calcium_mg": 9,
+      "iron_mg": 0.9,
+      "potassium_mg": 70,
+      "aliases": [
+        {
+          "alias": "oatmeal",
+          "lang": "en-US"
+        },
+        {
+          "alias": "porridge",
+          "lang": "en-GB"
+        },
+        {
+          "alias": "daliya",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 234,
+          "ml": null
+        },
+        {
+          "label": "1 bowl",
+          "grams": 250,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-banana-raw",
+      "name": "Banana, raw",
+      "brand": null,
+      "category": "Fruits",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 118,
+      "serving_ml": null,
+      "kcal": 89,
+      "protein_g": 1.09,
+      "carbs_g": 22.84,
+      "fat_g": 0.33,
+      "fiber_g": 2.6,
+      "sugar_g": 12.23,
+      "sat_fat_g": 0.112,
+      "sodium_mg": 1,
+      "calcium_mg": 5,
+      "iron_mg": 0.26,
+      "potassium_mg": 358,
+      "aliases": [
+        {
+          "alias": "banana",
+          "lang": "en-US"
+        },
+        {
+          "alias": "kela",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 medium",
+          "grams": 118,
+          "ml": null
+        },
+        {
+          "label": "1 large",
+          "grams": 136,
+          "ml": null
+        },
+        {
+          "label": "1 small",
+          "grams": 101,
+          "ml": null
+        },
+        {
+          "label": "1 cup, sliced",
+          "grams": 150,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-egg-whole-raw",
+      "name": "Egg, whole, raw",
+      "brand": null,
+      "category": "Eggs & Dairy",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 50,
+      "serving_ml": null,
+      "kcal": 143,
+      "protein_g": 12.56,
+      "carbs_g": 0.72,
+      "fat_g": 9.51,
+      "fiber_g": 0,
+      "sugar_g": 0.37,
+      "sat_fat_g": 3.126,
+      "sodium_mg": 142,
+      "calcium_mg": 56,
+      "iron_mg": 1.75,
+      "potassium_mg": 138,
+      "aliases": [
+        {
+          "alias": "egg",
+          "lang": "en-US"
+        },
+        {
+          "alias": "anda",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 large egg",
+          "grams": 50,
+          "ml": null
+        },
+        {
+          "label": "1 medium egg",
+          "grams": 44,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-egg-whole-hard-boiled",
+      "name": "Egg, whole, hard-boiled",
+      "brand": null,
+      "category": "Eggs & Dairy",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 50,
+      "serving_ml": null,
+      "kcal": 155,
+      "protein_g": 12.58,
+      "carbs_g": 1.12,
+      "fat_g": 10.61,
+      "fiber_g": 0,
+      "sugar_g": 1.12,
+      "sat_fat_g": 3.267,
+      "sodium_mg": 124,
+      "calcium_mg": 50,
+      "iron_mg": 1.19,
+      "potassium_mg": 126,
+      "aliases": [
+        {
+          "alias": "boiled egg",
+          "lang": "en-US"
+        },
+        {
+          "alias": "hard boiled egg",
+          "lang": "en-US"
+        },
+        {
+          "alias": "ubli anda",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 large egg",
+          "grams": 50,
+          "ml": null
+        },
+        {
+          "label": "1 medium egg",
+          "grams": 44,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-chicken-breast-raw",
+      "name": "Chicken breast, meat only, raw",
+      "brand": null,
+      "category": "Poultry",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 170,
+      "serving_ml": null,
+      "kcal": 120,
+      "protein_g": 22.5,
+      "carbs_g": 0,
+      "fat_g": 2.62,
+      "fiber_g": 0,
+      "sugar_g": 0,
+      "sat_fat_g": 0.563,
+      "sodium_mg": 45,
+      "calcium_mg": 5,
+      "iron_mg": 0.32,
+      "potassium_mg": 334,
+      "aliases": [
+        {
+          "alias": "chicken breast",
+          "lang": "en-US"
+        },
+        {
+          "alias": "boneless chicken",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 breast",
+          "grams": 170,
+          "ml": null
+        },
+        {
+          "label": "1 cup, diced",
+          "grams": 140,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-chicken-breast-roasted",
+      "name": "Chicken breast, meat only, roasted",
+      "brand": null,
+      "category": "Poultry",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 140,
+      "serving_ml": null,
+      "kcal": 165,
+      "protein_g": 31.02,
+      "carbs_g": 0,
+      "fat_g": 3.57,
+      "fiber_g": 0,
+      "sugar_g": 0,
+      "sat_fat_g": 1.01,
+      "sodium_mg": 74,
+      "calcium_mg": 15,
+      "iron_mg": 1.04,
+      "potassium_mg": 256,
+      "aliases": [
+        {
+          "alias": "grilled chicken breast",
+          "lang": "en-US"
+        },
+        {
+          "alias": "roast chicken breast",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup, chopped",
+          "grams": 140,
+          "ml": null
+        },
+        {
+          "label": "1 breast",
+          "grams": 172,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-chicken-thigh-roasted",
+      "name": "Chicken thigh, meat only, roasted",
+      "brand": null,
+      "category": "Poultry",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 52,
+      "serving_ml": null,
+      "kcal": 209,
+      "protein_g": 25.96,
+      "carbs_g": 0,
+      "fat_g": 10.9,
+      "fiber_g": 0,
+      "sugar_g": 0,
+      "sat_fat_g": 2.75,
+      "sodium_mg": 88,
+      "calcium_mg": null,
+      "iron_mg": null,
+      "potassium_mg": 238,
+      "aliases": [
+        {
+          "alias": "chicken thigh",
+          "lang": "en-US"
+        },
+        {
+          "alias": "roast chicken thigh",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 thigh",
+          "grams": 52,
+          "ml": null
+        },
+        {
+          "label": "1 cup, chopped",
+          "grams": 116,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-greek-yogurt-whole",
+      "name": "Greek yogurt, plain, whole milk",
+      "brand": null,
+      "category": "Eggs & Dairy",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 170,
+      "serving_ml": null,
+      "kcal": 97,
+      "protein_g": 9,
+      "carbs_g": 3.94,
+      "fat_g": 5,
+      "fiber_g": 0,
+      "sugar_g": 3.6,
+      "sat_fat_g": 2.395,
+      "sodium_mg": 35,
+      "calcium_mg": 100,
+      "iron_mg": null,
+      "potassium_mg": 141,
+      "aliases": [
+        {
+          "alias": "greek yoghurt",
+          "lang": "en-GB"
+        },
+        {
+          "alias": "hung curd",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 245,
+          "ml": null
+        },
+        {
+          "label": "1 tub (170 g)",
+          "grams": 170,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-greek-yogurt-nonfat",
+      "name": "Greek yogurt, plain, nonfat",
+      "brand": null,
+      "category": "Eggs & Dairy",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 170,
+      "serving_ml": null,
+      "kcal": 59,
+      "protein_g": 10.19,
+      "carbs_g": 3.6,
+      "fat_g": 0.39,
+      "fiber_g": 0,
+      "sugar_g": 3.24,
+      "sat_fat_g": 0.117,
+      "sodium_mg": 36,
+      "calcium_mg": 110,
+      "iron_mg": 0.07,
+      "potassium_mg": 141,
+      "aliases": [
+        {
+          "alias": "fat free greek yogurt",
+          "lang": "en-US"
+        },
+        {
+          "alias": "0% greek yogurt",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 245,
+          "ml": null
+        },
+        {
+          "label": "1 tub (170 g)",
+          "grams": 170,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-milk-whole",
+      "name": "Milk, whole, 3.25% milkfat",
+      "brand": null,
+      "category": "Eggs & Dairy",
+      "prep_state": "prepared",
+      "basis": "per_100ml",
+      "serving_g": null,
+      "serving_ml": 240,
+      "kcal": 61,
+      "protein_g": 3.15,
+      "carbs_g": 4.8,
+      "fat_g": 3.25,
+      "fiber_g": 0,
+      "sugar_g": 4.8,
+      "sat_fat_g": 1.865,
+      "sodium_mg": 43,
+      "calcium_mg": 113,
+      "iron_mg": 0.03,
+      "potassium_mg": 132,
+      "aliases": [
+        {
+          "alias": "whole milk",
+          "lang": "en-US"
+        },
+        {
+          "alias": "full fat milk",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "doodh",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": null,
+          "ml": 240
+        },
+        {
+          "label": "1 glass",
+          "grams": null,
+          "ml": 200
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-olive-oil",
+      "name": "Olive oil, extra virgin",
+      "brand": null,
+      "category": "Fats & Oils",
+      "prep_state": "raw",
+      "basis": "per_100ml",
+      "serving_g": null,
+      "serving_ml": 15,
+      "kcal": 811,
+      "protein_g": 0,
+      "carbs_g": 0,
+      "fat_g": 91.8,
+      "fiber_g": 0,
+      "sugar_g": 0,
+      "sat_fat_g": 12.7,
+      "sodium_mg": 2,
+      "calcium_mg": 1,
+      "iron_mg": 0.51,
+      "potassium_mg": 1,
+      "aliases": [
+        {
+          "alias": "extra virgin olive oil",
+          "lang": "en-US"
+        },
+        {
+          "alias": "EVOO",
+          "lang": "en-US"
+        },
+        {
+          "alias": "jaitun ka tel",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 tbsp",
+          "grams": null,
+          "ml": 15
+        },
+        {
+          "label": "1 tsp",
+          "grams": null,
+          "ml": 5
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-butter-salted",
+      "name": "Butter, salted",
+      "brand": null,
+      "category": "Fats & Oils",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 14,
+      "serving_ml": null,
+      "kcal": 717,
+      "protein_g": 0.85,
+      "carbs_g": 0.06,
+      "fat_g": 81.11,
+      "fiber_g": 0,
+      "sugar_g": 0.06,
+      "sat_fat_g": 51.368,
+      "sodium_mg": 643,
+      "calcium_mg": 24,
+      "iron_mg": 0.02,
+      "potassium_mg": 24,
+      "aliases": [
+        {
+          "alias": "butter",
+          "lang": "en-US"
+        },
+        {
+          "alias": "makhan",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 tbsp",
+          "grams": 14.2,
+          "ml": null
+        },
+        {
+          "label": "1 stick",
+          "grams": 113,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-ghee",
+      "name": "Ghee, clarified butter",
+      "brand": null,
+      "category": "Fats & Oils",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 13,
+      "serving_ml": null,
+      "kcal": 876,
+      "protein_g": 0.28,
+      "carbs_g": 0,
+      "fat_g": 99.48,
+      "fiber_g": 0,
+      "sugar_g": 0,
+      "sat_fat_g": 61.924,
+      "sodium_mg": 2,
+      "calcium_mg": null,
+      "iron_mg": null,
+      "potassium_mg": null,
+      "aliases": [
+        {
+          "alias": "clarified butter",
+          "lang": "en-US"
+        },
+        {
+          "alias": "desi ghee",
+          "lang": "hi"
+        },
+        {
+          "alias": "ghi",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 tbsp",
+          "grams": 12.8,
+          "ml": null
+        },
+        {
+          "label": "1 tsp",
+          "grams": 4.3,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-basmati-rice-raw",
+      "name": "Rice, basmati, white, raw",
+      "brand": null,
+      "category": "Grains & Cereals",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 60,
+      "serving_ml": null,
+      "kcal": 349,
+      "protein_g": 7.1,
+      "carbs_g": 78.6,
+      "fat_g": 0.5,
+      "fiber_g": 1.3,
+      "sugar_g": 0.1,
+      "sat_fat_g": 0.13,
+      "sodium_mg": 2,
+      "calcium_mg": null,
+      "iron_mg": 0.8,
+      "potassium_mg": null,
+      "aliases": [
+        {
+          "alias": "basmati rice",
+          "lang": "en-US"
+        },
+        {
+          "alias": "basmati chawal",
+          "lang": "hi"
+        },
+        {
+          "alias": "raw rice",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 185,
+          "ml": null
+        },
+        {
+          "label": "1 katori",
+          "grams": 180,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-basmati-rice-cooked",
+      "name": "Rice, basmati, white, cooked",
+      "brand": null,
+      "category": "Grains & Cereals",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 150,
+      "serving_ml": null,
+      "kcal": 130,
+      "protein_g": 2.7,
+      "carbs_g": 28.2,
+      "fat_g": 0.3,
+      "fiber_g": 0.4,
+      "sugar_g": 0.05,
+      "sat_fat_g": 0.06,
+      "sodium_mg": 1,
+      "calcium_mg": 10,
+      "iron_mg": 0.2,
+      "potassium_mg": 28,
+      "aliases": [
+        {
+          "alias": "cooked basmati rice",
+          "lang": "en-US"
+        },
+        {
+          "alias": "chawal",
+          "lang": "hi"
+        },
+        {
+          "alias": "steamed rice",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 158,
+          "ml": null
+        },
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 bowl",
+          "grams": 200,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-brown-rice-cooked",
+      "name": "Rice, brown, long-grain, cooked",
+      "brand": null,
+      "category": "Grains & Cereals",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 150,
+      "serving_ml": null,
+      "kcal": 123,
+      "protein_g": 2.74,
+      "carbs_g": 25.58,
+      "fat_g": 0.97,
+      "fiber_g": 1.6,
+      "sugar_g": 0.24,
+      "sat_fat_g": 0.198,
+      "sodium_mg": 4,
+      "calcium_mg": 3,
+      "iron_mg": 0.56,
+      "potassium_mg": 86,
+      "aliases": [
+        {
+          "alias": "brown rice",
+          "lang": "en-US"
+        },
+        {
+          "alias": "brown chawal",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 195,
+          "ml": null
+        },
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-sourdough-bread",
+      "name": "Bread, sourdough",
+      "brand": null,
+      "category": "Bakery",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 50,
+      "serving_ml": null,
+      "kcal": 289,
+      "protein_g": 11.7,
+      "carbs_g": 55.4,
+      "fat_g": 2.1,
+      "fiber_g": 2.4,
+      "sugar_g": 4.6,
+      "sat_fat_g": 0.4,
+      "sodium_mg": 602,
+      "calcium_mg": 25,
+      "iron_mg": 3.6,
+      "potassium_mg": 122,
+      "aliases": [
+        {
+          "alias": "sourdough",
+          "lang": "en-US"
+        },
+        {
+          "alias": "khatta bread",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 slice",
+          "grams": 50,
+          "ml": null
+        },
+        {
+          "label": "1 slice, large",
+          "grams": 64,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-whole-wheat-flour",
+      "name": "Flour, whole wheat (atta)",
+      "brand": null,
+      "category": "Grains & Cereals",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 120,
+      "serving_ml": null,
+      "kcal": 340,
+      "protein_g": 13.2,
+      "carbs_g": 71.97,
+      "fat_g": 2.5,
+      "fiber_g": 10.7,
+      "sugar_g": 0.41,
+      "sat_fat_g": 0.43,
+      "sodium_mg": 2,
+      "calcium_mg": 34,
+      "iron_mg": 3.6,
+      "potassium_mg": 363,
+      "aliases": [
+        {
+          "alias": "atta",
+          "lang": "hi"
+        },
+        {
+          "alias": "whole wheat flour",
+          "lang": "en-US"
+        },
+        {
+          "alias": "chapati flour",
+          "lang": "en-US"
+        },
+        {
+          "alias": "gehun ka atta",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 120,
+          "ml": null
+        },
+        {
+          "label": "1 tbsp",
+          "grams": 8,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-almonds-raw",
+      "name": "Almonds, raw",
+      "brand": null,
+      "category": "Nuts & Seeds",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 28,
+      "serving_ml": null,
+      "kcal": 579,
+      "protein_g": 21.15,
+      "carbs_g": 21.55,
+      "fat_g": 49.93,
+      "fiber_g": 12.5,
+      "sugar_g": 4.35,
+      "sat_fat_g": 3.802,
+      "sodium_mg": 1,
+      "calcium_mg": 269,
+      "iron_mg": 3.71,
+      "potassium_mg": 733,
+      "aliases": [
+        {
+          "alias": "almond",
+          "lang": "en-US"
+        },
+        {
+          "alias": "badam",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 oz (23 almonds)",
+          "grams": 28.35,
+          "ml": null
+        },
+        {
+          "label": "10 almonds",
+          "grams": 12,
+          "ml": null
+        },
+        {
+          "label": "1 handful",
+          "grams": 30,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-honey",
+      "name": "Honey",
+      "brand": null,
+      "category": "Sugars & Sweets",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 21,
+      "serving_ml": null,
+      "kcal": 304,
+      "protein_g": 0.3,
+      "carbs_g": 82.4,
+      "fat_g": 0,
+      "fiber_g": 0.2,
+      "sugar_g": 82.12,
+      "sat_fat_g": 0,
+      "sodium_mg": 4,
+      "calcium_mg": null,
+      "iron_mg": null,
+      "potassium_mg": 52,
+      "aliases": [
+        {
+          "alias": "madhu",
+          "lang": "hi"
+        },
+        {
+          "alias": "shahad",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 tbsp",
+          "grams": 21,
+          "ml": null
+        },
+        {
+          "label": "1 tsp",
+          "grams": 7,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-blueberries-raw",
+      "name": "Blueberries, raw",
+      "brand": null,
+      "category": "Fruits",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 74,
+      "serving_ml": null,
+      "kcal": 57,
+      "protein_g": 0.74,
+      "carbs_g": 14.49,
+      "fat_g": 0.33,
+      "fiber_g": 2.4,
+      "sugar_g": 9.96,
+      "sat_fat_g": 0.028,
+      "sodium_mg": 1,
+      "calcium_mg": 6,
+      "iron_mg": 0.28,
+      "potassium_mg": 77,
+      "aliases": [
+        {
+          "alias": "blueberry",
+          "lang": "en-US"
+        },
+        {
+          "alias": "neelbadri",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 148,
+          "ml": null
+        },
+        {
+          "label": "1 handful",
+          "grams": 70,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-chickpeas-cooked",
+      "name": "Chickpeas, cooked",
+      "brand": null,
+      "category": "Legumes",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 164,
+      "serving_ml": null,
+      "kcal": 164,
+      "protein_g": 8.86,
+      "carbs_g": 27.42,
+      "fat_g": 2.59,
+      "fiber_g": 7.6,
+      "sugar_g": 4.8,
+      "sat_fat_g": 0.269,
+      "sodium_mg": 7,
+      "calcium_mg": 49,
+      "iron_mg": 2.89,
+      "potassium_mg": 291,
+      "aliases": [
+        {
+          "alias": "garbanzo beans",
+          "lang": "en-US"
+        },
+        {
+          "alias": "chana",
+          "lang": "hi"
+        },
+        {
+          "alias": "kabuli chana",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 164,
+          "ml": null
+        },
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-red-lentils-cooked",
+      "name": "Lentils, red, cooked",
+      "brand": null,
+      "category": "Legumes",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 198,
+      "serving_ml": null,
+      "kcal": 116,
+      "protein_g": 9.02,
+      "carbs_g": 20.13,
+      "fat_g": 0.38,
+      "fiber_g": 7.9,
+      "sugar_g": 1.8,
+      "sat_fat_g": 0.06,
+      "sodium_mg": 2,
+      "calcium_mg": 19,
+      "iron_mg": 3.3,
+      "potassium_mg": 369,
+      "aliases": [
+        {
+          "alias": "masoor dal",
+          "lang": "hi"
+        },
+        {
+          "alias": "split red lentils",
+          "lang": "en-US"
+        },
+        {
+          "alias": "masoor",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 198,
+          "ml": null
+        },
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 ladle",
+          "grams": 60,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-toor-dal-raw",
+      "name": "Pigeon peas (toor dal), raw",
+      "brand": null,
+      "category": "Legumes",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 100,
+      "serving_ml": null,
+      "kcal": 343,
+      "protein_g": 21.7,
+      "carbs_g": 62.78,
+      "fat_g": 1.49,
+      "fiber_g": 15,
+      "sugar_g": null,
+      "sat_fat_g": 0.33,
+      "sodium_mg": 17,
+      "calcium_mg": 130,
+      "iron_mg": 5.23,
+      "potassium_mg": 1392,
+      "aliases": [
+        {
+          "alias": "toor dal",
+          "lang": "hi"
+        },
+        {
+          "alias": "arhar dal",
+          "lang": "hi"
+        },
+        {
+          "alias": "tur dal",
+          "lang": "mr"
+        },
+        {
+          "alias": "red gram",
+          "lang": "en-IN"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 200,
+          "ml": null
+        },
+        {
+          "label": "1 katori",
+          "grams": 180,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-toor-dal-cooked",
+      "name": "Pigeon peas (toor dal), cooked",
+      "brand": null,
+      "category": "Legumes",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 200,
+      "serving_ml": null,
+      "kcal": 121,
+      "protein_g": 6.76,
+      "carbs_g": 23.25,
+      "fat_g": 0.38,
+      "fiber_g": 5.1,
+      "sugar_g": 1.5,
+      "sat_fat_g": 0.1,
+      "sodium_mg": 5,
+      "calcium_mg": 41,
+      "iron_mg": 1.11,
+      "potassium_mg": 384,
+      "aliases": [
+        {
+          "alias": "toor dal",
+          "lang": "hi"
+        },
+        {
+          "alias": "arhar dal",
+          "lang": "hi"
+        },
+        {
+          "alias": "tur dal",
+          "lang": "mr"
+        },
+        {
+          "alias": "tuvar dal",
+          "lang": "gu"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 200,
+          "ml": null
+        },
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        },
+        {
+          "label": "1 ladle",
+          "grams": 60,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-mung-beans-cooked",
+      "name": "Mung beans, cooked",
+      "brand": null,
+      "category": "Legumes",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 202,
+      "serving_ml": null,
+      "kcal": 105,
+      "protein_g": 7.02,
+      "carbs_g": 19.15,
+      "fat_g": 0.38,
+      "fiber_g": 7.6,
+      "sugar_g": 2,
+      "sat_fat_g": 0.116,
+      "sodium_mg": 2,
+      "calcium_mg": 27,
+      "iron_mg": 1.4,
+      "potassium_mg": 266,
+      "aliases": [
+        {
+          "alias": "moong dal",
+          "lang": "hi"
+        },
+        {
+          "alias": "green gram",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "mung dal",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 202,
+          "ml": null
+        },
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-paneer",
+      "name": "Paneer, fresh",
+      "brand": null,
+      "category": "Eggs & Dairy",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 50,
+      "serving_ml": null,
+      "kcal": 289,
+      "protein_g": 18.3,
+      "carbs_g": 3.6,
+      "fat_g": 22.8,
+      "fiber_g": null,
+      "sugar_g": 2.4,
+      "sat_fat_g": 14.5,
+      "sodium_mg": 22,
+      "calcium_mg": 480,
+      "iron_mg": 0.3,
+      "potassium_mg": 96,
+      "aliases": [
+        {
+          "alias": "panir",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "indian cottage cheese",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cube",
+          "grams": 15,
+          "ml": null
+        },
+        {
+          "label": "50 g block",
+          "grams": 50,
+          "ml": null
+        },
+        {
+          "label": "1 katori, crumbled",
+          "grams": 100,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-onion-raw",
+      "name": "Onion, raw",
+      "brand": null,
+      "category": "Vegetables",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 110,
+      "serving_ml": null,
+      "kcal": 40,
+      "protein_g": 1.1,
+      "carbs_g": 9.34,
+      "fat_g": 0.1,
+      "fiber_g": 1.7,
+      "sugar_g": 4.24,
+      "sat_fat_g": 0.042,
+      "sodium_mg": 4,
+      "calcium_mg": 23,
+      "iron_mg": 0.21,
+      "potassium_mg": 146,
+      "aliases": [
+        {
+          "alias": "pyaz",
+          "lang": "hi"
+        },
+        {
+          "alias": "kanda",
+          "lang": "mr"
+        },
+        {
+          "alias": "onions",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 medium",
+          "grams": 110,
+          "ml": null
+        },
+        {
+          "label": "1 small",
+          "grams": 70,
+          "ml": null
+        },
+        {
+          "label": "1 cup, chopped",
+          "grams": 160,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-tomato-raw",
+      "name": "Tomato, red, ripe, raw",
+      "brand": null,
+      "category": "Vegetables",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 123,
+      "serving_ml": null,
+      "kcal": 18,
+      "protein_g": 0.88,
+      "carbs_g": 3.89,
+      "fat_g": 0.2,
+      "fiber_g": 1.2,
+      "sugar_g": 2.63,
+      "sat_fat_g": 0.028,
+      "sodium_mg": 5,
+      "calcium_mg": 10,
+      "iron_mg": 0.27,
+      "potassium_mg": 237,
+      "aliases": [
+        {
+          "alias": "tamatar",
+          "lang": "hi"
+        },
+        {
+          "alias": "tomatoes",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 medium",
+          "grams": 123,
+          "ml": null
+        },
+        {
+          "label": "1 small",
+          "grams": 91,
+          "ml": null
+        },
+        {
+          "label": "1 cup, chopped",
+          "grams": 180,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-cucumber-raw",
+      "name": "Cucumber, with peel, raw",
+      "brand": null,
+      "category": "Vegetables",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 201,
+      "serving_ml": null,
+      "kcal": 15,
+      "protein_g": 0.65,
+      "carbs_g": 3.63,
+      "fat_g": 0.11,
+      "fiber_g": 0.5,
+      "sugar_g": 1.67,
+      "sat_fat_g": 0.037,
+      "sodium_mg": 2,
+      "calcium_mg": 16,
+      "iron_mg": 0.28,
+      "potassium_mg": 147,
+      "aliases": [
+        {
+          "alias": "kheera",
+          "lang": "hi"
+        },
+        {
+          "alias": "cucumber",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 medium",
+          "grams": 201,
+          "ml": null
+        },
+        {
+          "label": "1 cup, sliced",
+          "grams": 119,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-spinach-raw",
+      "name": "Spinach, raw",
+      "brand": null,
+      "category": "Vegetables",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 30,
+      "serving_ml": null,
+      "kcal": 23,
+      "protein_g": 2.86,
+      "carbs_g": 3.63,
+      "fat_g": 0.39,
+      "fiber_g": 2.2,
+      "sugar_g": 0.42,
+      "sat_fat_g": 0.063,
+      "sodium_mg": 79,
+      "calcium_mg": 99,
+      "iron_mg": 2.71,
+      "potassium_mg": 558,
+      "aliases": [
+        {
+          "alias": "palak",
+          "lang": "hi"
+        },
+        {
+          "alias": "spinach leaves",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 30,
+          "ml": null
+        },
+        {
+          "label": "1 handful",
+          "grams": 25,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-potato-raw",
+      "name": "Potato, flesh and skin, raw",
+      "brand": null,
+      "category": "Vegetables",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 213,
+      "serving_ml": null,
+      "kcal": 77,
+      "protein_g": 2.05,
+      "carbs_g": 17.49,
+      "fat_g": 0.09,
+      "fiber_g": 2.1,
+      "sugar_g": 0.82,
+      "sat_fat_g": 0.028,
+      "sodium_mg": 6,
+      "calcium_mg": 12,
+      "iron_mg": 0.81,
+      "potassium_mg": 421,
+      "aliases": [
+        {
+          "alias": "aloo",
+          "lang": "hi"
+        },
+        {
+          "alias": "potato",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 medium",
+          "grams": 213,
+          "ml": null
+        },
+        {
+          "label": "1 large",
+          "grams": 299,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-potato-boiled",
+      "name": "Potato, boiled, without salt",
+      "brand": null,
+      "category": "Vegetables",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 167,
+      "serving_ml": null,
+      "kcal": 87,
+      "protein_g": 1.87,
+      "carbs_g": 20.13,
+      "fat_g": 0.1,
+      "fiber_g": 2,
+      "sugar_g": 0.89,
+      "sat_fat_g": 0.026,
+      "sodium_mg": 4,
+      "calcium_mg": 5,
+      "iron_mg": 0.31,
+      "potassium_mg": null,
+      "aliases": [
+        {
+          "alias": "boiled potato",
+          "lang": "en-US"
+        },
+        {
+          "alias": "ubla aloo",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 medium",
+          "grams": 167,
+          "ml": null
+        },
+        {
+          "label": "1 cup",
+          "grams": 156,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-sweet-potato-raw",
+      "name": "Sweet potato, raw",
+      "brand": null,
+      "category": "Vegetables",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 130,
+      "serving_ml": null,
+      "kcal": 86,
+      "protein_g": 1.57,
+      "carbs_g": 20.12,
+      "fat_g": 0.05,
+      "fiber_g": 3,
+      "sugar_g": 4.18,
+      "sat_fat_g": 0.018,
+      "sodium_mg": 55,
+      "calcium_mg": 30,
+      "iron_mg": 0.61,
+      "potassium_mg": 337,
+      "aliases": [
+        {
+          "alias": "shakarkandi",
+          "lang": "hi"
+        },
+        {
+          "alias": "yam",
+          "lang": "en-US"
+        },
+        {
+          "alias": "kumara",
+          "lang": "en-NZ"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 medium",
+          "grams": 130,
+          "ml": null
+        },
+        {
+          "label": "1 cup, cubed",
+          "grams": 133,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-tofu-firm",
+      "name": "Tofu, firm, prepared with calcium sulfate",
+      "brand": null,
+      "category": "Legumes",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 126,
+      "serving_ml": null,
+      "kcal": 144,
+      "protein_g": 17.19,
+      "carbs_g": 2.78,
+      "fat_g": 8.72,
+      "fiber_g": 2.3,
+      "sugar_g": 0.62,
+      "sat_fat_g": 1.261,
+      "sodium_mg": 14,
+      "calcium_mg": 683,
+      "iron_mg": 2.66,
+      "potassium_mg": 237,
+      "aliases": [
+        {
+          "alias": "bean curd",
+          "lang": "en-US"
+        },
+        {
+          "alias": "tofu",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 block (1/2 cup)",
+          "grams": 126,
+          "ml": null
+        },
+        {
+          "label": "1 cup",
+          "grams": 252,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-salmon-atlantic-cooked",
+      "name": "Salmon, Atlantic, farmed, cooked",
+      "brand": null,
+      "category": "Seafood",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 154,
+      "serving_ml": null,
+      "kcal": 206,
+      "protein_g": 22.1,
+      "carbs_g": 0,
+      "fat_g": 12.35,
+      "fiber_g": 0,
+      "sugar_g": 0,
+      "sat_fat_g": 2.504,
+      "sodium_mg": 59,
+      "calcium_mg": null,
+      "iron_mg": null,
+      "potassium_mg": 384,
+      "aliases": [
+        {
+          "alias": "salmon fillet",
+          "lang": "en-US"
+        },
+        {
+          "alias": "grilled salmon",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 fillet",
+          "grams": 154,
+          "ml": null
+        },
+        {
+          "label": "3 oz",
+          "grams": 85,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-whey-protein",
+      "name": "Whey protein powder, unflavoured",
+      "brand": null,
+      "category": "Supplements",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 30,
+      "serving_ml": null,
+      "kcal": 396,
+      "protein_g": 80,
+      "carbs_g": 7,
+      "fat_g": 5,
+      "fiber_g": 0,
+      "sugar_g": 4,
+      "sat_fat_g": 2,
+      "sodium_mg": 320,
+      "calcium_mg": 480,
+      "iron_mg": null,
+      "potassium_mg": null,
+      "aliases": [
+        {
+          "alias": "whey isolate",
+          "lang": "en-US"
+        },
+        {
+          "alias": "protein powder",
+          "lang": "en-US"
+        },
+        {
+          "alias": "whey concentrate",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 scoop",
+          "grams": 30,
+          "ml": null
+        },
+        {
+          "label": "1 scoop, large",
+          "grams": 34,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-peanut-butter",
+      "name": "Peanut butter, smooth",
+      "brand": null,
+      "category": "Nuts & Seeds",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 16,
+      "serving_ml": null,
+      "kcal": 588,
+      "protein_g": 22.21,
+      "carbs_g": 22.31,
+      "fat_g": 50.39,
+      "fiber_g": 5,
+      "sugar_g": 9.22,
+      "sat_fat_g": 10.325,
+      "sodium_mg": 426,
+      "calcium_mg": 43,
+      "iron_mg": 1.74,
+      "potassium_mg": 649,
+      "aliases": [
+        {
+          "alias": "peanut butter",
+          "lang": "en-US"
+        },
+        {
+          "alias": "mungphali butter",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 tbsp",
+          "grams": 16,
+          "ml": null
+        },
+        {
+          "label": "1 tsp",
+          "grams": 5,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-coffee-brewed",
+      "name": "Coffee, brewed",
+      "brand": null,
+      "category": "Beverages",
+      "prep_state": "prepared",
+      "basis": "per_100ml",
+      "serving_g": null,
+      "serving_ml": 240,
+      "kcal": 1,
+      "protein_g": 0.12,
+      "carbs_g": 0,
+      "fat_g": 0.02,
+      "fiber_g": 0,
+      "sugar_g": 0,
+      "sat_fat_g": 0.002,
+      "sodium_mg": 2,
+      "calcium_mg": 2,
+      "iron_mg": 0.01,
+      "potassium_mg": 49,
+      "aliases": [
+        {
+          "alias": "black coffee",
+          "lang": "en-US"
+        },
+        {
+          "alias": "filter coffee",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "kaapi",
+          "lang": "ta"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": null,
+          "ml": 240
+        },
+        {
+          "label": "1 mug",
+          "grams": null,
+          "ml": 355
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-apple-raw",
+      "name": "Apple, raw, with skin",
+      "brand": null,
+      "category": "Fruits",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 182,
+      "serving_ml": null,
+      "kcal": 52,
+      "protein_g": 0.26,
+      "carbs_g": 13.81,
+      "fat_g": 0.17,
+      "fiber_g": 2.4,
+      "sugar_g": 10.39,
+      "sat_fat_g": 0.028,
+      "sodium_mg": 1,
+      "calcium_mg": 6,
+      "iron_mg": 0.12,
+      "potassium_mg": 107,
+      "aliases": [
+        {
+          "alias": "seb",
+          "lang": "hi"
+        },
+        {
+          "alias": "apple",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 medium",
+          "grams": 182,
+          "ml": null
+        },
+        {
+          "label": "1 small",
+          "grams": 149,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-orange-raw",
+      "name": "Orange, raw",
+      "brand": null,
+      "category": "Fruits",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 131,
+      "serving_ml": null,
+      "kcal": 47,
+      "protein_g": 0.94,
+      "carbs_g": 11.75,
+      "fat_g": 0.12,
+      "fiber_g": 2.4,
+      "sugar_g": 9.35,
+      "sat_fat_g": 0.015,
+      "sodium_mg": 0,
+      "calcium_mg": 40,
+      "iron_mg": 0.1,
+      "potassium_mg": 181,
+      "aliases": [
+        {
+          "alias": "santra",
+          "lang": "hi"
+        },
+        {
+          "alias": "orange",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 medium",
+          "grams": 131,
+          "ml": null
+        },
+        {
+          "label": "1 cup, sections",
+          "grams": 180,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-carrot-raw",
+      "name": "Carrot, raw",
+      "brand": null,
+      "category": "Vegetables",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 61,
+      "serving_ml": null,
+      "kcal": 41,
+      "protein_g": 0.93,
+      "carbs_g": 9.58,
+      "fat_g": 0.24,
+      "fiber_g": 2.8,
+      "sugar_g": 4.74,
+      "sat_fat_g": 0.037,
+      "sodium_mg": 69,
+      "calcium_mg": 33,
+      "iron_mg": 0.3,
+      "potassium_mg": 320,
+      "aliases": [
+        {
+          "alias": "gajar",
+          "lang": "hi"
+        },
+        {
+          "alias": "carrot",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 medium",
+          "grams": 61,
+          "ml": null
+        },
+        {
+          "label": "1 cup, chopped",
+          "grams": 128,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-broccoli-raw",
+      "name": "Broccoli, raw",
+      "brand": null,
+      "category": "Vegetables",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 91,
+      "serving_ml": null,
+      "kcal": 34,
+      "protein_g": 2.82,
+      "carbs_g": 6.64,
+      "fat_g": 0.37,
+      "fiber_g": 2.6,
+      "sugar_g": 1.7,
+      "sat_fat_g": 0.039,
+      "sodium_mg": 33,
+      "calcium_mg": 47,
+      "iron_mg": 0.73,
+      "potassium_mg": 316,
+      "aliases": [
+        {
+          "alias": "hari gobhi",
+          "lang": "hi"
+        },
+        {
+          "alias": "broccoli florets",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup, chopped",
+          "grams": 91,
+          "ml": null
+        },
+        {
+          "label": "1 medium stalk",
+          "grams": 148,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-avocado-raw",
+      "name": "Avocado, raw",
+      "brand": null,
+      "category": "Fruits",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 68,
+      "serving_ml": null,
+      "kcal": 160,
+      "protein_g": 2,
+      "carbs_g": 8.53,
+      "fat_g": 14.66,
+      "fiber_g": 6.7,
+      "sugar_g": 0.66,
+      "sat_fat_g": 2.126,
+      "sodium_mg": 7,
+      "calcium_mg": 12,
+      "iron_mg": 0.55,
+      "potassium_mg": 485,
+      "aliases": [
+        {
+          "alias": "butter fruit",
+          "lang": "en-IN"
+        },
+        {
+          "alias": "avocado",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1/2 fruit",
+          "grams": 68,
+          "ml": null
+        },
+        {
+          "label": "1 cup, cubed",
+          "grams": 150,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-walnuts",
+      "name": "Walnuts, English",
+      "brand": null,
+      "category": "Nuts & Seeds",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 28,
+      "serving_ml": null,
+      "kcal": 654,
+      "protein_g": 15.23,
+      "carbs_g": 13.71,
+      "fat_g": 65.21,
+      "fiber_g": 6.7,
+      "sugar_g": 2.61,
+      "sat_fat_g": 6.126,
+      "sodium_mg": 2,
+      "calcium_mg": 98,
+      "iron_mg": 2.91,
+      "potassium_mg": 441,
+      "aliases": [
+        {
+          "alias": "walnut",
+          "lang": "en-US"
+        },
+        {
+          "alias": "akhrot",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 oz (14 halves)",
+          "grams": 28.35,
+          "ml": null
+        },
+        {
+          "label": "1 handful",
+          "grams": 30,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-cashews-raw",
+      "name": "Cashews, raw",
+      "brand": null,
+      "category": "Nuts & Seeds",
+      "prep_state": "raw",
+      "basis": "per_100g",
+      "serving_g": 28,
+      "serving_ml": null,
+      "kcal": 553,
+      "protein_g": 18.22,
+      "carbs_g": 30.19,
+      "fat_g": 43.85,
+      "fiber_g": 3.3,
+      "sugar_g": 5.91,
+      "sat_fat_g": 7.783,
+      "sodium_mg": 12,
+      "calcium_mg": 37,
+      "iron_mg": 6.68,
+      "potassium_mg": null,
+      "aliases": [
+        {
+          "alias": "kaju",
+          "lang": "hi"
+        },
+        {
+          "alias": "cashew nuts",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 oz (18 nuts)",
+          "grams": 28.35,
+          "ml": null
+        },
+        {
+          "label": "10 cashews",
+          "grams": 16,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-quinoa-cooked",
+      "name": "Quinoa, cooked",
+      "brand": null,
+      "category": "Grains & Cereals",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 185,
+      "serving_ml": null,
+      "kcal": 120,
+      "protein_g": 4.4,
+      "carbs_g": 21.3,
+      "fat_g": 1.92,
+      "fiber_g": 2.8,
+      "sugar_g": 0.87,
+      "sat_fat_g": 0.231,
+      "sodium_mg": 7,
+      "calcium_mg": 17,
+      "iron_mg": 1.49,
+      "potassium_mg": 172,
+      "aliases": [
+        {
+          "alias": "quinoa",
+          "lang": "en-US"
+        },
+        {
+          "alias": "kinwa",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 185,
+          "ml": null
+        },
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-black-beans-cooked",
+      "name": "Black beans, cooked",
+      "brand": null,
+      "category": "Legumes",
+      "prep_state": "cooked",
+      "basis": "per_100g",
+      "serving_g": 172,
+      "serving_ml": null,
+      "kcal": 132,
+      "protein_g": 8.86,
+      "carbs_g": 23.71,
+      "fat_g": 0.54,
+      "fiber_g": 8.7,
+      "sugar_g": 0.32,
+      "sat_fat_g": 0.139,
+      "sodium_mg": 1,
+      "calcium_mg": 27,
+      "iron_mg": 2.1,
+      "potassium_mg": 355,
+      "aliases": [
+        {
+          "alias": "black turtle beans",
+          "lang": "en-US"
+        },
+        {
+          "alias": "kala rajma",
+          "lang": "hi"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 172,
+          "ml": null
+        },
+        {
+          "label": "1 katori",
+          "grams": 150,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    },
+    {
+      "id": "usda-cottage-cheese-lowfat",
+      "name": "Cottage cheese, 2% milkfat",
+      "brand": null,
+      "category": "Eggs & Dairy",
+      "prep_state": "prepared",
+      "basis": "per_100g",
+      "serving_g": 113,
+      "serving_ml": null,
+      "kcal": 84,
+      "protein_g": 11.12,
+      "carbs_g": 4.32,
+      "fat_g": 2.27,
+      "fiber_g": 0,
+      "sugar_g": 4.32,
+      "sat_fat_g": 1.235,
+      "sodium_mg": 321,
+      "calcium_mg": 111,
+      "iron_mg": 0.07,
+      "potassium_mg": 125,
+      "aliases": [
+        {
+          "alias": "low fat cottage cheese",
+          "lang": "en-US"
+        },
+        {
+          "alias": "cottage cheese",
+          "lang": "en-US"
+        }
+      ],
+      "units": [
+        {
+          "label": "1 cup",
+          "grams": 226,
+          "ml": null
+        },
+        {
+          "label": "1/2 cup",
+          "grams": 113,
+          "ml": null
+        }
+      ],
+      "barcodes": []
+    }
+  ]
+}

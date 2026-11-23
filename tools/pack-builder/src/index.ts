@@ -1,0 +1,10 @@
+export { buildPack } from './builder.ts';
+export type { BuildOptions, BuildResult } from './builder.ts';
+export { validatePack } from './validator.ts';
+export type { ValidationReport, NutrientCoverage } from './validator.ts';
+export { jsonDataset, csvDataset, usdaDataset, readMeta, detectPrepState } from './adapters.ts';
+export { normalizeGtin14, expandUpce, checkDigit } from './barcode.ts';
+export { parseCsv, readCsv } from './csv.ts';
+export { SCHEMA_VERSION, SCHEMA_SQL } from './schema.ts';
+export { foodSchema, metaSchema, OPTIONAL_NUTRIENTS, REQUIRED_NUTRIENTS } from './model.ts';
+export type { Dataset, Food, FoodInput, PackMeta, PackMetaInput } from './model.ts';

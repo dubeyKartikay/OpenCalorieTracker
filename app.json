@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "OpenCalorieTracker",
+    "slug": "open-calorie-tracker",
+    "version": "0.1.0",
+    "scheme": "opencalorietracker",
+    "orientation": "default",
+    "userInterfaceStyle": "dark",
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "root": "./app"
+        }
+      ],
+      [
+        "expo-sqlite",
+        {
+          "enableFTS": true
+        }
+      ],
+      "expo-status-bar",
+      "expo-asset"
+    ],
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

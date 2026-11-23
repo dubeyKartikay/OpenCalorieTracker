@@ -1,0 +1,3 @@
+id,name,prep_state,basis,kcal,protein_g,carbs_g,fat_g,fiber_g,aliases,units,barcodes
+tea,"Tea, black",prepared,per_100ml,2,0.1,0.2,0,,"[{""alias"":""chai"",""lang"":""hi-Latn""}]","[{""label"":""1 cup"",""ml"":150}]",[]
+water,Water,unknown,per_100ml,0,0,0,0,0,[],[],[]

@@ -1,0 +1,4 @@
+{
+  "pack_id": "csv-custom", "name": "CSV test foods", "version": "1", "kind": "custom",
+  "license": "CC0-1.0", "attribution_text": "Synthetic test data by OpenCalorieTracker contributors."
+}
