@@ -5,6 +5,7 @@ import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { useAction, useActiveDraft, useAIStatus, useAppRuntime, useCatalogSearch, usePreferences } from '../../../app/AppRuntimeContext';
 import { defaultQuantity } from '../../../app/controller';
 import { calculateNutrition, generateId, type FoodRecord } from '../../../domain';
+import type { SearchCandidate } from '../../../catalog';
 import { paginateList } from '../../format';
 import { colors, fontFace, macroColors, radius, tabularNums } from '../../tokens';
 import { InlineKeypad } from '../doop/InlineKeypad';
@@ -271,23 +272,22 @@ const PAGER_FOOTER_HEIGHT = 36;
 const SPARKLE_SLOT_HEIGHT = 44;
 const MAX_VISIBLE_DOTS = 7;
 
-/** Shared scroll-to-active-meal effect used by Today and History when opening the inline composer. */
-export function useScrollToMealComposer(
-  scrollRef: RefObject<ComponentRef<typeof ScrollView> | null>,
-  scrollOffsetRef: RefObject<number>,
-  mealRowRefs: RefObject<Record<string, ComponentRef<typeof View> | null>>,
-  composer: MealInlineComposerController,
+/** Scrolls a mounted node to the top of its parent ScrollView when activated or when the keyboard opens. */
+export function useScrollNodeIntoView(
+  scrollRef: RefObject<ComponentRef<typeof ScrollView> | null> | undefined,
+  scrollOffsetRef: RefObject<number> | undefined,
+  getNode: () => ComponentRef<typeof View> | null | undefined,
+  activeKey: string | null,
 ) {
   useEffect(() => {
-    if (!composer.fieldMeal) return;
-    const targetMeal = composer.fieldMeal;
-    const scrollToField = () => {
+    if (!activeKey || !scrollRef) return;
+    const scrollToNode = () => {
       const scrollNode = scrollRef.current;
-      const rowNode = mealRowRefs.current?.[targetMeal];
-      if (!scrollNode || !rowNode) return;
+      const targetNode = getNode();
+      if (!scrollNode || !targetNode) return;
       scrollNode.measureInWindow((_sx, scrollY) => {
-        rowNode.measureInWindow((_rx, rowY) => {
-          const targetY = (scrollOffsetRef.current ?? 0) + (rowY - scrollY) - 8;
+        targetNode.measureInWindow((_rx, nodeY) => {
+          const targetY = (scrollOffsetRef?.current ?? 0) + (nodeY - scrollY) - 8;
           scrollNode.scrollTo({ y: Math.max(0, targetY), animated: true });
         });
       });
@@ -297,7 +297,7 @@ export function useScrollToMealComposer(
       if (pendingTimer !== null) clearTimeout(pendingTimer);
       pendingTimer = setTimeout(() => {
         pendingTimer = null;
-        scrollToField();
+        scrollToNode();
       }, delayMs);
     };
     scheduleScroll(140);
@@ -306,7 +306,22 @@ export function useScrollToMealComposer(
       if (pendingTimer !== null) clearTimeout(pendingTimer);
       sub.remove();
     };
-  }, [composer.fieldMeal, mealRowRefs, scrollOffsetRef, scrollRef]);
+  }, [activeKey, getNode, scrollOffsetRef, scrollRef]);
+}
+
+/** Shared scroll-to-active-meal effect used by Today and History when opening the inline composer. */
+export function useScrollToMealComposer(
+  scrollRef: RefObject<ComponentRef<typeof ScrollView> | null>,
+  scrollOffsetRef: RefObject<number>,
+  mealRowRefs: RefObject<Record<string, ComponentRef<typeof View> | null>>,
+  composer: MealInlineComposerController,
+) {
+  const activeMeal = composer.fieldMeal;
+  const getNode = useCallback(
+    () => (activeMeal ? mealRowRefs.current?.[activeMeal] : null),
+    [activeMeal, mealRowRefs],
+  );
+  useScrollNodeIntoView(scrollRef, scrollOffsetRef, getNode, activeMeal);
 }
 
 /** Quiet Doop-style geometric line mark for the reserved results pane before typing. */
@@ -323,6 +338,182 @@ function ComposerEmptyArtwork() {
         <Path d="M97 22l1.4 3.6 3.6 1.4-3.6 1.4-1.4 3.6-1.4-3.6-3.6-1.4 3.6-1.4Z" fill={colors.lavender} fillOpacity={0.32} />
         <Circle cx={33} cy={88} r={1.8} fill={colors.accent} fillOpacity={0.28} />
       </Svg>
+    </View>
+  );
+}
+
+export interface LocalFoodSearchPagerProps {
+  query: string;
+  candidates: SearchCandidate[];
+  pending: boolean;
+  error?: string | null | undefined;
+  energyUnit: 'kcal' | 'kJ';
+  disabled?: boolean | undefined;
+  emptyMessage?: string | undefined;
+  addLabel: (food: FoodRecord) => string;
+  onAdd: (food: FoodRecord) => void;
+  onInspect?: ((food: FoodRecord) => void) | undefined;
+  inspectLabel?: ((food: FoodRecord) => string) | undefined;
+}
+
+/** Fixed-height swipe-paginated local food results tray shared by Today, History, and Recipe ingredient search. */
+export function LocalFoodSearchPager({
+  query,
+  candidates,
+  pending,
+  error,
+  energyUnit,
+  disabled = false,
+  emptyMessage = 'No local matches.',
+  addLabel,
+  onAdd,
+  onInspect,
+  inspectLabel,
+}: LocalFoodSearchPagerProps) {
+  const pagerRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
+  const [pageWidth, setPageWidth] = useState(0);
+  const [pageState, setPageState] = useState({ query, page: 0 });
+  const pages = useMemo(() => paginateList(candidates, RESULTS_PER_PAGE), [candidates]);
+  const pageCount = pages.length;
+  const currentPage = pageState.query === query ? Math.min(pageState.page, Math.max(0, pageCount - 1)) : 0;
+
+  useEffect(() => {
+    pagerRef.current?.scrollTo({ x: 0, animated: false });
+  }, [query]);
+
+  const goToPage = (nextPage: number) => {
+    const clamped = Math.max(0, Math.min(pageCount - 1, nextPage));
+    setPageState({ query, page: clamped });
+    if (pageWidth > 0) {
+      pagerRef.current?.scrollTo({ x: clamped * pageWidth, animated: true });
+    }
+  };
+
+  const dotWindowStart = pageCount <= MAX_VISIBLE_DOTS
+    ? 0
+    : Math.max(0, Math.min(currentPage - Math.floor(MAX_VISIBLE_DOTS / 2), pageCount - MAX_VISIBLE_DOTS));
+  const dotIndices = Array.from(
+    { length: Math.min(pageCount, MAX_VISIBLE_DOTS) },
+    (_, offset) => dotWindowStart + offset,
+  );
+  const visiblePages = pageWidth > 0 ? pages : pages.slice(0, 1);
+
+  return (
+    <View
+      style={styles.resultsBox}
+      onLayout={event => {
+        const nextWidth = Math.round(event.nativeEvent.layout.width);
+        if (nextWidth > 0 && nextWidth !== pageWidth) setPageWidth(nextWidth);
+      }}
+    >
+      <View style={styles.resultsBody}>
+        {error ? (
+          <View style={styles.resultsState}>
+            <ErrorMessage message={error} />
+          </View>
+        ) : !query ? (
+          <ComposerEmptyArtwork />
+        ) : pending && pageCount === 0 ? (
+          <View style={styles.resultsState}>
+            <Muted>Searching foods…</Muted>
+          </View>
+        ) : pageCount === 0 ? (
+          <View style={styles.resultsState}>
+            <Muted>{emptyMessage}</Muted>
+          </View>
+        ) : (
+          <ScrollView
+            ref={pagerRef}
+            horizontal
+            pagingEnabled
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            scrollEventThrottle={16}
+            pointerEvents={pending ? 'none' : 'auto'}
+            onScroll={event => {
+              if (pageWidth <= 0) return;
+              const next = Math.max(0, Math.min(pageCount - 1, Math.round(event.nativeEvent.contentOffset.x / pageWidth)));
+              if (next !== currentPage) setPageState({ query, page: next });
+            }}
+            style={[styles.pagerScroll, pending && styles.pagerDimmed]}
+          >
+            {visiblePages.map((pageItems, pageIndex) => (
+              <View key={pageIndex} style={[styles.pagerPage, pageWidth > 0 ? { width: pageWidth } : styles.pagerPageFull]}>
+                {pageItems.map(candidate => {
+                  const portion = defaultQuantity(candidate.food);
+                  const nutrients = calculateNutrition(candidate.food, portion);
+                  const portionText = portion.amount === 1 && /^\d/.test(portion.unit) ? portion.unit : `${number(portion.amount, 2)} ${portion.unit}`;
+                  return (
+                    <View key={`${candidate.food.source_pack_id ?? 'yours'}:${candidate.food.id}`} style={styles.result}>
+                      <DoopIcon name={inferFoodGlyph(candidate.food.name)} size={18} color={colors.muted} />
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={onInspect ? (inspectLabel?.(candidate.food) ?? candidate.food.name) : addLabel(candidate.food)}
+                        disabled={disabled || pending}
+                        style={styles.resultCopy}
+                        onPress={() => (onInspect ? onInspect(candidate.food) : onAdd(candidate.food))}
+                      >
+                        <Text numberOfLines={1} style={styles.resultName}>{candidate.food.name}</Text>
+                        <Text numberOfLines={1} style={styles.resultMeta}>{candidate.sourceLabel} · {portionText}</Text>
+                      </Pressable>
+                      <Text style={styles.resultEnergy}>{number(energyValue(nutrients.kcal, energyUnit))}</Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={addLabel(candidate.food)}
+                        disabled={disabled || pending}
+                        onPress={() => onAdd(candidate.food)}
+                        style={styles.smallAdd}
+                      >
+                        <DoopIcon name="plus" size={14} color={colors.muted} />
+                      </Pressable>
+                    </View>
+                  );
+                })}
+              </View>
+            ))}
+          </ScrollView>
+        )}
+      </View>
+      <View style={styles.pagerFooter}>
+        {query && !pending && pageCount > 0 ? (
+          <>
+            <Text style={styles.pagerMeta}>{`${candidates.length} ${candidates.length === 1 ? 'match' : 'matches'}`}</Text>
+            {pageCount > 1 ? (
+              <>
+                <View style={styles.pagerDots}>
+                  {dotIndices.map(index => (
+                    <View key={index} style={[styles.pagerDot, index === currentPage && styles.pagerDotActive]} />
+                  ))}
+                </View>
+                <View style={styles.pagerNav}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Previous results page"
+                    accessibilityState={{ disabled: currentPage === 0 }}
+                    disabled={currentPage === 0}
+                    onPress={() => goToPage(currentPage - 1)}
+                    style={[styles.pagerNavBtn, currentPage === 0 && styles.pagerNavDisabled]}
+                  >
+                    <DoopIcon name="chevronLeft" size={14} color={colors.muted} />
+                  </Pressable>
+                  <Text style={styles.pagerCount}>{`${currentPage + 1}/${pageCount}`}</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Next results page"
+                    accessibilityState={{ disabled: currentPage >= pageCount - 1 }}
+                    disabled={currentPage >= pageCount - 1}
+                    onPress={() => goToPage(currentPage + 1)}
+                    style={[styles.pagerNavBtn, currentPage >= pageCount - 1 && styles.pagerNavDisabled]}
+                  >
+                    <DoopIcon name="chevronRight" size={14} color={colors.muted} />
+                  </Pressable>
+                </View>
+              </>
+            ) : null}
+          </>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -360,34 +551,6 @@ export function MealComposerField({ composer, meal }: { composer: MealInlineComp
     saveOfflinePhoto,
     collapseQuick,
   } = composer;
-
-  const pagerRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
-  const [pageWidth, setPageWidth] = useState(0);
-  const [pageState, setPageState] = useState({ query: liveQuery, page: 0 });
-  const pages = useMemo(() => paginateList(localMatches, RESULTS_PER_PAGE), [localMatches]);
-  const pageCount = pages.length;
-  const currentPage = pageState.query === liveQuery ? Math.min(pageState.page, Math.max(0, pageCount - 1)) : 0;
-
-  useEffect(() => {
-    pagerRef.current?.scrollTo({ x: 0, animated: false });
-  }, [liveQuery]);
-
-  const goToPage = (nextPage: number) => {
-    const clamped = Math.max(0, Math.min(pageCount - 1, nextPage));
-    setPageState({ query: liveQuery, page: clamped });
-    if (pageWidth > 0) {
-      pagerRef.current?.scrollTo({ x: clamped * pageWidth, animated: true });
-    }
-  };
-
-  const dotWindowStart = pageCount <= MAX_VISIBLE_DOTS
-    ? 0
-    : Math.max(0, Math.min(currentPage - Math.floor(MAX_VISIBLE_DOTS / 2), pageCount - MAX_VISIBLE_DOTS));
-  const dotIndices = Array.from(
-    { length: Math.min(pageCount, MAX_VISIBLE_DOTS) },
-    (_, offset) => dotWindowStart + offset,
-  );
-  const visiblePages = pageWidth > 0 ? pages : pages.slice(0, 1);
 
   return <RevealPanel visible direction="down">
     <View style={styles.fieldRow}>
@@ -437,105 +600,19 @@ export function MealComposerField({ composer, meal }: { composer: MealInlineComp
             </View>
           )}
         </View>
-        <View
-          style={styles.resultsBox}
-          onLayout={event => {
-            const nextWidth = Math.round(event.nativeEvent.layout.width);
-            if (nextWidth > 0 && nextWidth !== pageWidth) setPageWidth(nextWidth);
-          }}
-        >
-          <View style={styles.resultsBody}>
-            {search.error ?? ai.error ? (
-              <View style={styles.resultsState}>
-                <ErrorMessage message={search.error ?? ai.error} />
-              </View>
-            ) : !liveQuery ? (
-              <ComposerEmptyArtwork />
-            ) : searchPending && pageCount === 0 ? (
-              <View style={styles.resultsState}>
-                <Muted>Searching foods…</Muted>
-              </View>
-            ) : pageCount === 0 ? (
-              <View style={styles.resultsState}>
-                <Muted>No local matches. Draft with AI or type calories.</Muted>
-              </View>
-            ) : (
-              <ScrollView
-                ref={pagerRef}
-                horizontal
-                pagingEnabled
-                nestedScrollEnabled
-                showsHorizontalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-                scrollEventThrottle={16}
-                pointerEvents={searchPending ? 'none' : 'auto'}
-                onScroll={event => {
-                  if (pageWidth <= 0) return;
-                  const next = Math.max(0, Math.min(pageCount - 1, Math.round(event.nativeEvent.contentOffset.x / pageWidth)));
-                  if (next !== currentPage) setPageState({ query: liveQuery, page: next });
-                }}
-                style={[styles.pagerScroll, searchPending && styles.pagerDimmed]}
-              >
-                {visiblePages.map((pageItems, pageIndex) => (
-                  <View key={pageIndex} style={[styles.pagerPage, pageWidth > 0 ? { width: pageWidth } : styles.pagerPageFull]}>
-                    {pageItems.map(candidate => {
-                      const portion = defaultQuantity(candidate.food);
-                      const nutrients = calculateNutrition(candidate.food, portion);
-                      return <View key={`${candidate.food.source_pack_id ?? 'yours'}:${candidate.food.id}`} style={styles.result}>
-                        <DoopIcon name={inferFoodGlyph(candidate.food.name)} size={18} color={colors.muted} />
-                        <Pressable accessibilityRole="button" accessibilityLabel={`Review ${candidate.food.name} in Library`} disabled={searchPending} style={styles.resultCopy} onPress={() => router.push({ pathname: '/(tabs)/library', params: { meal, date, q: candidate.food.name } })}>
-                          <Text numberOfLines={1} style={styles.resultName}>{candidate.food.name}</Text>
-                          <Text numberOfLines={1} style={styles.resultMeta}>{candidate.sourceLabel} · {portion.amount === 1 && /^\d/.test(portion.unit) ? portion.unit : `${number(portion.amount, 2)} ${portion.unit}`}</Text>
-                        </Pressable>
-                        <Text style={styles.resultEnergy}>{number(energyValue(nutrients.kcal, unit))}</Text>
-                        <Pressable accessibilityRole="button" accessibilityLabel={`Add ${candidate.food.name} to ${meal}`} disabled={blocked || searchPending} onPress={() => logFood(candidate.food, meal)} style={styles.smallAdd}><DoopIcon name="plus" size={14} color={colors.muted} /></Pressable>
-                      </View>;
-                    })}
-                  </View>
-                ))}
-              </ScrollView>
-            )}
-          </View>
-          <View style={styles.pagerFooter}>
-            {liveQuery && !searchPending && pageCount > 0 ? (
-              <>
-                <Text style={styles.pagerMeta}>{`${localMatches.length} ${localMatches.length === 1 ? 'match' : 'matches'}`}</Text>
-                {pageCount > 1 ? (
-                  <>
-                    <View style={styles.pagerDots} accessible={false}>
-                      {dotIndices.map(index => (
-                        <View key={index} style={[styles.pagerDot, index === currentPage && styles.pagerDotActive]} />
-                      ))}
-                    </View>
-                    <View style={styles.pagerNav}>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Previous results page"
-                        accessibilityState={{ disabled: currentPage === 0 }}
-                        disabled={currentPage === 0}
-                        onPress={() => goToPage(currentPage - 1)}
-                        style={[styles.pagerNavBtn, currentPage === 0 && styles.pagerNavDisabled]}
-                      >
-                        <DoopIcon name="chevronLeft" size={14} color={colors.muted} />
-                      </Pressable>
-                      <Text style={styles.pagerCount}>{`${currentPage + 1}/${pageCount}`}</Text>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Next results page"
-                        accessibilityState={{ disabled: currentPage >= pageCount - 1 }}
-                        disabled={currentPage >= pageCount - 1}
-                        onPress={() => goToPage(currentPage + 1)}
-                        style={[styles.pagerNavBtn, currentPage >= pageCount - 1 && styles.pagerNavDisabled]}
-                      >
-                        <DoopIcon name="chevronRight" size={14} color={colors.muted} />
-                      </Pressable>
-                    </View>
-                  </>
-                ) : null}
-              </>
-            ) : null}
-          </View>
-        </View>
+        <LocalFoodSearchPager
+          query={liveQuery}
+          candidates={localMatches}
+          pending={searchPending}
+          error={search.error ?? ai.error}
+          energyUnit={unit}
+          disabled={blocked}
+          emptyMessage="No local matches. Draft with AI or type calories."
+          addLabel={food => `Add ${food.name} to ${meal}`}
+          onAdd={food => logFood(food, meal)}
+          inspectLabel={food => `Review ${food.name} in Library`}
+          onInspect={food => router.push({ pathname: '/(tabs)/library', params: { meal, date, q: food.name } })}
+        />
       </View>
     )}
 

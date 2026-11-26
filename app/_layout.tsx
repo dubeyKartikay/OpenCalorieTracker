@@ -16,7 +16,7 @@ export default function RootLayout() {
         <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.ground } }}>
           <Stack.Screen name="(tabs)" /><Stack.Screen name="settings" />
           <Stack.Screen name="barcode" options={{ animation: 'fade_from_bottom' }} /><Stack.Screen name="chatgpt" />
-          <Stack.Screen name="onboarding" /><Stack.Screen name="recipes/index" />
+          <Stack.Screen name="onboarding" /><Stack.Screen name="food" options={{ animation: 'fade', animationDuration: 200 }} /><Stack.Screen name="recipes/index" />
           <Stack.Screen name="recipes/[id]" /><Stack.Screen name="recipes/batch/[batchId]" />
         </Stack>
       </AppRuntimeProvider>

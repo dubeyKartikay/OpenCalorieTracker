@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import {
   colors,
@@ -23,6 +23,7 @@ export interface LearnedPortionChipsProps {
   onMore?: (() => void) | undefined;
   moreExpanded?: boolean | undefined;
   disabled?: boolean | undefined;
+  variant?: 'default' | 'calm' | undefined;
   style?: StyleProp<ViewStyle> | undefined;
 }
 
@@ -33,10 +34,12 @@ export function LearnedPortionChips({
   onMore,
   moreExpanded,
   disabled = false,
+  variant = 'default',
   style,
 }: LearnedPortionChipsProps) {
-  return (
-    <View style={[styles.portionRail, style]}>
+  const calm = variant === 'calm';
+  const content = (
+    <>
       {portions.slice(0, 3).map((portion, index) => {
         const selected = portion.selected === true;
         const dots = portion.rankDots ?? 0;
@@ -44,47 +47,69 @@ export function LearnedPortionChips({
           <Pressable
             key={`${portion.label}-${index}`}
             disabled={disabled}
+            hitSlop={calm ? { top: 4, bottom: 4 } : undefined}
             accessibilityRole="radio"
-            accessibilityLabel={`${portion.label}, ${portion.energyLabel}`}
+            accessibilityLabel={portion.energyLabel ? `${portion.label}, ${portion.energyLabel}` : portion.label}
             accessibilityState={{ checked: selected, selected, disabled }}
             onPress={() => onSelect(index)}
             style={({ pressed }) => [
-              styles.chip,
-              selected && styles.chipSelected,
+              calm ? styles.chipCalm : styles.chip,
+              selected && (calm ? styles.chipCalmSelected : styles.chipSelected),
               disabled && { opacity: 0.5 },
               pressed && styles.pressed,
             ]}
           >
-            <Text numberOfLines={1} style={[styles.chipLabel, selected && { color: colors.accent }]}>
+            <Text numberOfLines={1} style={[calm ? styles.chipCalmLabel : styles.chipLabel, selected && { color: colors.accent }]}>
               {portion.label}
             </Text>
-            <View style={styles.chipMeta}>
-              <Text numberOfLines={1} style={styles.chipEnergy}>
-                {portion.energyLabel}
-              </Text>
-              {dots > 0 ? (
-                <View style={styles.rankDots}>
-                  {Array.from({ length: dots }, (_, dot) => <View key={dot} style={styles.rankDot} />)}
-                </View>
-              ) : null}
-            </View>
+            {!calm ? (
+              <View style={styles.chipMeta}>
+                <Text numberOfLines={1} style={styles.chipEnergy}>
+                  {portion.energyLabel}
+                </Text>
+                {dots > 0 ? (
+                  <View style={styles.rankDots}>
+                    {Array.from({ length: dots }, (_, dot) => <View key={dot} style={styles.rankDot} />)}
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
           </Pressable>
         );
       })}
       {onMore ? (
         <Pressable
+          hitSlop={calm ? { top: 4, bottom: 4 } : undefined}
           accessibilityRole="button"
           accessibilityLabel="Custom portion"
           accessibilityState={moreExpanded === undefined ? undefined : { expanded: moreExpanded }}
           disabled={disabled}
           onPress={onMore}
-          style={({ pressed }) => [styles.moreChip, moreExpanded && styles.chipSelected, pressed && styles.pressed]}
+          style={({ pressed }) => [
+            calm ? styles.moreChipCalm : styles.moreChip,
+            moreExpanded && (calm ? styles.chipCalmSelected : styles.chipSelected),
+            pressed && styles.pressed,
+          ]}
         >
-          <DoopIcon name="more" size={18} color={moreExpanded ? colors.accent : colors.muted} />
+          <DoopIcon name="more" size={calm ? 16 : 18} color={moreExpanded ? colors.accent : colors.muted} />
         </Pressable>
       ) : null}
-    </View>
+    </>
   );
+  if (calm) {
+    return (
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        style={[styles.portionScrollCalm, style]}
+        contentContainerStyle={styles.portionRailCalm}
+      >
+        {content}
+      </ScrollView>
+    );
+  }
+  return <View style={[styles.portionRail, style]}>{content}</View>;
 }
 
 export interface MealDestinationPillsProps {
@@ -94,6 +119,7 @@ export interface MealDestinationPillsProps {
   mode?: 'log' | 'toggle' | 'move' | undefined;
   disabled?: boolean | undefined;
   wrap?: boolean | undefined;
+  variant?: 'default' | 'calm' | undefined;
   onPress: (meal: string) => void;
   style?: StyleProp<ViewStyle> | undefined;
 }
@@ -106,11 +132,14 @@ export function MealDestinationPills({
   mode = 'log',
   disabled = false,
   wrap = false,
+  variant = 'default',
   onPress,
   style,
 }: MealDestinationPillsProps) {
+  const calm = variant === 'calm';
+  const shouldWrap = wrap || meals.length > 4;
   return (
-    <View style={[styles.mealRow, (wrap || meals.length > 4) && styles.mealWrap, style]}>
+    <View style={[calm ? styles.mealRowCalm : styles.mealRow, shouldWrap && styles.mealWrap, style]}>
       {meals.map(meal => {
         const selected = selectedMeals.includes(meal);
         const suggested = !selected && meal === suggestedMeal;
@@ -118,22 +147,30 @@ export function MealDestinationPills({
         return (
           <Pressable
             key={meal}
+            hitSlop={calm ? { top: 4, bottom: 4 } : undefined}
             accessibilityRole="button"
             accessibilityLabel={`${actionPrefix}${meal}`}
             accessibilityState={{ selected, disabled }}
             disabled={disabled}
             onPress={() => onPress(meal)}
             style={({ pressed }) => [
-              styles.mealPill,
-              (wrap || meals.length > 4) && styles.mealPillWrap,
-              suggested && styles.mealSuggested,
+              calm ? styles.mealPillCalm : styles.mealPill,
+              shouldWrap && (calm ? styles.mealPillCalmWrap : styles.mealPillWrap),
+              suggested && (calm ? styles.mealSuggestedCalm : styles.mealSuggested),
               selected && styles.mealSelected,
               disabled && { opacity: 0.5 },
               pressed && styles.pressed,
             ]}
           >
-            <DoopIcon name={selected ? 'check' : 'plus'} size={11} color={selected ? colors.onAccent : colors.muted} />
-            <Text numberOfLines={1} style={[styles.mealPillLabel, selected && styles.mealPillLabelSelected]}>
+            {!calm ? <DoopIcon name={selected ? 'check' : 'plus'} size={11} color={selected ? colors.onAccent : colors.muted} /> : null}
+            <Text
+              numberOfLines={1}
+              style={[
+                calm ? styles.mealPillCalmLabel : styles.mealPillLabel,
+                calm && suggested && styles.mealPillCalmSuggestedLabel,
+                selected && styles.mealPillLabelSelected,
+              ]}
+            >
               {meal}
             </Text>
           </Pressable>
@@ -152,6 +189,7 @@ export interface MacroProportionBarProps {
   carbsG: number;
   fatG: number;
   height?: number | undefined;
+  gap?: number | undefined;
   style?: StyleProp<ViewStyle> | undefined;
 }
 
@@ -165,6 +203,7 @@ export function MacroProportionBar({
   carbsG,
   fatG,
   height = 4,
+  gap = 0,
   style,
 }: MacroProportionBarProps) {
   const proteinWeight = energyWeight(proteinG, 4);
@@ -185,7 +224,7 @@ export function MacroProportionBar({
       accessibilityValue={{ text: valueText }}
       style={[
         styles.macroTrack,
-        { height: trackHeight, borderRadius: trackHeight / 2 },
+        { height: trackHeight, borderRadius: trackHeight / 2, gap },
         style,
       ]}
     >
@@ -245,19 +284,31 @@ export type BarSourceChipProps = SourceBadgeProps;
 
 const styles = StyleSheet.create({
   portionRail: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  portionScrollCalm: { marginVertical: -4 },
+  portionRailCalm: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
   chip: { height: 48, flex: 1, minWidth: 0, justifyContent: 'center', alignItems: 'center', gap: 1, paddingHorizontal: 2, borderRadius: 12, borderWidth: 1, borderColor: colors.hairline, backgroundColor: colors.ground },
   chipSelected: { borderColor: colors.accent, backgroundColor: 'rgba(122,162,247,0.12)' },
+  chipCalm: { height: 36, paddingHorizontal: 13, borderRadius: radius.full, borderWidth: 1, borderColor: colors.border, backgroundColor: 'transparent', justifyContent: 'center', alignItems: 'center' },
+  chipCalmSelected: { borderColor: colors.accent, backgroundColor: 'rgba(122,162,247,0.14)' },
   chipLabel: { color: colors.ink, ...fontFace('bold'), fontSize: 13, lineHeight: 15 },
+  chipCalmLabel: { color: colors.ink, ...fontFace('semibold'), fontSize: 14, ...tabularNums },
   chipMeta: { alignItems: 'center', gap: 1 }, chipEnergy: { color: colors.muted, ...fontFace('medium'), fontSize: 10, lineHeight: 11, fontVariant: [...tabularNums.fontVariant] },
   rankDots: { flexDirection: 'row', alignItems: 'center', gap: 2, height: 3, marginTop: 1 }, rankDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: colors.lavender },
   moreChip: { height: 48, flex: 1, minWidth: 0, alignItems: 'center', justifyContent: 'center', borderRadius: radius.r12, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, backgroundColor: colors.ground },
+  moreChipCalm: { height: 36, paddingHorizontal: 13, borderRadius: radius.full, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, backgroundColor: 'transparent', alignItems: 'center', justifyContent: 'center' },
   mealRow: { flexDirection: 'row', gap: 6 },
+  mealRowCalm: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   mealWrap: { flexWrap: 'wrap' },
   mealPill: { flex: 1, minWidth: 68, height: 44, paddingHorizontal: 6, borderRadius: radius.full, borderWidth: 1, borderColor: colors.hairline, backgroundColor: colors.ground, flexDirection: 'row', gap: 3, alignItems: 'center', justifyContent: 'center' },
+  mealPillCalm: { height: 36, flexShrink: 1, paddingHorizontal: 11, borderRadius: radius.full, borderWidth: 1, borderColor: colors.border, backgroundColor: 'transparent', alignItems: 'center', justifyContent: 'center' },
   mealPillWrap: { flexBasis: '47%' },
+  mealPillCalmWrap: { flexShrink: 0 },
   mealSuggested: { borderColor: colors.border, backgroundColor: 'rgba(122,162,247,0.07)' },
+  mealSuggestedCalm: { borderColor: colors.accent, backgroundColor: 'rgba(122,162,247,0.14)' },
   mealSelected: { backgroundColor: colors.accent, borderColor: colors.accent },
   mealPillLabel: { ...fontFace('semibold'), fontSize: 10, color: colors.muted },
+  mealPillCalmLabel: { ...fontFace('semibold'), fontSize: 13.5, color: colors.ink },
+  mealPillCalmSuggestedLabel: { color: colors.accent },
   mealPillLabelSelected: { color: colors.onAccent },
   macroTrack: { width: '100%', flexDirection: 'row', backgroundColor: colors.track, overflow: 'hidden', opacity: 0.9 },
   badge: { alignSelf: 'flex-start', maxWidth: '100%', minHeight: 22, justifyContent: 'center', borderWidth: 1, borderRadius: radius.full, paddingHorizontal: spacing.s10, paddingVertical: spacing.s2 },

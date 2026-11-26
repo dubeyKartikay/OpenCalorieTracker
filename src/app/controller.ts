@@ -351,6 +351,33 @@ export class AppController {
     });
     this.refresh(); return meal;
   }
+  async deleteSavedMeal(id: string) {
+    await this.deps.library.deleteSavedMeal(id);
+    this.refresh();
+  }
+  async toggleFoodPin(food: FoodRecord, pinned: boolean) {
+    if (!food.source_pack_id && food.id.startsWith('meal:')) {
+      await this.toggleSavedMealPinned(food.id.slice(5), pinned);
+      return;
+    }
+    const key = foodKey(food);
+    await this.deps.userDb.withTransactionAsync(async tx => {
+      const [records, pins] = await Promise.all([
+        tx.getFirstAsync<{ value_json: string }>('SELECT value_json FROM preferences WHERE key=?', 'libraryPinnedFoods'),
+        tx.getFirstAsync<{ value_json: string }>('SELECT value_json FROM preferences WHERE key=?', 'libraryVisualPins'),
+      ]);
+      const foods: FoodRecord[] = records ? JSON.parse(records.value_json) : [];
+      const nextFoods = foods.filter(item => foodKey(item) !== key);
+      if (pinned) nextFoods.push(food);
+      const ids: string[] = pins ? JSON.parse(pins.value_json) : [];
+      const nextIds = ids.filter(id => id !== key);
+      if (pinned) nextIds.push(key);
+      const now = new Date().toISOString();
+      await tx.runAsync('INSERT INTO preferences(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at', 'libraryPinnedFoods', JSON.stringify(nextFoods), now);
+      await tx.runAsync('INSERT INTO preferences(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at', 'libraryVisualPins', JSON.stringify(nextIds), now);
+    });
+    this.refresh();
+  }
   logSavedMeal(savedMealId: string, meal: string, idempotencyKey: string): Promise<DiaryEntrySnapshot>;
   logSavedMeal(savedMealId: string, meal: string, date: string | undefined, idempotencyKey: string): Promise<DiaryEntrySnapshot>;
   async logSavedMeal(savedMealId: string, meal: string, dateOrKey: string | undefined, key?: string) {
@@ -580,6 +607,29 @@ export class AppController {
   async saveCustomFood(input: unknown) {
     const food = foodRecordSchema.parse(input);
     await this.deps.library.upsertCustomFood(food); this.refresh(); return food;
+  }
+  async deleteCustomFood(id: string) {
+    await this.deps.userDb.withTransactionAsync(async tx => {
+      const library = new LibraryRepo(tx);
+      const existing = await library.getCustomFood(id);
+      await library.deleteCustomFood(id);
+      if (!existing) return;
+      const key = foodKey(existing);
+      const [records, pins] = await Promise.all([
+        tx.getFirstAsync<{ value_json: string }>('SELECT value_json FROM preferences WHERE key=?', 'libraryPinnedFoods'),
+        tx.getFirstAsync<{ value_json: string }>('SELECT value_json FROM preferences WHERE key=?', 'libraryVisualPins'),
+      ]);
+      const now = new Date().toISOString();
+      if (records) {
+        const foods: FoodRecord[] = JSON.parse(records.value_json);
+        await tx.runAsync('INSERT INTO preferences(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at', 'libraryPinnedFoods', JSON.stringify(foods.filter(item => foodKey(item) !== key)), now);
+      }
+      if (pins) {
+        const ids: string[] = JSON.parse(pins.value_json);
+        await tx.runAsync('INSERT INTO preferences(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at', 'libraryVisualPins', JSON.stringify(ids.filter(item => item !== key)), now);
+      }
+    });
+    this.refresh();
   }
   resolveBarcode(rawCode: string, symbology?: string): Promise<BarcodeResolution> { return this.barcodeResolver.resolve(rawCode, symbology); }
   async saveCustomFoodWithBarcode(input: unknown, barcode: { rawCode: string; symbology?: string } | null): Promise<FoodRecord> {

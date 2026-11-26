@@ -244,4 +244,23 @@ describe('Slice 4 against real Node SQLite', () => {
     // A preference alone cannot make an unlinked OS adapter available.
     const entry: DiaryEntrySnapshot = await confirm(app); expect(await app.deps.diary.getEntry(entry.id)).toEqual(entry);
   });
+
+  it('pins and deletes custom foods and saved meals while keeping library pins clean', async () => {
+    const app = await open();
+    const savedFood = await app.saveCustomFood(food);
+    await app.toggleFoodPin(savedFood, true);
+    const pinsBefore = await app.deps.userDb.getFirstAsync<{ value_json: string }>('SELECT value_json FROM preferences WHERE key=?', 'libraryVisualPins');
+    expect(JSON.parse(pinsBefore!.value_json)).toHaveLength(1);
+    await app.deleteCustomFood(savedFood.id);
+    expect(await app.deps.library.getCustomFood(savedFood.id)).toBeNull();
+    const pinsAfter = await app.deps.userDb.getFirstAsync<{ value_json: string }>('SELECT value_json FROM preferences WHERE key=?', 'libraryVisualPins');
+    expect(JSON.parse(pinsAfter!.value_json)).toEqual([]);
+
+    const meal = await app.saveSavedMeal({ name: 'Oats meal', items: [{ food, quantity: { amount: 100, unit: 'g' } }] });
+    const mealFood = await app.deps.catalog.getById(null, `meal:${meal.id}`);
+    await app.toggleFoodPin(mealFood!, true);
+    expect((await app.deps.library.getSavedMeal(meal.id))?.pinned).toBe(true);
+    await app.deleteSavedMeal(meal.id);
+    expect(await app.deps.library.getSavedMeal(meal.id)).toBeNull();
+  });
 });

@@ -1,13 +1,15 @@
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useRef, useState, type ComponentRef, type RefObject } from 'react';
+import { Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAppRuntime, useCatalogSearch, usePreferences } from '../../../app/AppRuntimeContext';
 import { availableUnits, defaultQuantity, sourceLabel } from '../../../app/controller';
 import { calculateNutrition, scaleNutrients } from '../../../domain';
 import type { NutrientAggregate, RecipeIngredient } from '../../../domain';
-import { colors, fontFace, macroColors, radius, spacing, tabularNums } from '../../tokens';
+import { colors, fontFace, macroColors, radius, tabularNums } from '../../tokens';
+import { LocalFoodSearchPager, useScrollNodeIntoView } from '../capture';
 import { NumericEditor } from '../doop';
+import { RevealPanel } from '../doop/Motion';
 import { DoopIcon } from '../DoopIcons';
-import { Button, DottedValue, energyValue, ErrorMessage, Input, Label, Muted, number, SectionRule } from '../primitives';
+import { Button, DottedValue, energyValue, Input, Muted, number, SectionRule } from '../primitives';
 
 export interface RecipeDraft { name: string; ingredients: RecipeIngredient[]; cooked_weight_g: number | null; servings_count: number | null }
 
@@ -133,27 +135,115 @@ export function RecIngredientRow({ ingredient, original, onChange, onRemove, dis
     )}
   </View>;
 }
-function IngredientSearch({ onAdd, disabled }: { onAdd: (ingredient: RecipeIngredient) => void; disabled: boolean }) {
+function IngredientSearch({
+  onAdd,
+  onClose,
+  disabled,
+  energyUnit,
+}: {
+  onAdd: (ingredient: RecipeIngredient) => void;
+  onClose: () => void;
+  disabled: boolean;
+  energyUnit: 'kcal' | 'kJ';
+}) {
   const [query, setQuery] = useState('');
-  const search = useCatalogSearch(query);
-  const candidates = search.value ? [...search.value.yours, ...search.value.database] : [];
-  return <View style={{ gap: 8 }}>
-    <Input label="Search ingredients" placeholder="Ingredient" value={query} onChangeText={setQuery} editable={!disabled} autoFocus />
-    <ErrorMessage message={search.error} />
-    {query.trim() && (search.loading || search.debouncing) ? <Muted>Searching…</Muted> : null}
-    {query.trim() && !search.loading && !search.debouncing && candidates.length === 0 && !search.error ? <Muted>No ingredients found. Try another name or enable a food pack in Settings.</Muted> : null}
-    {candidates.map(({ food }) => <Pressable key={`${food.source_pack_id ?? 'user'}:${food.id}`} accessibilityRole="button" accessibilityLabel={`Add ${food.name}`} disabled={disabled}
-      style={styles.searchResult} onPress={() => { onAdd({ food, quantity: defaultQuantity(food) }); setQuery(''); }}>
-      <Label style={{ flex: 1 }}>{food.name}</Label><Text style={styles.sourceText}>{sourceLabel(food)}</Text><DoopIcon name="plus" size={16} color={colors.accent} />
-    </Pressable>)}
-  </View>;
+  const [lastAdded, setLastAdded] = useState<string | null>(null);
+  const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
+  const liveQuery = query.trim();
+  const search = useCatalogSearch(liveQuery);
+  const searchPending = Boolean(liveQuery) && (search.debouncing || search.loading);
+  const candidates = liveQuery && search.value ? [...search.value.yours, ...search.value.database] : [];
+
+  return (
+    <RevealPanel visible direction="down" style={styles.searchComposer}>
+      <View style={styles.searchRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close ingredient search"
+          disabled={disabled}
+          onPress={() => { Keyboard.dismiss(); onClose(); }}
+          style={styles.closeCircle}
+        >
+          <DoopIcon name="close" size={15} color={colors.muted} />
+        </Pressable>
+        <TextInput
+          ref={inputRef}
+          autoFocus
+          accessibilityLabel="Search ingredients"
+          placeholder="Search ingredient"
+          placeholderTextColor={colors.muted}
+          selectionColor={colors.accent}
+          value={query}
+          onChangeText={text => {
+            setQuery(text);
+            if (text.trim()) setLastAdded(null);
+          }}
+          editable={!disabled}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="search"
+          style={styles.searchInput}
+        />
+        {query.length > 0 && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Clear ingredient search"
+            disabled={disabled}
+            onPress={() => { setQuery(''); inputRef.current?.focus(); }}
+            style={styles.clearBtn}
+          >
+            <DoopIcon name="close" size={14} color={colors.muted} />
+          </Pressable>
+        )}
+      </View>
+      {lastAdded && !liveQuery ? (
+        <View style={styles.addedPill}>
+          <DoopIcon name="check" size={13} color={colors.success} />
+          <Text numberOfLines={1} style={styles.addedText}>Added {lastAdded} — type another or close</Text>
+        </View>
+      ) : null}
+      <LocalFoodSearchPager
+        query={liveQuery}
+        candidates={candidates}
+        pending={searchPending}
+        error={search.error}
+        energyUnit={energyUnit}
+        disabled={disabled}
+        emptyMessage="No ingredients found. Try another name or enable a food pack in Settings."
+        addLabel={food => `Add ${food.name}`}
+        onAdd={food => {
+          onAdd({ food, quantity: defaultQuantity(food) });
+          setLastAdded(food.name);
+          setQuery('');
+          inputRef.current?.focus();
+        }}
+      />
+    </RevealPanel>
+  );
 }
-export function RecipeEditor({ value, onChange, showName = true, allowAdd = true, disabled = false }: {
-  value: RecipeDraft; onChange: (value: RecipeDraft) => void; showName?: boolean; allowAdd?: boolean; disabled?: boolean;
+export function RecipeEditor({
+  value,
+  onChange,
+  showName = true,
+  allowAdd = true,
+  disabled = false,
+  scrollRef,
+  scrollOffsetRef,
+}: {
+  value: RecipeDraft;
+  onChange: (value: RecipeDraft) => void;
+  showName?: boolean;
+  allowAdd?: boolean;
+  disabled?: boolean;
+  scrollRef?: RefObject<ComponentRef<typeof ScrollView> | null>;
+  scrollOffsetRef?: RefObject<number>;
 }) {
   const { controller } = useAppRuntime();
   const energyUnit = usePreferences().value?.energyUnit ?? 'kcal';
   const [adding, setAdding] = useState(false);
+  const searchAnchorRef = useRef<ComponentRef<typeof View> | null>(null);
+  const getSearchAnchor = useCallback(() => searchAnchorRef.current, []);
+  useScrollNodeIntoView(scrollRef, scrollOffsetRef, getSearchAnchor, allowAdd && adding ? 'recipe-ingredient-search' : null);
   const total = controller.previewRecipeTotals(value.ingredients);
   return <View>
     {showName && <Input label="Recipe name" placeholder="e.g. Dal tadka" value={value.name} editable={!disabled} onChangeText={name => onChange({ ...value, name })} style={{ backgroundColor: 'transparent', borderWidth: 0, borderBottomWidth: 1, borderRadius: 0, paddingHorizontal: 0 }} />}
@@ -163,14 +253,26 @@ export function RecipeEditor({ value, onChange, showName = true, allowAdd = true
       <NutritionReadout total={total} label="total" />
     </View>
     <View style={{ marginTop: 28, marginBottom: 8 }}><SectionRule label="Ingredients" {...(value.cooked_weight_g && total.nutrients ? { meta: `${number(energyValue(total.nutrients.kcal / value.cooked_weight_g * 100, energyUnit))} ${energyUnit} / 100 g` } : {})} /></View>
-    {!value.ingredients.length && <Muted>Add your first ingredient to see nutrition.</Muted>}
+    {!value.ingredients.length && !adding && <Muted>Add your first ingredient to see nutrition.</Muted>}
     {value.ingredients.map((ingredient, index) => <RecIngredientRow key={`${index}:${ingredient.food.source_pack_id}:${ingredient.food.id}`} ingredient={ingredient} disabled={disabled}
       onChange={next => onChange({ ...value, ingredients: value.ingredients.map((item, position) => position === index ? next : item) })}
       onRemove={allowAdd ? () => onChange({ ...value, ingredients: value.ingredients.filter((_, position) => position !== index) }) : undefined} />)}
-    {allowAdd && <Pressable accessibilityRole="button" disabled={disabled} onPress={() => setAdding(current => !current)} style={styles.add}>
-      <DoopIcon name={adding ? 'close' : 'plus'} size={16} color={colors.accent} /><Text style={styles.addLabel}>{adding ? 'Close ingredient search' : 'Ingredient'}</Text>
-    </Pressable>}
-    {allowAdd && adding && <IngredientSearch disabled={disabled} onAdd={ingredient => onChange({ ...value, ingredients: [...value.ingredients, ingredient] })} />}
+    {allowAdd && (
+      <View ref={searchAnchorRef} collapsable={false} style={adding ? styles.searchAnchorOpen : undefined}>
+        {adding ? (
+          <IngredientSearch
+            disabled={disabled}
+            energyUnit={energyUnit}
+            onClose={() => setAdding(false)}
+            onAdd={ingredient => onChange({ ...value, ingredients: [...value.ingredients, ingredient] })}
+          />
+        ) : (
+          <Pressable accessibilityRole="button" disabled={disabled} onPress={() => setAdding(true)} style={styles.add}>
+            <DoopIcon name="plus" size={16} color={colors.accent} /><Text style={styles.addLabel}>Ingredient</Text>
+          </Pressable>
+        )}
+      </View>
+    )}
   </View>;
 }
 export const validRecipeDraft = (draft: RecipeDraft) => draft.name.trim().length > 0 && draft.ingredients.length > 0;
@@ -190,5 +292,12 @@ const styles = StyleSheet.create({
   diff: { ...fontFace(), ...tabularNums, width: 54, textAlign: 'right', color: colors.muted, opacity: 0.82, fontSize: 10 },
   source: { maxWidth: 48, paddingHorizontal: 5, paddingVertical: 1, borderRadius: radius.full, borderWidth: 1, borderColor: colors.hairline }, sourceText: { ...fontFace('semibold'), color: colors.muted, fontSize: 10 },
   add: { minHeight: 44, borderBottomWidth: 1, borderBottomColor: colors.hairline, flexDirection: 'row', alignItems: 'center', gap: 8 }, addLabel: { ...fontFace('semibold'), color: colors.muted, fontSize: 13 },
-  searchResult: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: spacing.s8, borderBottomWidth: 1, borderBottomColor: colors.hairline },
+  searchAnchorOpen: { paddingTop: 6, paddingBottom: 160 },
+  searchComposer: { gap: 6 },
+  searchRow: { height: 52, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  closeCircle: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: 'rgba(192,202,245,0.10)', alignItems: 'center', justifyContent: 'center' },
+  searchInput: { ...fontFace('semibold'), flex: 1, minWidth: 0, height: 44, borderWidth: 1, borderColor: colors.accent, borderRadius: radius.r12, backgroundColor: colors.dock, paddingHorizontal: 11, paddingVertical: 0, color: colors.ink, fontSize: 16, letterSpacing: -0.16 },
+  clearBtn: { width: 36, height: 44, alignItems: 'center', justifyContent: 'center', marginLeft: -6 },
+  addedPill: { minHeight: 30, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 2 },
+  addedText: { ...fontFace('medium'), flex: 1, fontSize: 12, color: colors.muted },
 });

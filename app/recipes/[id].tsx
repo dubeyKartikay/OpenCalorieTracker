@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Pressable, Share, View } from 'react-native';
+import { useCallback, useRef, useState, type ComponentRef } from 'react';
+import { Pressable, ScrollView, Share, View } from 'react-native';
 import { useAction, useAppRuntime, useAsyncResource, usePreferences, useRecipeBatches } from '../../src/app/AppRuntimeContext';
 import type { Recipe } from '../../src/domain';
 import { DoopIcon } from '../../src/ui/components/DoopIcons';
@@ -20,19 +20,21 @@ function RecipeDetail({ initial, targetMeal, targetDate }: { initial: Recipe; ta
   const [renaming, setRenaming] = useState(false);
   const batches = useRecipeBatches(saved.id);
   const action = useAction();
+  const scrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
+  const scrollOffsetRef = useRef(0);
   const destinationParams = {
     ...(targetMeal ? { meal: targetMeal } : {}),
     ...(targetDate ? { date: targetDate } : {}),
   };
   const dirty = JSON.stringify({ name: draft.name.trim(), ingredients: draft.ingredients, cooked_weight_g: draft.cooked_weight_g, servings_count: draft.servings_count }) !==
     JSON.stringify({ name: saved.name, ingredients: saved.ingredients, cooked_weight_g: saved.cooked_weight_g, servings_count: saved.servings_count });
-  return <Page><BackHeader title={saved.name} onBack={() => goBackOrReplace('/recipes')} right={<Pressable accessibilityRole="button" accessibilityLabel="Recipe actions" accessibilityState={{ expanded: menuOpen }} onPress={() => setMenuOpen(open => !open)} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}><DoopIcon name="more" size={20} color={colors.muted} /></Pressable>} />
+  return <Page scrollRef={scrollRef} onScroll={event => { scrollOffsetRef.current = event.nativeEvent.contentOffset.y; }}><BackHeader title={saved.name} onBack={() => goBackOrReplace('/recipes')} right={<Pressable accessibilityRole="button" accessibilityLabel="Recipe actions" accessibilityState={{ expanded: menuOpen }} onPress={() => setMenuOpen(open => !open)} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}><DoopIcon name="more" size={20} color={colors.muted} /></Pressable>} />
     {menuOpen && <View style={{ paddingVertical: 6, alignSelf: 'flex-end', borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.raised }}>
       <Button label="Rename recipe" quiet onPress={() => { setRenaming(true); setMenuOpen(false); }} />
       <Button label="Share…" quiet onPress={() => { setMenuOpen(false); void action.run(() => Share.share({ message: `${saved.name}\n${saved.ingredients.map(item => `${item.food.name}: ${item.quantity.amount} ${item.quantity.unit}`).join('\n')}` })); }} />
     </View>}
     {renaming && <Input label="Recipe name" value={draft.name} onChangeText={name => setDraft(current => ({ ...current, name }))} />}
-    <View style={{ marginTop: 12 }}><RecipeEditor value={draft} showName={false} disabled={action.busy} onChange={next => { setDraft(next); setSavedNotice(false); }} />
+    <View style={{ marginTop: 12 }}><RecipeEditor value={draft} showName={false} disabled={action.busy} scrollRef={scrollRef} scrollOffsetRef={scrollOffsetRef} onChange={next => { setDraft(next); setSavedNotice(false); }} />
       <Muted>Edits apply to new logs only</Muted>      <ErrorMessage message={action.error} />
       {dirty && <Button label={action.busy ? 'Working…' : 'Save changes'} primary disabled={action.busy || !dirty || !validRecipeDraft(draft)} onPress={() => void action.run(async () => {
         const recipe = await controller.saveRecipe({ ...draft, id: saved.id, name: draft.name.trim(), notes: saved.notes });

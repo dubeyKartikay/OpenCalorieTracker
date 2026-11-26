@@ -43,8 +43,8 @@ export { consumePendingMealPhoto, setPendingMealPhoto } from './pendingMealPhoto
 export type { PendingMealPhoto } from './pendingMealPhoto';
 export { mergeDictatedTranscript, useVoiceDictation, VoiceDock, VoiceMicRing } from './VoiceDock';
 export type { UseVoiceDictationOptions, VoiceDictationController, VoiceDockProps, VoiceMicRingProps } from './VoiceDock';
-export { MealComposerField, MealComposerFooter, useMealInlineComposer, useScrollToMealComposer } from './MealInlineComposer';
-export type { MealInlineComposerController, UseMealInlineComposerOptions } from './MealInlineComposer';
+export { LocalFoodSearchPager, MealComposerField, MealComposerFooter, useMealInlineComposer, useScrollNodeIntoView, useScrollToMealComposer } from './MealInlineComposer';
+export type { LocalFoodSearchPagerProps, MealInlineComposerController, UseMealInlineComposerOptions } from './MealInlineComposer';
 export { isDraftForMeal, MealActiveDraftBlock, MealDraftAuxBlock } from './MealDraftSection';
 export type { MealActiveDraftBlockProps, MealDraftAuxBlockProps } from './MealDraftSection';
 export { CUSTOM_FOOD_BASIS_OPTIONS, customFoodNutrientFields, parseCustomFoodNutrients, parseNonNegativeNumber } from './customFoodForm';

@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { useRef, useState, type ComponentRef } from 'react';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { useAction, useAppRuntime, useRecipes } from '../../src/app/AppRuntimeContext';
 import { SourceBadge } from '../../src/ui/components/doop';
 import { BackHeader, Button, ErrorMessage, goBackOrReplace, Heading, Muted, number, Page, ui } from '../../src/ui/components/primitives';
@@ -15,14 +15,16 @@ export default function Recipes() {
   const action = useAction();
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<RecipeDraft>({ name: '', ingredients: [], cooked_weight_g: null, servings_count: null });
+  const scrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
+  const scrollOffsetRef = useRef(0);
   const destinationParams = {
     ...(params.meal ? { meal: params.meal } : {}),
     ...(params.date ? { date: params.date } : {}),
   };
-  return <Page><BackHeader title="Recipes" onBack={() => goBackOrReplace('/(tabs)/library')} />
+  return <Page scrollRef={scrollRef} onScroll={event => { scrollOffsetRef.current = event.nativeEvent.contentOffset.y; }}><BackHeader title="Recipes" onBack={() => goBackOrReplace('/(tabs)/library')} />
     <Button label={creating ? 'Close new recipe' : '+ New recipe'} selected={creating} disabled={action.busy} onPress={() => setCreating(current => !current)} />
     {creating && <View style={{ gap: 12 }}><Heading>New recipe</Heading>
-      <RecipeEditor value={draft} onChange={setDraft} disabled={action.busy} />
+      <RecipeEditor value={draft} onChange={setDraft} disabled={action.busy} scrollRef={scrollRef} scrollOffsetRef={scrollOffsetRef} />
       <ErrorMessage message={action.error} />
       <Button label={action.busy ? 'Saving…' : 'Save recipe'} primary disabled={action.busy || !validRecipeDraft(draft)} onPress={() => void action.run(async () => {
         const recipe = await controller.saveRecipe({ ...draft, name: draft.name.trim() });
