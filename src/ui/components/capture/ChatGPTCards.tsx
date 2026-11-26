@@ -1,648 +1,112 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import {
-  colors,
-  fontSize,
-  fontWeight,
-  MIN_TOUCH_TARGET,
-  radius,
-  spacing,
-  tabularNums,
-} from '../../tokens';
+import { colors, fontFace, tabularNums } from '../../tokens';
+import { DoopIcon } from '../DoopIcons';
 
-export interface AIModelChoice {
-  id: string;
-  label: string;
-  supportsVision: boolean;
-}
-
+export interface AIModelChoice { id: string; label: string; supportsVision: boolean }
 export interface ChatGPTConnectionCardProps {
-  mode: 'disconnected' | 'chatgpt_oauth' | 'api_key';
-  /** Ready-made status line, e.g. `Not connected` or `Connected · ChatGPT plan`. */
-  statusLabel: string;
-  consentChecked: boolean;
-  onToggleConsent: () => void;
-  onConnectChatGPT: () => void;
-  onSaveApiKey: (apiKey: string) => void;
-  maskedKey?: string | null | undefined;
-  models: AIModelChoice[];
-  selectedModel: string;
-  onSelectModel: (modelId: string) => void;
-  onOpenManageUsage?: (() => void) | undefined;
-  onDisconnect: () => void;
-  oauthNote?: string | null | undefined;
-  busy?: boolean | undefined;
+  mode: 'disconnected' | 'chatgpt_oauth' | 'api_key'; statusLabel: string;
+  consentChecked: boolean; onToggleConsent: () => void; onConnectChatGPT: () => void;
+  onSaveApiKey: (apiKey: string) => void; maskedKey?: string | null | undefined;
+  models: AIModelChoice[]; selectedModel: string; onSelectModel: (modelId: string) => void;
+  onOpenManageUsage?: (() => void) | undefined; onDisconnect: () => void;
+  oauthNote?: string | null | undefined; busy?: boolean | undefined;
 }
-
-const CONSENT_LABEL = 'Allow meal text and photos to be sent to OpenAI using my plan';
-
-const DISCLOSURES = [
-  'Works with eligible ChatGPT plans',
-  "Shares your plan's allowance with ChatGPT",
-  'If it runs out, AI pauses until it resets',
-] as const;
-
-const KEY_NOTE = "Billed to the key's owner · stays on this device";
-const DISCONNECT_NOTE = 'Disconnecting deletes nothing · manual logging always works';
-
-/**
- * Doop "ChatGPT" settings card.
- *
- * Disconnected, it explains the trade in three plain facts, takes consent with
- * an explicit checkbox, and keeps the API-key path one tap away instead of
- * competing with the plan button. Connected, it shows what is in use and hides
- * model choice and sign-out behind inline disclosures so the resting state is
- * two lines tall.
- */
-export function ChatGPTConnectionCard({
-  mode,
-  statusLabel,
-  consentChecked,
-  onToggleConsent,
-  onConnectChatGPT,
-  onSaveApiKey,
-  maskedKey,
-  models,
-  selectedModel,
-  onSelectModel,
-  onOpenManageUsage,
-  onDisconnect,
-  oauthNote,
-  busy,
-}: ChatGPTConnectionCardProps) {
-  const [apiKeyOpen, setApiKeyOpen] = useState(false);
-  const [apiKey, setApiKey] = useState('');
-  const [modelOpen, setModelOpen] = useState(false);
+const FOOTER = 'Disconnecting deletes nothing · manual logging always works';
+export function ChatGPTConnectionCard(props: ChatGPTConnectionCardProps) {
+  const [keyOpen, setKeyOpen] = useState(false);
+  const [key, setKey] = useState('');
+  const [modelsOpen, setModelsOpen] = useState(false);
   const [signOutOpen, setSignOutOpen] = useState(false);
 
-  const blocked = busy === true;
-  const connected = mode !== 'disconnected';
-  const hasMaskedKey = maskedKey != null && maskedKey !== '';
-  const hasOAuthNote = oauthNote != null && oauthNote !== '';
-  const trimmedKey = apiKey.trim();
-  const canSaveKey = trimmedKey !== '' && !blocked;
-  const selectedModelChoice = models.find(model => model.id === selectedModel);
-  const modelLabel =
-    selectedModelChoice?.label ?? (selectedModel === '' ? 'Choose a model' : selectedModel);
-
-  const statusDot = connected ? styles.dotConnected : styles.dotIdle;
-
-  return (
-    <View style={styles.card}>
-      <View style={styles.head}>
-        <Text style={styles.title}>ChatGPT</Text>
-        <View style={styles.statusRow}>
-          <View style={[styles.dot, statusDot]} />
-          <Text numberOfLines={1} style={styles.statusText}>
-            {statusLabel}
-          </Text>
-        </View>
-      </View>
-
-      {connected ? (
-        <View style={styles.body}>
-          {hasMaskedKey ? (
-            <Text numberOfLines={1} style={styles.maskedKey}>
-              {maskedKey}
-            </Text>
-          ) : null}
-
-          <View style={styles.rule} />
-
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Model, ${modelLabel}`}
-            accessibilityState={{ expanded: modelOpen, disabled: blocked }}
-            disabled={blocked}
-            onPress={() => setModelOpen(open => !open)}
-            style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-          >
-            <Text style={styles.rowLabel}>Model</Text>
-            <View style={styles.rowValue}>
-              <Text numberOfLines={1} style={styles.rowValueText}>
-                {modelLabel}
-              </Text>
-              <Text style={styles.rowGlyph}>{modelOpen ? '▾' : '›'}</Text>
-            </View>
-          </Pressable>
-
-          {modelOpen ? (
-            <View style={styles.modelList} accessibilityRole="radiogroup" accessibilityLabel="Model">
-              {models.map(model => {
-                const selected = model.id === selectedModel;
-                return (
-                  <Pressable
-                    key={model.id}
-                    accessibilityRole="radio"
-                    accessibilityLabel={model.label}
-                    accessibilityState={{ checked: selected, disabled: blocked }}
-                    disabled={blocked}
-                    onPress={() => onSelectModel(model.id)}
-                    style={({ pressed }) => [styles.modelRow, pressed && styles.pressed]}
-                  >
-                    <Text
-                      numberOfLines={1}
-                      style={[styles.modelLabel, selected && styles.modelLabelSelected]}
-                    >
-                      {model.label}
-                    </Text>
-                    <View style={styles.modelMeta}>
-                      {model.supportsVision ? (
-                        <View style={styles.photoBadge}>
-                          <Text style={styles.photoBadgeLabel}>Photo</Text>
-                        </View>
-                      ) : null}
-                      {selected ? <Text style={styles.modelCheck}>✓</Text> : null}
-                    </View>
-                  </Pressable>
-                );
-              })}
-            </View>
-          ) : null}
-
-          {onOpenManageUsage != null ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Manage usage"
-              accessibilityState={{ disabled: blocked }}
-              disabled={blocked}
-              onPress={onOpenManageUsage}
-              style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-            >
-              <Text style={styles.rowLink}>Manage usage</Text>
-              <Text style={styles.rowGlyph}>›</Text>
-            </Pressable>
-          ) : null}
-
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Sign out"
-            accessibilityState={{ expanded: signOutOpen, disabled: blocked }}
-            disabled={blocked}
-            onPress={() => setSignOutOpen(open => !open)}
-            style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-          >
-            <Text style={styles.rowDanger}>Sign out</Text>
-            <Text style={styles.rowGlyph}>{signOutOpen ? '▾' : '›'}</Text>
-          </Pressable>
-
-          {signOutOpen ? (
-            <View style={styles.confirmCard}>
-              <Text style={styles.confirmNote}>{DISCONNECT_NOTE}</Text>
-              <View style={styles.confirmActions}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Cancel sign out"
-                  onPress={() => setSignOutOpen(false)}
-                  style={({ pressed }) => [styles.confirmButton, pressed && styles.pressed]}
-                >
-                  <Text style={styles.quietLabel}>Cancel</Text>
-                </Pressable>
-                <View style={styles.confirmDivider} />
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Confirm sign out"
-                  disabled={blocked}
-                  onPress={onDisconnect}
-                  style={({ pressed }) => [styles.confirmButton, pressed && styles.pressed]}
-                >
-                  <Text style={styles.dangerLabel}>Sign out</Text>
-                </Pressable>
-              </View>
-            </View>
-          ) : null}
-        </View>
-      ) : (
-        <View style={styles.body}>
-          <View style={styles.bullets}>
-            {DISCLOSURES.map(item => (
-              <View key={item} style={styles.bulletRow}>
-                <Text style={styles.bulletDot}>·</Text>
-                <Text style={styles.bulletText}>{item}</Text>
-              </View>
-            ))}
-          </View>
-
-          <Pressable
-            accessibilityRole="checkbox"
-            accessibilityLabel={CONSENT_LABEL}
-            accessibilityState={{ checked: consentChecked, disabled: blocked }}
-            disabled={blocked}
-            onPress={onToggleConsent}
-            style={({ pressed }) => [styles.consentRow, pressed && styles.pressed]}
-          >
-            <View style={[styles.checkbox, consentChecked && styles.checkboxChecked]}>
-              {consentChecked ? <Text style={styles.checkboxMark}>✓</Text> : null}
-            </View>
-            <Text style={[styles.consentText, consentChecked && styles.consentTextChecked]}>
-              {CONSENT_LABEL}
-            </Text>
-          </Pressable>
-
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Continue with ChatGPT"
-            accessibilityState={{ disabled: !consentChecked || blocked, busy: blocked }}
-            disabled={!consentChecked || blocked}
-            onPress={onConnectChatGPT}
-            style={({ pressed }) => [
-              styles.primaryButton,
-              (!consentChecked || blocked) && styles.primaryButtonDisabled,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text style={styles.primaryLabel}>Continue with ChatGPT</Text>
-          </Pressable>
-
-          {hasOAuthNote ? <Text style={styles.note}>{oauthNote}</Text> : null}
-
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Use an API key instead"
-            accessibilityState={{ expanded: apiKeyOpen, disabled: blocked }}
-            disabled={blocked}
-            onPress={() => setApiKeyOpen(open => !open)}
-            style={({ pressed }) => [styles.linkRow, pressed && styles.pressed]}
-          >
-            <Text style={styles.linkLabel}>Use an API key instead</Text>
-            <Text style={styles.rowGlyph}>{apiKeyOpen ? '▾' : '›'}</Text>
-          </Pressable>
-
-          {apiKeyOpen ? (
-            <View style={styles.keyBlock}>
-              <View style={styles.keyRow}>
-                <TextInput
-                  accessibilityLabel="OpenAI API key"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  onChangeText={setApiKey}
-                  placeholder="sk-…"
-                  placeholderTextColor={colors.muted}
-                  secureTextEntry
-                  style={styles.keyInput}
-                  value={apiKey}
-                />
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Save API key"
-                  accessibilityState={{ disabled: !canSaveKey }}
-                  disabled={!canSaveKey}
-                  onPress={() => {
-                    if (!canSaveKey) return;
-                    onSaveApiKey(trimmedKey);
-                    setApiKey('');
-                  }}
-                  style={({ pressed }) => [
-                    styles.keySave,
-                    !canSaveKey && styles.keySaveDisabled,
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  <Text style={styles.keySaveLabel}>Save</Text>
-                </Pressable>
-              </View>
-              <Text style={styles.keyNote}>{KEY_NOTE}</Text>
-            </View>
-          ) : null}
-        </View>
-      )}
+  const connected = props.mode !== 'disconnected';
+  const model = props.models.find(item => item.id === props.selectedModel)?.label ?? props.selectedModel;
+  return <View style={styles.content}>
+    <View style={styles.status}>
+      <View style={[styles.dot, connected ? styles.dotOn : styles.dotOff]} />
+      {connected && <DoopIcon name="check" size={13} color={colors.success} />}
+      <Text style={styles.statusLabel}>{!connected ? 'Not connected' : props.mode === 'chatgpt_oauth' ? 'Using ChatGPT plan' : 'Using API key'}</Text>
     </View>
-  );
+    {connected ? <View style={{ marginTop: 16 }}>
+      {!!props.maskedKey && <Text style={styles.note}>{props.maskedKey}</Text>}
+      <Pressable accessibilityRole="button" accessibilityLabel={`Model, ${model}`} accessibilityState={{ expanded: modelsOpen }} disabled={props.busy}
+        onPress={() => setModelsOpen(open => !open)} style={styles.row}>
+        <Text style={styles.rowText}>Model</Text><View style={styles.rowValue}><Text style={styles.modelValue}>{model}</Text><DoopIcon name="chevronDown" size={16} color={colors.muted} /></View>
+      </Pressable>
+      {modelsOpen && <View style={styles.models} accessibilityRole="radiogroup" accessibilityLabel="Model">
+        {props.models.map(item => <Pressable key={item.id} accessibilityRole="radio" accessibilityState={{ checked: item.id === props.selectedModel }} disabled={props.busy}
+          onPress={() => { props.onSelectModel(item.id); setModelsOpen(false); }} style={[styles.modelRow, item.id === props.selectedModel && styles.modelSelected]}>
+          <Text style={[styles.rowText, { flex: 1, fontSize: 13 }]}>{item.label}</Text>
+          {item.supportsVision && <DoopIcon name="camera" size={14} color={colors.muted} />}
+          {item.id === props.selectedModel && <DoopIcon name="check" size={14} color={colors.accent} />}
+        </Pressable>)}
+      </View>}
+      {props.onOpenManageUsage && <Pressable accessibilityRole="button" disabled={props.busy} onPress={props.onOpenManageUsage} style={styles.row}>
+        <Text style={styles.rowText}>Manage usage</Text><DoopIcon name="external" size={15} color={colors.muted} />
+      </Pressable>}
+      <Pressable accessibilityRole="button" disabled={props.busy} onPress={() => props.mode === 'chatgpt_oauth' ? props.onConnectChatGPT() : setKeyOpen(open => !open)} style={styles.row}>
+        <Text style={styles.rowText}>Reconnect</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded: signOutOpen }} disabled={props.busy} onPress={() => setSignOutOpen(open => !open)} style={styles.row}>
+        <Text style={styles.rowText}>Sign out</Text>
+      </Pressable>
+      {signOutOpen && <View style={styles.confirm}>
+        <Text style={styles.rowText}>Sign out on this device?</Text><View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+          <Pressable accessibilityRole="button" onPress={() => setSignOutOpen(false)} style={styles.pill}><Text style={styles.linkLabel}>Cancel</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Confirm sign out" disabled={props.busy} onPress={props.onDisconnect} style={[styles.pill, { backgroundColor: colors.raised }]}><Text style={styles.linkLabel}>Sign out</Text></Pressable>
+        </View>
+      </View>}
+    </View> : <>
+      <View style={styles.disclosures}>
+        {['Works with Plus, Pro and Business', "Shares your plan’s allowance with ChatGPT", 'If it runs out, AI pauses until it resets'].map(line => <Text key={line} style={styles.disclosure}>{line}</Text>)}
+      </View>
+      <View style={styles.rule} />
+      <Pressable accessibilityRole="checkbox" accessibilityLabel="Use my ChatGPT plan for meal logging" accessibilityState={{ checked: props.consentChecked }} disabled={props.busy} onPress={props.onToggleConsent} style={styles.consent}>
+        <View style={[styles.checkbox, props.consentChecked && styles.checkboxOn]}>{props.consentChecked && <DoopIcon name="check" size={13} color={colors.onAccent} />}</View>
+        <Text style={styles.consentLabel}>Use my ChatGPT plan for meal logging</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" disabled={!props.consentChecked || props.busy} onPress={props.onConnectChatGPT}
+        style={[styles.primary, (!props.consentChecked || props.busy) && { backgroundColor: colors.raised }]}>
+        <Text style={[styles.primaryLabel, (!props.consentChecked || props.busy) && { color: colors.muted, opacity: 0.65 }]}>Continue with ChatGPT</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded: keyOpen }} disabled={props.busy} onPress={() => setKeyOpen(open => !open)} style={styles.link}>
+        <Text style={styles.linkLabel}>Use an API key instead</Text>
+      </Pressable>
+    </>}
+    {keyOpen && <View style={styles.keyBlock}>
+      <View style={styles.keyField}><DoopIcon name="key" size={15} color={colors.muted} />
+        <TextInput accessibilityLabel="OpenAI API key" value={key} onChangeText={setKey} autoCapitalize="none" autoCorrect={false} secureTextEntry
+          placeholder="sk-proj-…" placeholderTextColor={colors.muted} style={styles.keyInput} editable={!props.busy} />
+        <Pressable accessibilityRole="button" accessibilityLabel="Save API key" disabled={props.busy || !key.trim()}
+          onPress={() => { if (key.trim()) { props.onSaveApiKey(key.trim()); setKey(''); } }} style={[styles.pill, key.trim() ? styles.checkboxOn : null]}>
+          <Text style={[styles.linkLabel, key.trim() ? { color: colors.onAccent } : null]}>Save</Text>
+        </Pressable>
+      </View><Text style={styles.note}>Billed to the key’s owner · stays on this device</Text>
+    </View>}
+    {!!props.oauthNote && <Text accessibilityLiveRegion="polite" style={styles.note}>{props.oauthNote}</Text>}
+    <Text style={styles.footer}>{FOOTER}</Text>
+  </View>;
 }
-
 const styles = StyleSheet.create({
-  card: {
-    gap: spacing.s10,
-    padding: spacing.s12,
-    borderRadius: radius.r16,
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    backgroundColor: colors.surface,
-  },
-  head: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.s8,
-  },
-  title: {
-    color: colors.ink,
-    fontSize: fontSize.t13,
-    fontWeight: fontWeight.semibold,
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.s6,
-    flexShrink: 1,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  dotIdle: {
-    backgroundColor: colors.muted,
-  },
-  dotConnected: {
-    backgroundColor: colors.success,
-  },
-  statusText: {
-    flexShrink: 1,
-    color: colors.muted,
-    fontSize: fontSize.t11,
-    fontWeight: fontWeight.medium,
-  },
-  body: {
-    gap: spacing.s10,
-  },
-  bullets: {
-    gap: spacing.s4,
-  },
-  bulletRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.s8,
-  },
-  bulletDot: {
-    width: spacing.s8,
-    color: colors.muted,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.bold,
-    textAlign: 'center',
-  },
-  bulletText: {
-    flex: 1,
-    minWidth: 0,
-    color: colors.muted,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.medium,
-  },
-  consentRow: {
-    minHeight: MIN_TOUCH_TARGET,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.s10,
-    paddingVertical: spacing.s6,
-  },
-  checkbox: {
-    width: 22,
-    height: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radius.r8,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.raised,
-  },
-  checkboxChecked: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
-  },
-  checkboxMark: {
-    color: colors.onAccent,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.bold,
-  },
-  consentText: {
-    flex: 1,
-    minWidth: 0,
-    color: colors.muted,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.medium,
-  },
-  consentTextChecked: {
-    color: colors.ink,
-  },
-  primaryButton: {
-    minHeight: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.s16,
-    paddingVertical: spacing.s10,
-    borderRadius: radius.r12,
-    backgroundColor: colors.accent,
-  },
-  primaryButtonDisabled: {
-    opacity: 0.45,
-  },
-  primaryLabel: {
-    color: colors.onAccent,
-    fontSize: fontSize.t14,
-    fontWeight: fontWeight.bold,
-  },
-  note: {
-    color: colors.muted,
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.medium,
-  },
-  linkRow: {
-    minHeight: MIN_TOUCH_TARGET,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.s10,
-    paddingHorizontal: spacing.s4,
-    borderRadius: radius.r12,
-  },
-  linkLabel: {
-    flexShrink: 1,
-    color: colors.ink,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.semibold,
-  },
-  rowGlyph: {
-    color: colors.muted,
-    fontSize: fontSize.t14,
-    fontWeight: fontWeight.semibold,
-  },
-  keyBlock: {
-    gap: spacing.s6,
-    padding: spacing.s8,
-    borderRadius: radius.r12,
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    backgroundColor: colors.raised,
-  },
-  keyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.s6,
-  },
-  keyInput: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: MIN_TOUCH_TARGET,
-    paddingHorizontal: spacing.s10,
-    paddingVertical: spacing.s8,
-    borderRadius: radius.r12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    color: colors.ink,
-    fontSize: fontSize.t13,
-    fontWeight: fontWeight.medium,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  keySave: {
-    minHeight: MIN_TOUCH_TARGET,
-    minWidth: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.s16,
-    borderRadius: radius.r12,
-    backgroundColor: colors.accent,
-  },
-  keySaveDisabled: {
-    opacity: 0.45,
-  },
-  keySaveLabel: {
-    color: colors.onAccent,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.bold,
-  },
-  keyNote: {
-    color: colors.muted,
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.medium,
-  },
-  maskedKey: {
-    color: colors.muted,
-    fontSize: fontSize.t11,
-    fontWeight: fontWeight.medium,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  rule: {
-    height: 1,
-    backgroundColor: colors.hairline,
-  },
-  row: {
-    minHeight: MIN_TOUCH_TARGET,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.s12,
-    paddingHorizontal: spacing.s4,
-    borderRadius: radius.r12,
-  },
-  rowLabel: {
-    color: colors.ink,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.medium,
-  },
-  rowValue: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.s6,
-    flexShrink: 1,
-    minWidth: 0,
-  },
-  rowValueText: {
-    flexShrink: 1,
-    color: colors.muted,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.semibold,
-  },
-  rowLink: {
-    color: colors.accent,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.semibold,
-  },
-  rowDanger: {
-    color: colors.danger,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.semibold,
-  },
-  modelList: {
-    gap: spacing.s2,
-    paddingVertical: spacing.s4,
-    paddingHorizontal: spacing.s4,
-    borderRadius: radius.r12,
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    backgroundColor: colors.raised,
-  },
-  modelRow: {
-    minHeight: MIN_TOUCH_TARGET,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.s8,
-    paddingHorizontal: spacing.s8,
-    borderRadius: radius.r8,
-  },
-  modelLabel: {
-    flexShrink: 1,
-    color: colors.muted,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.medium,
-  },
-  modelLabelSelected: {
-    color: colors.ink,
-    fontWeight: fontWeight.semibold,
-  },
-  modelMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.s6,
-  },
-  photoBadge: {
-    paddingHorizontal: spacing.s8,
-    paddingVertical: spacing.s2,
-    borderRadius: radius.full,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  photoBadgeLabel: {
-    color: colors.muted,
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.semibold,
-    letterSpacing: 0.3,
-  },
-  modelCheck: {
-    color: colors.accent,
-    fontSize: fontSize.t13,
-    fontWeight: fontWeight.bold,
-  },
-  confirmCard: {
-    gap: spacing.s6,
-    padding: spacing.s8,
-    borderRadius: radius.r12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.raised,
-  },
-  confirmNote: {
-    color: colors.muted,
-    fontSize: fontSize.t11,
-    fontWeight: fontWeight.medium,
-  },
-  confirmActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  confirmButton: {
-    flex: 1,
-    minHeight: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radius.r8,
-  },
-  confirmDivider: {
-    width: 1,
-    height: spacing.s20,
-    backgroundColor: colors.border,
-  },
-  quietLabel: {
-    color: colors.muted,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.semibold,
-  },
-  dangerLabel: {
-    color: colors.danger,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.bold,
-  },
-  pressed: { opacity: 0.7 },
+  content: { marginTop: 12 }, status: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 24 },
+  dot: { width: 8, height: 8, borderRadius: 4 }, dotOn: { backgroundColor: colors.success }, dotOff: { borderWidth: 1.5, borderColor: colors.muted, opacity: 0.6 },
+  statusLabel: { ...fontFace('bold'), color: colors.ink, fontSize: 13 },
+  disclosures: { marginTop: 18, gap: 7 }, disclosure: { ...fontFace(), color: colors.muted, fontSize: 12, lineHeight: 18, opacity: 0.82 },
+  rule: { height: 1, backgroundColor: colors.hairline, marginTop: 20, marginBottom: 8 },
+  consent: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  checkbox: { width: 22, height: 22, borderRadius: 11, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.raised, alignItems: 'center', justifyContent: 'center' },
+  checkboxOn: { backgroundColor: colors.accent, borderColor: colors.accent }, consentLabel: { ...fontFace('semibold'), fontSize: 13, color: colors.ink, flex: 1 },
+  primary: { height: 48, borderRadius: 12, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center', marginTop: 16 },
+  primaryLabel: { ...fontFace('bold'), fontSize: 14, color: colors.onAccent },
+  link: { height: 48, alignItems: 'center', justifyContent: 'center', marginTop: 4 }, linkLabel: { ...fontFace('semibold'), fontSize: 13, color: colors.muted },
+  row: { height: 48, borderTopWidth: 1, borderTopColor: colors.hairline, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  rowText: { ...fontFace('semibold'), color: colors.ink, fontSize: 14 }, rowValue: { flexDirection: 'row', alignItems: 'center', gap: 8 }, modelValue: { ...fontFace('bold'), color: colors.ink, fontSize: 13 },
+  models: { padding: 6, borderRadius: 16, backgroundColor: colors.raised, borderWidth: 1, borderColor: colors.border },
+  modelRow: { minHeight: 44, borderRadius: 10, paddingHorizontal: 10, flexDirection: 'row', gap: 8, alignItems: 'center' }, modelSelected: { backgroundColor: colors.surface },
+  confirm: { borderTopWidth: 1, borderBottomWidth: 1, borderColor: colors.hairline, paddingVertical: 14, gap: 12 },
+  pill: { height: 40, minWidth: 60, borderRadius: 999, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 13, justifyContent: 'center', alignItems: 'center' },
+  keyBlock: { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderColor: colors.hairline, gap: 8 },
+  keyField: { height: 48, paddingLeft: 12, paddingRight: 3, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.raised, borderWidth: 1, borderColor: colors.border, borderRadius: 12 },
+  keyInput: { ...fontFace(), ...tabularNums, flex: 1, minWidth: 0, color: colors.ink, fontSize: 13, height: 44 },
+  note: { ...fontFace(), fontSize: 11, color: colors.muted, opacity: 0.78, lineHeight: 16 }, footer: { ...fontFace(), fontSize: 11, color: colors.muted, opacity: 0.78, lineHeight: 16, marginTop: 20 },
 });

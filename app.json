@@ -6,6 +6,7 @@
     "scheme": "opencalorietracker",
     "orientation": "default",
     "userInterfaceStyle": "dark",
+    "backgroundColor": "#1a1b26",
     "ios": {
       "bundleIdentifier": "org.opencalorietracker.app",
       "supportsTablet": true
@@ -14,6 +15,14 @@
       "package": "org.opencalorietracker.app"
     },
     "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26
+          }
+        }
+      ],
       [
         "expo-router",
         {
@@ -33,6 +42,10 @@
           "photosPermission": "Allow OpenCalorieTracker to pick a meal or nutrition label photo only when you choose photo upload."
         }
       ],
+      "./modules/oct-health/app.plugin.js",
+      "./modules/oct-barcode-scanner/app.plugin.js",
+      "./modules/oct-speech/app.plugin.js",
+      "./plugins/withWindowsCmake.js",
       "expo-status-bar",
       "expo-asset",
       "expo-secure-store",

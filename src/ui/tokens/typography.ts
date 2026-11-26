@@ -1,15 +1,18 @@
 import { Platform } from 'react-native';
+import type { TextStyle } from 'react-native';
 
-// The root layout registers the Manrope alias on native and web. Keep a sans-serif
-// fallback on web while that face downloads or if a device cannot load it.
-const manrope = Platform.OS === 'web'
-  ? 'Manrope, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
-  : 'Manrope';
+// The root layout registers all four Manrope weights via @expo-google-fonts/manrope.
+// On native Android/iOS, each weight is a distinct font face name; setting fontWeight
+// alone on a single-weight family causes Android to fall back to regular/medium.
+const webStack = 'Manrope, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
-/** Text stack. Manrope carries both prose and figures. */
 export const fontFamily = {
-  body: manrope,
-  number: manrope,
+  body: Platform.OS === 'web' ? webStack : 'Manrope_500Medium',
+  number: Platform.OS === 'web' ? webStack : 'Manrope_500Medium',
+  medium: Platform.OS === 'web' ? webStack : 'Manrope_500Medium',
+  semibold: Platform.OS === 'web' ? webStack : 'Manrope_600SemiBold',
+  bold: Platform.OS === 'web' ? webStack : 'Manrope_700Bold',
+  extrabold: Platform.OS === 'web' ? webStack : 'Manrope_800ExtraBold',
 } as const;
 
 /** Font weights as React Native expects them: strings, not numbers. */
@@ -19,6 +22,16 @@ export const fontWeight = {
   bold: '700',
   extrabold: '800',
 } as const;
+
+export type FontWeightName = keyof typeof fontWeight;
+
+/** Cross-platform Manrope weight style that renders true Bold/ExtraBold on Android & Web. */
+export function fontFace(weight: FontWeightName = 'medium'): Pick<TextStyle, 'fontFamily' | 'fontWeight'> {
+  if (Platform.OS === 'web') {
+    return { fontFamily: webStack, fontWeight: fontWeight[weight] };
+  }
+  return { fontFamily: fontFamily[weight] };
+}
 
 /** Font sizes, in density-independent pixels. */
 export const fontSize = {
@@ -51,6 +64,6 @@ export const tabularNums = {
 };
 
 export type FontFamilyToken = keyof typeof fontFamily;
-export type FontWeightToken = keyof typeof fontWeight;
 export type FontSizeToken = keyof typeof fontSize;
+export type FontWeightToken = keyof typeof fontWeight;
 export type LineHeightToken = keyof typeof lineHeight;

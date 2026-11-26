@@ -4,7 +4,8 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { openDatabaseAsync } from 'expo-sqlite';
 import { FoodSourceRegistry } from '../catalog';
 import { createExpoSqliteDriver, DiaryRepo, GoalsRepo, HealthSyncRepo, LibraryRepo, migrateDatabase, PacksRepo, PhotoDraftRepo, WaterRepo } from '../storage';
-import { createUnavailableHealthPort } from '../health';
+import { createNativeHealthPort } from '../../modules/oct-health';
+import { createNativeLoopbackAuthPort } from '../../modules/oct-oauth-loopback';
 import { generateId } from '../domain';
 import { initOffCache } from '../barcode';
 import { createCredentialStore } from './credentials.native';
@@ -29,18 +30,22 @@ export async function bootstrap(): Promise<AppRuntime> {
   if (!FileSystem.documentDirectory) throw new Error('The app document directory is unavailable.');
   const dir = `${FileSystem.documentDirectory}packs/`;
   await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-  const userDb = createExpoSqliteDriver(await openDatabaseAsync('user.db'));
+  const userDb = createExpoSqliteDriver(await openDatabaseAsync('user.db', { useNewConnection: true }));
+  await userDb.execAsync('PRAGMA busy_timeout = 5000');
   const notices: string[] = [];
   let offCacheDb: ReturnType<typeof createExpoSqliteDriver> | null = null;
   let controller: AppController | null = null;
   try {
     await migrateDatabase(userDb);
-    offCacheDb = createExpoSqliteDriver(await openDatabaseAsync('off_cache.sqlite')); await initOffCache(offCacheDb);
+    offCacheDb = createExpoSqliteDriver(await openDatabaseAsync('off_cache.sqlite', { useNewConnection: true }));
+    await offCacheDb.execAsync('PRAGMA busy_timeout = 5000');
+    await initOffCache(offCacheDb);
     const packs = new PacksRepo(userDb);
     const app = new AppController({ userDb, offCacheDb, credentials: createCredentialStore(), catalog: new FoodSourceRegistry(userDb),
       diary: new DiaryRepo(userDb), library: new LibraryRepo(userDb), goals: new GoalsRepo(userDb), packs,
       water: new WaterRepo(userDb), healthSync: new HealthSyncRepo(userDb), photoDrafts: new PhotoDraftRepo(userDb),
-      healthPort: createUnavailableHealthPort(Platform.OS) });
+      healthPort: createNativeHealthPort(Platform.OS),
+      loopbackAuth: createNativeLoopbackAuthPort() });
     controller = app;
     const importPackFromFile = async (uri: string, priority = 50) => {
       const target = `${dir}${generateId()}.octpack.sqlite`;

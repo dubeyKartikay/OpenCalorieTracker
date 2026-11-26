@@ -1,17 +1,16 @@
 import { useState } from 'react';
-import { router } from 'expo-router';
 import { Linking } from 'react-native';
 import { useAction, useAIStatus, useAppRuntime } from '../src/app/AppRuntimeContext';
 import { AI_MODEL_OPTIONS } from '../src/ai';
 import { ChatGPTConnectionCard } from '../src/ui/components/capture';
-import { Button, ErrorMessage, Muted, Page } from '../src/ui/components/primitives';
+import { BackHeader, Button, ErrorMessage, goBackOrReplace, Muted, Page } from '../src/ui/components/primitives';
 
 export default function ChatGPT() {
   const { controller } = useAppRuntime();
   const status = useAIStatus();
   const action = useAction();
   const [oauthNote, setOAuthNote] = useState<string | null>(null);
-  return <Page title="ChatGPT" action={<Button label="Back" onPress={() => router.canGoBack() ? router.back() : router.replace('/settings')} />}>
+  return <Page><BackHeader title="ChatGPT" onBack={() => goBackOrReplace('/settings')} />
     <ErrorMessage message={action.error ?? status.error} />
     {status.loading && <Muted>Checking AI connection…</Muted>}
     {status.value && <ChatGPTConnectionCard mode={status.value.mode} statusLabel={status.value.statusLabel}
@@ -32,6 +31,6 @@ export default function ChatGPT() {
     {status.value && status.value.mode !== 'disconnected' && !status.value.consentAccepted &&
       <Button label="Allow meal text and photos to be sent to OpenAI" disabled={action.busy}
         onPress={() => void action.run(() => controller.setAIConsent(true))} />}
-    <Muted>Meal text or photos are sent to OpenAI only when you use AI. Your diary is never sent. Review every draft before logging.</Muted>
+
   </Page>;
 }

@@ -18,6 +18,7 @@ export type { SpacingToken, SpacingTokenValue } from './spacing';
 export { EXPANDED_BREAKPOINT, TwoPane, useLayoutClass } from './layout';
 export type { LayoutClass, TwoPaneProps } from './layout';
 export {
+  fontFace,
   fontFamily,
   fontSize,
   fontWeight,
@@ -27,6 +28,7 @@ export {
 export type {
   FontFamilyToken,
   FontSizeToken,
+  FontWeightName,
   FontWeightToken,
   LineHeightToken,
 } from './typography';

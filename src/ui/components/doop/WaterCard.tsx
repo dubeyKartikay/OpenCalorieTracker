@@ -1,100 +1,144 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
-import { colors, fontSize, fontWeight, MIN_TOUCH_TARGET, radius, spacing } from '../../tokens';
-import { Button, Heading, Input, Muted, number, ui } from '../primitives';
+import { colors, fontFace, tabularNums } from '../../tokens';
+import { DoopIcon } from '../DoopIcons';
+import { Button, number, ui } from '../primitives';
+import { NumericEditor } from './InlineKeypad';
+import { RevealPanel } from './Motion';
 
 export interface WaterCardProps {
   totalMl: number;
+  goalMl?: number | null | undefined;
   onAdd: (amountMl: number) => void;
   onUndo?: (() => void) | undefined;
+  onClear?: (() => void) | undefined;
   lastAmountMl?: number | undefined;
   showCustomAmount?: boolean | undefined;
   disabled?: boolean | undefined;
+  onOpenChange?: ((open: boolean) => void) | undefined;
   style?: StyleProp<ViewStyle> | undefined;
 }
 
-function waterAmount(amountMl: number): string {
-  return amountMl >= 1000 ? `${number(amountMl / 1000, 2)} L` : `${number(amountMl)} ml`;
-}
-
-/** Local input state only; the parent owns today's total and water entries. */
-export function WaterCard({ totalMl, onAdd, onUndo, lastAmountMl, showCustomAmount = true, disabled = false, style }: WaterCardProps) {
-  const [customOpen, setCustomOpen] = useState(false);
+/** Tapping anywhere on the water row opens the shared NumericEditor to log an exact ml amount. */
+export function WaterCard({
+  totalMl,
+  goalMl = 2000,
+  onAdd,
+  onUndo,
+  onClear,
+  lastAmountMl,
+  showCustomAmount = true,
+  disabled = false,
+  onOpenChange,
+  style,
+}: WaterCardProps) {
+  const [expanded, setExpanded] = useState(false);
   const [customAmount, setCustomAmount] = useState('');
-  const amount = Number(customAmount.trim().replace(',', '.'));
-  const canAddCustom = !disabled && customAmount.trim() !== '' && Number.isFinite(amount) && amount > 0;
+  const amount = Number(customAmount.trim());
+  const canAdd = !disabled && customAmount.trim() !== '' && Number.isFinite(amount) && amount > 0;
+
+  const setOpen = (next: boolean) => {
+    if (next) Keyboard.dismiss();
+    setExpanded(next);
+    onOpenChange?.(next);
+  };
 
   const addCustom = () => {
-    if (!canAddCustom) return;
+    if (!canAdd) return;
     onAdd(amount);
     setCustomAmount('');
-    setCustomOpen(false);
+    setOpen(false);
   };
 
   return (
-    <View style={[ui.card, style]}>
-      <View style={styles.header}>
-        <Heading>Water</Heading>
-        <Text accessibilityLiveRegion="polite" accessibilityLabel={`Water today, ${waterAmount(totalMl)}`} style={[ui.number, styles.total]}>
-          {waterAmount(totalMl)}
-        </Text>
+    <View style={[styles.strip, style]}>
+      <View style={styles.row}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Water, ${number(totalMl)}${goalMl != null ? ` of ${number(goalMl)}` : ''} ml. Tap to enter exact amount`}
+          accessibilityState={{ expanded }}
+          onPress={() => setOpen(!expanded)}
+          style={({ pressed }) => [styles.rowTrigger, pressed && styles.pressed]}
+        >
+          <DoopIcon name="water" size={18} color={expanded ? colors.accent : colors.muted} />
+          <Text style={[styles.label, expanded && styles.labelActive]}>Water</Text>
+          <Text accessibilityLiveRegion="polite" style={styles.total}>
+            {number(totalMl)}
+            {goalMl != null ? ` / ${number(goalMl)}` : ''} ml
+          </Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Add 250 millilitres of water"
+          disabled={disabled}
+          onPress={() => onAdd(250)}
+          style={({ pressed }) => [styles.pill, disabled && { opacity: 0.45 }, pressed && styles.pressed]}
+        >
+          <Text style={styles.pillLabel}>+250</Text>
+        </Pressable>
       </View>
-      <Muted>Logged today. Add a drink whenever you like.</Muted>
-      <View style={ui.wrap}>
-        <Button label="+250 ml" accessibilityLabel="Add 250 millilitres of water" onPress={() => onAdd(250)} disabled={disabled} />
-        <Button label="+500 ml" accessibilityLabel="Add 500 millilitres of water" onPress={() => onAdd(500)} disabled={disabled} />
-        {showCustomAmount ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Custom water amount"
-            accessibilityState={{ expanded: customOpen, disabled }}
-            disabled={disabled}
-            onPress={() => setCustomOpen(open => !open)}
-            style={({ pressed }) => [styles.toggle, pressed && styles.pressed, disabled && styles.disabled]}
-          >
-            <Text style={ui.number}>{customOpen ? 'Close' : 'Custom amount'}</Text>
-          </Pressable>
-        ) : null}
-      </View>
-      {showCustomAmount && customOpen ? (
-        <View style={styles.custom}>
-          <Input
-            label="Water amount (ml)"
+
+      <RevealPanel visible={expanded} direction="down" style={styles.options}>
+        {showCustomAmount && (
+          <NumericEditor
             value={customAmount}
-            onChangeText={setCustomAmount}
-            keyboardType="decimal-pad"
-            placeholder="e.g. 350"
-            editable={!disabled}
-            onSubmitEditing={addCustom}
-            returnKeyType="done"
+            onChange={setCustomAmount}
+            unit="ml"
+            allowDecimal={false}
+            maxLength={5}
+            allowEmpty
+            confirmDisabled={!canAdd}
+            confirmLabel="Log water amount"
+            cancelLabel="Close water keypad"
+            onConfirm={addCustom}
+            onCancel={() => {
+              setCustomAmount('');
+              setOpen(false);
+            }}
           />
-          <Button label="Add water" primary disabled={!canAddCustom} onPress={addCustom} />
+        )}
+        <View style={ui.wrap}>
+          <Button
+            label="+500 ml"
+            quiet
+            disabled={disabled}
+            onPress={() => {
+              onAdd(500);
+              setOpen(false);
+            }}
+          />
+          {onUndo && (
+            <Button
+              label={lastAmountMl == null ? 'Undo last' : `Undo ${number(lastAmountMl)} ml`}
+              quiet
+              disabled={disabled || totalMl <= 0}
+              onPress={onUndo}
+            />
+          )}
+          {onClear && (
+            <Button
+              label="Clear water"
+              quiet
+              disabled={disabled || totalMl <= 0}
+              onPress={onClear}
+            />
+          )}
         </View>
-      ) : null}
-      {onUndo ? (
-        <Button
-          label={lastAmountMl == null ? 'Remove last drink' : `Undo last (${waterAmount(lastAmountMl)})`}
-          accessibilityLabel="Remove the last water entry"
-          onPress={onUndo}
-          disabled={disabled || totalMl <= 0}
-          quiet
-        />
-      ) : null}
+      </RevealPanel>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: spacing.s8 },
-  total: { fontSize: fontSize.t24, fontWeight: fontWeight.semibold },
-  toggle: {
-    minHeight: MIN_TOUCH_TARGET, minWidth: MIN_TOUCH_TARGET,
-    paddingHorizontal: spacing.s12, paddingVertical: spacing.s10,
-    justifyContent: 'center', alignItems: 'center', borderRadius: radius.r8,
-    backgroundColor: colors.raised,
-  },
-  custom: { gap: spacing.s8 },
+  strip: { borderTopWidth: 1, borderTopColor: colors.hairline, marginTop: 16, paddingBottom: 10 },
+  row: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  rowTrigger: { flex: 1, minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  label: { ...fontFace('semibold'), color: colors.muted, fontSize: 12 },
+  labelActive: { color: colors.accent },
+  total: { ...fontFace('medium'), fontVariant: [...tabularNums.fontVariant], flex: 1, textAlign: 'right', color: colors.muted, fontSize: 12 },
+  pill: { height: 30, minWidth: 52, borderRadius: 15, borderWidth: 1, borderColor: colors.hairline, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
+  pillLabel: { ...fontFace('semibold'), color: colors.ink, fontSize: 12 },
+  options: { gap: 10, paddingBottom: 12 },
   pressed: { opacity: 0.7 },
-  disabled: { opacity: 0.45 },
 });

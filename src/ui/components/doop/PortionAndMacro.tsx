@@ -1,91 +1,145 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import {
   colors,
-  fontSize,
-  fontWeight,
+  fontFace,
   macroColors,
-  MIN_TOUCH_TARGET,
   radius,
   spacing,
   tabularNums,
 } from '../../tokens';
+import { DoopIcon } from '../DoopIcons';
 
 export interface LearnedPortion {
   label: string;
   energyLabel: string;
-  rankDots: 1 | 2 | 3;
+  rankDots?: 0 | 1 | 2 | 3 | undefined;
   selected?: boolean | undefined;
 }
 
 export interface LearnedPortionChipsProps {
   portions: LearnedPortion[];
   onSelect: (index: number) => void;
-  onMore: () => void;
+  onMore?: (() => void) | undefined;
+  moreExpanded?: boolean | undefined;
+  disabled?: boolean | undefined;
   style?: StyleProp<ViewStyle> | undefined;
 }
 
-/** Frequency-ranked portion chips with a trailing custom-entry chip. */
+/** Frequency-ranked portion chips with an optional trailing custom-entry chip. */
 export function LearnedPortionChips({
   portions,
   onSelect,
   onMore,
+  moreExpanded,
+  disabled = false,
   style,
 }: LearnedPortionChipsProps) {
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={[styles.portionScroll, style]}
-      contentContainerStyle={styles.portionRail}
-    >
-      {portions.map((portion, index) => {
+    <View style={[styles.portionRail, style]}>
+      {portions.slice(0, 3).map((portion, index) => {
         const selected = portion.selected === true;
+        const dots = portion.rankDots ?? 0;
         return (
           <Pressable
             key={`${portion.label}-${index}`}
-            accessibilityRole="button"
+            disabled={disabled}
+            accessibilityRole="radio"
             accessibilityLabel={`${portion.label}, ${portion.energyLabel}`}
-            accessibilityState={{ selected }}
+            accessibilityState={{ checked: selected, selected, disabled }}
             onPress={() => onSelect(index)}
             style={({ pressed }) => [
               styles.chip,
               selected && styles.chipSelected,
+              disabled && { opacity: 0.5 },
               pressed && styles.pressed,
             ]}
           >
-            <Text numberOfLines={1} style={styles.chipLabel}>
+            <Text numberOfLines={1} style={[styles.chipLabel, selected && { color: colors.accent }]}>
               {portion.label}
             </Text>
             <View style={styles.chipMeta}>
               <Text numberOfLines={1} style={styles.chipEnergy}>
                 {portion.energyLabel}
               </Text>
-              <View style={styles.rankDots}>
-                {[0, 1, 2].map(dot => {
-                  const filled = dot < portion.rankDots;
-                  const dotColor = filled ? (selected ? colors.accent : colors.muted) : colors.track;
-                  return (
-                    <View
-                      key={`dot-${dot}`}
-                      style={[styles.rankDot, { backgroundColor: dotColor }]}
-                    />
-                  );
-                })}
-              </View>
+              {dots > 0 ? (
+                <View style={styles.rankDots}>
+                  {Array.from({ length: dots }, (_, dot) => <View key={dot} style={styles.rankDot} />)}
+                </View>
+              ) : null}
             </View>
           </Pressable>
         );
       })}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Custom portion"
-        onPress={onMore}
-        style={({ pressed }) => [styles.moreChip, pressed && styles.pressed]}
-      >
-        <Text style={styles.moreGlyph}>…</Text>
-      </Pressable>
-    </ScrollView>
+      {onMore ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Custom portion"
+          accessibilityState={moreExpanded === undefined ? undefined : { expanded: moreExpanded }}
+          disabled={disabled}
+          onPress={onMore}
+          style={({ pressed }) => [styles.moreChip, moreExpanded && styles.chipSelected, pressed && styles.pressed]}
+        >
+          <DoopIcon name="more" size={18} color={moreExpanded ? colors.accent : colors.muted} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+export interface MealDestinationPillsProps {
+  meals: string[];
+  selectedMeals?: string[] | undefined;
+  suggestedMeal?: string | undefined;
+  mode?: 'log' | 'toggle' | 'move' | undefined;
+  disabled?: boolean | undefined;
+  wrap?: boolean | undefined;
+  onPress: (meal: string) => void;
+  style?: StyleProp<ViewStyle> | undefined;
+}
+
+/** Shared meal-destination pill row used across Library, Barcode, and Recipe batches. */
+export function MealDestinationPills({
+  meals,
+  selectedMeals = [],
+  suggestedMeal,
+  mode = 'log',
+  disabled = false,
+  wrap = false,
+  onPress,
+  style,
+}: MealDestinationPillsProps) {
+  return (
+    <View style={[styles.mealRow, (wrap || meals.length > 4) && styles.mealWrap, style]}>
+      {meals.map(meal => {
+        const selected = selectedMeals.includes(meal);
+        const suggested = !selected && meal === suggestedMeal;
+        const actionPrefix = mode === 'move' ? 'Move to ' : mode === 'toggle' && selected ? 'Remove from ' : 'Add to ';
+        return (
+          <Pressable
+            key={meal}
+            accessibilityRole="button"
+            accessibilityLabel={`${actionPrefix}${meal}`}
+            accessibilityState={{ selected, disabled }}
+            disabled={disabled}
+            onPress={() => onPress(meal)}
+            style={({ pressed }) => [
+              styles.mealPill,
+              (wrap || meals.length > 4) && styles.mealPillWrap,
+              suggested && styles.mealSuggested,
+              selected && styles.mealSelected,
+              disabled && { opacity: 0.5 },
+              pressed && styles.pressed,
+            ]}
+          >
+            <DoopIcon name={selected ? 'check' : 'plus'} size={11} color={selected ? colors.onAccent : colors.muted} />
+            <Text numberOfLines={1} style={[styles.mealPillLabel, selected && styles.mealPillLabelSelected]}>
+              {meal}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 
@@ -190,93 +244,23 @@ export const BarSourceChip = SourceBadge;
 export type BarSourceChipProps = SourceBadgeProps;
 
 const styles = StyleSheet.create({
-  portionScroll: { flexGrow: 0 },
-  portionRail: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.s8,
-    paddingVertical: spacing.s2,
-    paddingRight: spacing.s4,
-  },
-  chip: {
-    minHeight: 52,
-    minWidth: 88,
-    maxWidth: 190,
-    justifyContent: 'center',
-    gap: spacing.s4,
-    paddingHorizontal: spacing.s12,
-    paddingVertical: spacing.s8,
-    borderRadius: radius.r12,
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    backgroundColor: colors.raised,
-  },
-  chipSelected: {
-    borderColor: colors.accent,
-  },
-  chipLabel: {
-    color: colors.ink,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.semibold,
-  },
-  chipMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.s8,
-  },
-  chipEnergy: {
-    flexShrink: 1,
-    color: colors.muted,
-    fontSize: fontSize.t11,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  rankDots: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-  },
-  rankDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-  },
-  moreChip: {
-    minWidth: MIN_TOUCH_TARGET,
-    minHeight: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radius.r12,
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    backgroundColor: colors.raised,
-  },
-  moreGlyph: {
-    color: colors.muted,
-    fontSize: fontSize.t20,
-    fontWeight: fontWeight.semibold,
-  },
-  macroTrack: {
-    width: '100%',
-    flexDirection: 'row',
-    backgroundColor: colors.track,
-    overflow: 'hidden',
-  },
-  badge: {
-    alignSelf: 'flex-start',
-    maxWidth: '100%',
-    minHeight: 22,
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderRadius: radius.full,
-    paddingHorizontal: spacing.s10,
-    paddingVertical: spacing.s2,
-  },
-  badgeDashed: { borderStyle: 'dashed' },
-  badgeLabel: {
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.semibold,
-    letterSpacing: 0.3,
-    fontVariant: [...tabularNums.fontVariant],
-  },
+  portionRail: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  chip: { height: 48, flex: 1, minWidth: 0, justifyContent: 'center', alignItems: 'center', gap: 1, paddingHorizontal: 2, borderRadius: 12, borderWidth: 1, borderColor: colors.hairline, backgroundColor: colors.ground },
+  chipSelected: { borderColor: colors.accent, backgroundColor: 'rgba(122,162,247,0.12)' },
+  chipLabel: { color: colors.ink, ...fontFace('bold'), fontSize: 13, lineHeight: 15 },
+  chipMeta: { alignItems: 'center', gap: 1 }, chipEnergy: { color: colors.muted, ...fontFace('medium'), fontSize: 10, lineHeight: 11, fontVariant: [...tabularNums.fontVariant] },
+  rankDots: { flexDirection: 'row', alignItems: 'center', gap: 2, height: 3, marginTop: 1 }, rankDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: colors.lavender },
+  moreChip: { height: 48, flex: 1, minWidth: 0, alignItems: 'center', justifyContent: 'center', borderRadius: radius.r12, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, backgroundColor: colors.ground },
+  mealRow: { flexDirection: 'row', gap: 6 },
+  mealWrap: { flexWrap: 'wrap' },
+  mealPill: { flex: 1, minWidth: 68, height: 44, paddingHorizontal: 6, borderRadius: radius.full, borderWidth: 1, borderColor: colors.hairline, backgroundColor: colors.ground, flexDirection: 'row', gap: 3, alignItems: 'center', justifyContent: 'center' },
+  mealPillWrap: { flexBasis: '47%' },
+  mealSuggested: { borderColor: colors.border, backgroundColor: 'rgba(122,162,247,0.07)' },
+  mealSelected: { backgroundColor: colors.accent, borderColor: colors.accent },
+  mealPillLabel: { ...fontFace('semibold'), fontSize: 10, color: colors.muted },
+  mealPillLabelSelected: { color: colors.onAccent },
+  macroTrack: { width: '100%', flexDirection: 'row', backgroundColor: colors.track, overflow: 'hidden', opacity: 0.9 },
+  badge: { alignSelf: 'flex-start', maxWidth: '100%', minHeight: 22, justifyContent: 'center', borderWidth: 1, borderRadius: radius.full, paddingHorizontal: spacing.s10, paddingVertical: spacing.s2 },
+  badgeDashed: { borderStyle: 'dashed' }, badgeLabel: { fontSize: 10, ...fontFace('semibold'), letterSpacing: 0.3, fontVariant: [...tabularNums.fontVariant] },
   pressed: { opacity: 0.7 },
 });

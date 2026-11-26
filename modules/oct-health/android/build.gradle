@@ -1,0 +1,22 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'org.opencalorietracker.health'
+version = '0.1.0'
+
+android {
+  namespace "org.opencalorietracker.health"
+  defaultConfig {
+    minSdkVersion 26
+    versionCode 1
+    versionName '0.1.0'
+  }
+}
+
+dependencies {
+  // AndroidX Health Connect is distributed under Apache-2.0.
+  implementation "androidx.health.connect:connect-client:1.1.0"
+  testImplementation 'junit:junit:4.13.2'
+}

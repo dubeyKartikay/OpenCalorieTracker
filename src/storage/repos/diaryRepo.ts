@@ -42,14 +42,14 @@ export class DiaryRepo {
       return value;
     });
   }
-  async confirmEntry(input: DiaryEntrySnapshot | string): Promise<DiaryEntrySnapshot> {
+  async confirmEntryWithStatus(input: DiaryEntrySnapshot | string): Promise<{ entry: DiaryEntrySnapshot; changed: boolean }> {
     return this.db.withTransactionAsync(async (tx) => {
       const repo = new DiaryRepo(tx);
       const candidate = typeof input === 'string' ? await repo.getEntry(input) : input;
       if (!candidate) throw new Error('Diary draft not found');
       const parsed = diaryEntrySnapshotSchema.parse(candidate);
       const byKey = await repo.findKey(parsed.idempotency_key);
-      if (byKey?.draft_state === 'confirmed') return byKey;
+      if (byKey?.draft_state === 'confirmed') return { entry: byKey, changed: false };
       const byId = await repo.getEntry(parsed.id);
       if (byId && byId.idempotency_key !== parsed.idempotency_key) throw new Error('Diary id already belongs to a different operation');
       const entry = { ...parsed, id: byKey?.id ?? parsed.id, draft_state: 'confirmed' as const };
@@ -58,8 +58,11 @@ export class DiaryRepo {
       await tx.runAsync(`INSERT INTO learned_portions(food_key,unit,amount,last_used_at) VALUES(?,?,?,?)
         ON CONFLICT(food_key,unit,amount) DO UPDATE SET use_count=use_count+1,last_used_at=excluded.last_used_at`,
       foodKey(entry.food), entry.quantity.unit, entry.quantity.amount, nowIso());
-      return entry;
+      return { entry, changed: true };
     });
+  }
+  async confirmEntry(input: DiaryEntrySnapshot | string): Promise<DiaryEntrySnapshot> {
+    return (await this.confirmEntryWithStatus(input)).entry;
   }
   async updateEntry(input: DiaryEntrySnapshot): Promise<DiaryEntrySnapshot> {
     const entry = diaryEntrySnapshotSchema.parse(input);

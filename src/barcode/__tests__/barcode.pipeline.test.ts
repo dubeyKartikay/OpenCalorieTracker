@@ -219,7 +219,8 @@ describe('offline nutrition-label text parser', () => {
 });
 
 it('advertises native FOSS requirements and manual fallback without importing native decoders', () => {
-  expect(getFossScannerCapability()).toMatchObject({ liveCamera: { engine: 'zxing-cpp', available: false, requiresNativeDevBuild: true, nativePackages: ['react-native-vision-camera', 'react-native-nitro-zxing'] }, manualEntry: { available: true }, bundlesGoogleMlKit: false });
+  expect(getFossScannerCapability()).toMatchObject({ liveCamera: { engine: 'zxing-cpp', available: false, requiresNativeDevBuild: true, nativePackages: ['oct-barcode-scanner'] }, manualEntry: { available: true }, bundlesGoogleMlKit: false });
   expect(getFossScannerCapability(true).liveCamera.available).toBe(true);
+  expect(getFossScannerCapability(true, 'ios').liveCamera.engine).toBe('avfoundation');
   expect(createBarcodeScanTelemetry()).toEqual({ decodeAttempts: 0, decodeSuccesses: 0, catalogHitsByTier: { personal: 0, pack: 0, off_cache: 0, off_live: 0 }, catalogMisses: 0 });
 });

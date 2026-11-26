@@ -2,9 +2,11 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ComponentRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, runOnJS, useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { colors, fontFamily, fontSize, fontWeight, radius, spacing } from '../../tokens';
+import Svg, { Circle, Path } from 'react-native-svg';
+import { colors, fontFace } from '../../tokens';
+import { DoopIcon, inferFoodGlyph } from '../DoopIcons';
 import { findActiveTarget } from './hitTest';
 import type { DeadZone, GestureTarget, Point } from './hitTest';
 
@@ -15,6 +17,7 @@ export interface PetalHubLauncherProps {
   onTapAddMeal: () => void;
   onSelectCapture: (action: CaptureAction) => void;
   onCommitSuggestion: (suggestion: HubSuggestion) => void;
+  onOpenChange?: (open: boolean) => void;
 }
 
 /** Shared internally with MealHoldFan; callbacks remain fresh without rebuilding a live pan. */
@@ -34,6 +37,10 @@ export function useHoldTargets(onSelect: (id: string) => void, targetIds: string
   const select = useRef(onSelect);
   useLayoutEffect(() => { select.current = onSelect; }, [onSelect]);
   const progress = useSharedValue(0);
+  const charge = useSharedValue(0);
+  const pulseScale = useSharedValue(1);
+  const pulseOpacity = useSharedValue(0);
+  const buttonScale = useSharedValue(1);
 
   useEffect(() => {
     mounted.current = true;
@@ -67,6 +74,25 @@ export function useHoldTargets(onSelect: (id: string) => void, targetIds: string
     });
   }, [update]);
 
+  // Measure again at the final animated position, including a scroll or layout change.
+  useEffect(() => {
+    if (!open) return;
+    const timer = setTimeout(measure, 160);
+    return () => clearTimeout(timer);
+  }, [open, measure]);
+
+  const beginCharge = useCallback(() => {
+    charge.set(withTiming(1, { duration: 240, easing: Easing.out(Easing.quad) }));
+    buttonScale.set(withTiming(0.94, { duration: 180 }));
+  }, [charge, buttonScale]);
+
+  const endCharge = useCallback(() => {
+    if (!holding.current) {
+      charge.set(withTiming(0, { duration: 120 }));
+      buttonScale.set(withTiming(1, { duration: 120 }));
+    }
+  }, [charge, buttonScale]);
+
   const show = useCallback(() => {
     session.current += 1;
     targets.current.clear();
@@ -77,12 +103,21 @@ export function useHoldTargets(onSelect: (id: string) => void, targetIds: string
     currentActive.current = null;
     setActiveId(null);
     setOpen(true);
-    progress.set(withTiming(1, { duration: 140 }));
+    charge.set(0);
+    progress.set(withTiming(1, { duration: 170, easing: Easing.out(Easing.cubic) }));
+    // Clear expanding pulse ring + crisp button snap signaling hold-and-swipe activation.
+    pulseScale.set(0.95);
+    pulseOpacity.set(0.85);
+    pulseScale.set(withTiming(1.55, { duration: 320, easing: Easing.out(Easing.cubic) }));
+    pulseOpacity.set(withTiming(0, { duration: 320, easing: Easing.out(Easing.quad) }));
+    buttonScale.set(withSequence(withTiming(1.06, { duration: 110 }), withTiming(1, { duration: 130 })));
     measure();
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-  }, [measure, progress]);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+  }, [measure, progress, charge, pulseScale, pulseOpacity, buttonScale]);
 
   const close = useCallback(() => {
+    charge.set(withTiming(0, { duration: 100 }));
+    buttonScale.set(withTiming(1, { duration: 120 }));
     if (!holding.current) return;
     holding.current = false;
     session.current += 1;
@@ -90,8 +125,8 @@ export function useHoldTargets(onSelect: (id: string) => void, targetIds: string
     setOpen(false);
     setActiveId(null);
     currentActive.current = null;
-    progress.set(withTiming(0, { duration: 100 }));
-  }, [progress]);
+    progress.set(withTiming(0, { duration: 120 }));
+  }, [progress, charge, buttonScale]);
 
   const finish = useCallback((x: number, y: number, success: boolean) => {
     if (!holding.current) return;
@@ -107,13 +142,19 @@ export function useHoldTargets(onSelect: (id: string) => void, targetIds: string
   // A zero distance activates immediately on web. Let only the long-press timer open it.
   const gesture = useMemo(() => Gesture.Pan().activateAfterLongPress(260).minDistance(10_000)
     .maxPointers(1).shouldCancelWhenOutside(false)
+    .onBegin(() => { runOnJS(beginCharge)(); })
     .onStart(() => { runOnJS(show)(); })
     .onUpdate(event => { runOnJS(update)(event.absoluteX, event.absoluteY); })
     .onEnd((event, success) => { runOnJS(finish)(event.absoluteX, event.absoluteY, success); })
-    .onFinalize(() => { runOnJS(close)(); }), [show, update, finish, close]);
+    .onFinalize(() => { runOnJS(endCharge)(); runOnJS(close)(); }), [beginCharge, endCharge, show, update, finish, close]);
   /* eslint-enable react-hooks/refs */
 
-  const overlayStyle = useAnimatedStyle(() => ({ opacity: progress.value, transform: [{ scale: 0.94 + progress.value * 0.06 }] }));
+  const overlayStyle = useAnimatedStyle(() => ({ opacity: progress.value, transform: [{ scale: 0.82 + progress.value * 0.18 }] }));
+  const scrimStyle = useAnimatedStyle(() => ({ opacity: progress.value }));
+  const chargeStyle = useAnimatedStyle(() => ({ opacity: charge.value * 0.9, transform: [{ scale: 1.12 - charge.value * 0.08 }] }));
+  const pulseStyle = useAnimatedStyle(() => ({ opacity: pulseOpacity.value, transform: [{ scale: pulseScale.value }] }));
+  const handleAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: buttonScale.value }] }));
+
   const targetKey = JSON.stringify(targetIds);
   const targetRefs = useMemo(() => {
     const ids: string[] = JSON.parse(targetKey);
@@ -133,18 +174,21 @@ export function useHoldTargets(onSelect: (id: string) => void, targetIds: string
     close();
     select.current(id);
   };
-  return { open, activeId, origin, gesture, overlayStyle, bindTarget, measure, show, close, tap, choose };
+  return { open, activeId, origin, gesture, overlayStyle, scrimStyle, chargeStyle, pulseStyle, handleAnimStyle, bindTarget, measure, show, close, tap, choose };
 }
 
-const captures: { action: CaptureAction; label: string; glyph: string }[] = [
-  { action: 'camera', label: 'Camera', glyph: '▣' },
-  { action: 'search', label: 'Search', glyph: '⌕' },
-  { action: 'voice', label: 'Voice', glyph: '♩' },
-];
+const captures = [
+  { action: 'camera', label: 'Camera', glyph: 'camera', x: -60, y: 34 },
+  { action: 'search', label: 'Search', glyph: 'search', x: 0, y: 5 },
+  { action: 'voice', label: 'Voice', glyph: 'mic', x: 60, y: 34 },
+] as const;
 
-export function PetalHubLauncher({ suggestions, onTapAddMeal, onSelectCapture, onCommitSuggestion }: PetalHubLauncherProps) {
+export function PetalHubLauncher({ suggestions, onTapAddMeal, onSelectCapture, onCommitSuggestion, onOpenChange }: PetalHubLauncherProps) {
   const picks = suggestions.slice(0, 3);
-  const { open, activeId, origin: originRef, gesture, overlayStyle, bindTarget, measure, show, close, tap, choose } = useHoldTargets(id => {
+  const {
+    open, activeId, origin: originRef, gesture, overlayStyle, scrimStyle, chargeStyle, pulseStyle, handleAnimStyle,
+    bindTarget, measure, show, close, tap, choose,
+  } = useHoldTargets(id => {
     const capture = captures.find(item => `capture:${item.action}` === id);
     if (capture) onSelectCapture(capture.action);
     else {
@@ -153,70 +197,100 @@ export function PetalHubLauncher({ suggestions, onTapAddMeal, onSelectCapture, o
     }
   }, [...captures.map(item => `capture:${item.action}`), ...picks.map(item => `suggestion:${item.id}`)]);
 
-  return <View style={styles.hub} onLayout={measure}>
+  const openChanged = useRef(onOpenChange);
+  useLayoutEffect(() => { openChanged.current = onOpenChange; }, [onOpenChange]);
+  useEffect(() => { openChanged.current?.(open); }, [open]);
+
+  return <View style={[styles.hub, open && styles.hubOpen]} onLayout={measure}>
+    {/* Darken all non-swipable screen chrome behind the active hub & swipable targets */}
+    {open && <Animated.View pointerEvents="none" style={[styles.scrim, scrimStyle]} />}
+    <Svg pointerEvents="none" width={208} height={208} viewBox="0 0 208 208" style={styles.orbits}>
+      <Circle cx={104} cy={104} r={62} fill="none" stroke={open ? colors.border : colors.hairline} strokeWidth={1} strokeDasharray="1.5 5.5" />
+      <Circle cx={104} cy={104} r={96} fill="none" stroke={colors.hairline} strokeWidth={1} strokeDasharray="1 6" />
+    </Svg>
     {open && <Animated.View pointerEvents="box-none" style={[styles.captureArc, overlayStyle]}>
-      {captures.map(({ action, label, glyph }, index) => {
+      {captures.map(({ action, label, glyph, x, y }) => {
         const id = `capture:${action}`;
         const active = activeId === id;
-        return <View key={id} style={[styles.captureSlot, index === 1 && styles.topCapture]}>
+        return <View key={id} style={[styles.captureSlot, { left: x, top: y }]}>
           <View ref={bindTarget(id)} collapsable={false} onLayout={measure}>
             <Pressable accessibilityRole="button" accessibilityLabel={`Add meal using ${label.toLowerCase()}`}
               accessibilityState={{ selected: active }} onPress={() => choose(id)} style={[styles.capture, active && styles.selected]}>
-              <Text accessible={false} style={[styles.captureGlyph, active && styles.accentText]}>{glyph}</Text>
+              <DoopIcon name={glyph} size={20} color={active ? colors.onAccent : colors.ink} />
             </Pressable>
           </View>
-          <Text style={styles.captureLabel}>{label}</Text>
         </View>;
       })}
     </Animated.View>}
     <GestureDetector gesture={gesture}>
-      <Animated.View ref={originRef} collapsable={false} style={styles.handleWrap}>
+      <Animated.View ref={originRef} collapsable={false} style={[styles.handleWrap, handleAnimStyle]}>
+        {/* Quiet tap+hold visual language: outer segmented arc + 3 orbital beads telegraphing fan targets */}
+        {!open && <Svg pointerEvents="none" width={108} height={108} viewBox="0 0 108 108" style={styles.affordanceRing}>
+          <Path d="M 16 26 A 48 48 0 0 1 92 26" fill="none" stroke={colors.accent} strokeWidth={1.4} strokeOpacity={0.48} strokeLinecap="round" strokeDasharray="3 5" />
+          <Circle cx={20} cy={22} r={2} fill={colors.accent} fillOpacity={0.75} />
+          <Circle cx={54} cy={6} r={2.2} fill={colors.accent} fillOpacity={0.85} />
+          <Circle cx={88} cy={22} r={2} fill={colors.accent} fillOpacity={0.75} />
+          <Path d="M 24 92 A 48 48 0 0 0 84 92" fill="none" stroke={colors.accent} strokeWidth={1.2} strokeOpacity={0.32} strokeLinecap="round" strokeDasharray="2 6" />
+        </Svg>}
+        {/* Press-down charging ring before threshold triggers */}
+        <Animated.View pointerEvents="none" style={[styles.chargeRing, chargeStyle]} />
+        {/* Expanding transition pulse ring when entering hold-and-swipe state */}
+        <Animated.View pointerEvents="none" style={[styles.pulseRing, pulseStyle]} />
         <Pressable accessibilityRole="button" accessibilityLabel="Add meal" accessibilityHint="Tap to search, or hold and slide to choose"
           accessibilityActions={[{ name: 'activate', label: 'Add meal' }, { name: 'longpress', label: 'Show capture options' }]}
           onAccessibilityAction={event => { if (event.nativeEvent.actionName === 'longpress') show(); else if (event.nativeEvent.actionName === 'activate') tap(onTapAddMeal); }}
-          onAccessibilityEscape={close} onPress={() => tap(onTapAddMeal)} style={styles.handle}>
-          <Text accessible={false} style={styles.plus}>+</Text><Text style={styles.handleLabel}>Add meal</Text>
+          onAccessibilityEscape={close} onPress={() => tap(onTapAddMeal)} style={[styles.handle, open && styles.handleOpen]}>
+          <View style={open ? styles.handleIconOpen : undefined}>
+            <DoopIcon name="plus" size={22} color={open ? colors.accent : colors.onAccent} />
+          </View>
+          {!open && <Text style={styles.handleLabel}>Add meal</Text>}
         </Pressable>
       </Animated.View>
     </GestureDetector>
     <View style={styles.picks}>
-      {picks.map(suggestion => {
+      {picks.map((suggestion, index) => {
         const id = `suggestion:${suggestion.id}`;
         const active = activeId === id;
-        return <View key={suggestion.id} ref={bindTarget(id)} collapsable={false} onLayout={measure} style={styles.pickSlot}>
+        return <View key={suggestion.id} ref={bindTarget(id)} collapsable={false} onLayout={measure} style={[styles.pickSlot, index === 0 ? styles.pickLeft : index === 1 ? styles.pickRight : styles.pickBottom]}>
           <Pressable accessibilityRole="button" accessibilityLabel={`Log ${suggestion.label}${suggestion.subtitle ? `, ${suggestion.subtitle}` : ''}`}
             accessibilityState={{ selected: active }} onPress={() => open ? choose(id) : tap(() => onCommitSuggestion(suggestion))}
-            style={[styles.pick, active && styles.selected]}>
-            <Text numberOfLines={2} style={[styles.pickLabel, active && styles.accentText]}>{suggestion.label}</Text>
-            {suggestion.subtitle && <Text numberOfLines={1} style={styles.subtitle}>{suggestion.subtitle}</Text>}
+            style={styles.pick}>
+            <View style={[styles.pickWell, open && styles.pickWellEligible, active && styles.selected]}>
+              <DoopIcon name={inferFoodGlyph(suggestion.label)} size={20} color={active ? colors.onAccent : colors.ink} />
+            </View>
+            <Text numberOfLines={1} style={[styles.pickLabel, open && styles.pickLabelEligible]}>{suggestion.label}</Text>
           </Pressable>
         </View>;
       })}
     </View>
-    {open && <Pressable accessibilityRole="button" accessibilityLabel="Cancel meal selection" onPress={close} style={styles.cancel}>
-      <Text style={styles.subtitle}>Cancel</Text>
-    </Pressable>}
   </View>;
 }
 
 const styles = StyleSheet.create({
-  hub: { alignItems: 'center', paddingTop: spacing.s8, gap: spacing.s12, overflow: 'visible', zIndex: 10 },
-  handleWrap: { width: spacing.s80, height: spacing.s80 },
-  handle: { width: spacing.s80, height: spacing.s80, borderRadius: radius.full, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
-  plus: { color: colors.onAccent, fontSize: fontSize.t40, lineHeight: 44 },
-  handleLabel: { color: colors.onAccent, fontFamily: fontFamily.body, fontSize: fontSize.t12, fontWeight: fontWeight.bold },
-  captureArc: { position: 'absolute', top: -spacing.s96, width: 256, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', overflow: 'visible', zIndex: 20, elevation: 20 },
-  captureSlot: { width: spacing.s72, alignItems: 'center', gap: spacing.s6, marginTop: spacing.s32 },
-  topCapture: { marginTop: 0 },
-  capture: { width: spacing.s56, height: spacing.s56, borderRadius: radius.full, backgroundColor: colors.raised, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
-  captureGlyph: { color: colors.ink, fontSize: fontSize.t24 },
-  captureLabel: { color: colors.muted, fontFamily: fontFamily.body, fontSize: fontSize.t11 },
-  picks: { flexDirection: 'row', gap: spacing.s8, width: '100%' },
-  pickSlot: { flex: 1, minWidth: 0 },
-  pick: { minHeight: spacing.s72, height: '100%', padding: spacing.s10, justifyContent: 'center', gap: spacing.s4, backgroundColor: colors.raised, borderRadius: radius.r16, borderWidth: 1, borderColor: colors.border },
-  pickLabel: { color: colors.ink, fontFamily: fontFamily.body, fontSize: fontSize.t12, fontWeight: fontWeight.semibold },
-  subtitle: { color: colors.muted, fontFamily: fontFamily.body, fontSize: fontSize.t11 },
-  selected: { borderColor: colors.accent, backgroundColor: colors.surface, transform: [{ scale: 1.04 }] },
-  accentText: { color: colors.accent },
-  cancel: { position: 'absolute', right: 0, top: 0, minWidth: spacing.s44, minHeight: spacing.s44, alignItems: 'center', justifyContent: 'center' },
+  hub: { height: 222, marginTop: 14, overflow: 'visible', zIndex: 10 },
+  hubOpen: { zIndex: 120, elevation: 24 },
+  scrim: { position: 'absolute', left: -3000, right: -3000, top: -3000, bottom: -3000, backgroundColor: 'rgba(10,11,18,0.78)', zIndex: 1 },
+  orbits: { position: 'absolute', left: '50%', marginLeft: -104, top: 0, zIndex: 2 },
+  handleWrap: { position: 'absolute', left: '50%', marginLeft: -44, top: 60, width: 88, height: 88, zIndex: 12, alignItems: 'center', justifyContent: 'center' },
+  affordanceRing: { position: 'absolute', left: -10, top: -10 },
+  chargeRing: { position: 'absolute', width: 98, height: 98, borderRadius: 49, borderWidth: 2, borderColor: colors.accent },
+  pulseRing: { position: 'absolute', width: 88, height: 88, borderRadius: 44, borderWidth: 2.5, borderColor: colors.accent },
+  handle: { width: 88, height: 88, borderRadius: 44, backgroundColor: colors.accent, borderWidth: 1, borderColor: colors.accent, alignItems: 'center', justifyContent: 'center', gap: 3 },
+  handleOpen: { backgroundColor: colors.raised, borderColor: colors.accent },
+  handleIconOpen: { transform: [{ rotate: '45deg' }] },
+  handleLabel: { ...fontFace('bold'), color: colors.onAccent, fontSize: 12.5, letterSpacing: 0.1 },
+  captureArc: { position: 'absolute', left: '50%', top: 0, zIndex: 20, elevation: 20 },
+  captureSlot: { position: 'absolute', width: 46, height: 46, marginLeft: -23, alignItems: 'center', justifyContent: 'center' },
+  capture: { width: 46, height: 46, borderRadius: 23, backgroundColor: colors.surface, borderWidth: 1.25, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  picks: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 10 },
+  pickSlot: { position: 'absolute', width: '32%', height: 64 },
+  pickLeft: { left: 0, top: 72 },
+  pickRight: { right: 0, top: 72 },
+  pickBottom: { left: '34%', top: 158 },
+  pick: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 4 },
+  pickWell: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: 'rgba(192,202,245,0.10)', alignItems: 'center', justifyContent: 'center' },
+  pickWellEligible: { backgroundColor: colors.surface, borderColor: 'rgba(122,162,247,0.58)', borderWidth: 1.25 },
+  pickLabel: { ...fontFace('semibold'), color: colors.ink, fontSize: 11, lineHeight: 14, textAlign: 'center', width: '100%' },
+  pickLabelEligible: { color: colors.ink },
+  selected: { borderColor: colors.accent, backgroundColor: colors.accent, transform: [{ scale: 1.08 }] },
 });

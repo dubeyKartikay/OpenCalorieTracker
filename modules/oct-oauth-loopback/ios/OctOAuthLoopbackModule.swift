@@ -1,0 +1,302 @@
+import ExpoModulesCore
+import Foundation
+import Network
+
+private struct LoopbackFailure: Error {
+  let message: String
+}
+
+private struct CallbackResult {
+  let code: String
+  let state: String
+}
+
+public final class OctOAuthLoopbackModule: Module {
+  // All session state and Network callbacks run on this serial queue.
+  private let queue = DispatchQueue(label: "org.opencalorietracker.oauth.loopback")
+  private var sessions: [String: LoopbackSession] = [:]
+  private var destroyed = false
+
+  public func definition() -> ModuleDefinition {
+    Name("OctOAuthLoopback")
+
+    AsyncFunction("startSessionAsync") { (expectedState: String, path: String, promise: Promise) in
+      guard !self.destroyed else {
+        promise.reject("ERR_OAUTH_LOOPBACK", "Loopback module is closed")
+        return
+      }
+      do {
+        let id = UUID().uuidString
+        let session = try LoopbackSession(expectedState: expectedState, path: path, queue: self.queue)
+        self.sessions[id] = session
+        session.start { [weak self] result in
+          switch result {
+          case .success(let port):
+            promise.resolve(["sessionId": id, "port": port] as [String: Any])
+          case .failure(let error):
+            self?.sessions.removeValue(forKey: id)
+            promise.reject("ERR_OAUTH_LOOPBACK", error.message)
+          }
+        }
+      } catch {
+        promise.reject("ERR_OAUTH_LOOPBACK", "Could not start the loopback listener")
+      }
+    }
+    .runOnQueue(queue)
+
+    AsyncFunction("awaitCallbackAsync") { (sessionId: String, timeoutMs: Double, promise: Promise) in
+      guard let session = self.sessions[sessionId] else {
+        promise.reject("ERR_OAUTH_LOOPBACK", "Unknown loopback session")
+        return
+      }
+      guard !session.isAwaiting else {
+        promise.reject("ERR_OAUTH_LOOPBACK", "Callback is already being awaited")
+        return
+      }
+      session.awaitCallback(timeoutMs: timeoutMs) { [weak self] result in
+        self?.sessions.removeValue(forKey: sessionId)
+        switch result {
+        case .success(let callback):
+          promise.resolve(["code": callback.code, "state": callback.state])
+        case .failure(let error):
+          promise.reject("ERR_OAUTH_LOOPBACK", error.message)
+        }
+      }
+    }
+    .runOnQueue(queue)
+
+    AsyncFunction("closeSessionAsync") { (sessionId: String) -> Void in
+      self.sessions.removeValue(forKey: sessionId)?.close()
+    }
+    .runOnQueue(queue)
+
+    OnDestroy {
+      self.queue.async {
+        self.destroyed = true
+        let active = Array(self.sessions.values)
+        self.sessions.removeAll()
+        active.forEach { $0.close() }
+      }
+    }
+  }
+}
+
+private final class LoopbackSession {
+  private let queue: DispatchQueue
+  private let listener: NWListener
+  private let expectedState: String
+  private let path: String
+  private var connections: [UUID: NWConnection] = [:]
+  private var startCompletion: ((Result<Int, LoopbackFailure>) -> Void)?
+  private var callbackCompletion: ((Result<CallbackResult, LoopbackFailure>) -> Void)?
+  private var outcome: Result<CallbackResult, LoopbackFailure>?
+  private var startTimer: DispatchWorkItem?
+  private var callbackTimer: DispatchWorkItem?
+  private var awaiting = false
+  private var finishing = false
+  private var closed = false
+  var isAwaiting: Bool { awaiting }
+
+  init(expectedState: String, path: String, queue: DispatchQueue) throws {
+    guard !expectedState.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, path == "/callback" else {
+      throw LoopbackFailure(message: "Invalid loopback sign-in parameters")
+    }
+    self.expectedState = expectedState
+    self.path = path
+    self.queue = queue
+    let parameters = NWParameters.tcp
+    // A required local endpoint prevents Network from binding a wildcard interface.
+    parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(IPv4Address("127.0.0.1")!), port: .any)
+    self.listener = try NWListener(using: parameters, on: .any)
+  }
+
+  func start(completion: @escaping (Result<Int, LoopbackFailure>) -> Void) {
+    startCompletion = completion
+    listener.stateUpdateHandler = { [weak self] state in
+      guard let self, !self.closed else { return }
+      switch state {
+      case .ready:
+        guard let port = self.listener.port, port.rawValue != 0 else {
+          self.finish(.failure(LoopbackFailure(message: "Loopback port is unavailable")))
+          return
+        }
+        self.startTimer?.cancel()
+        self.startTimer = nil
+        let ready = self.startCompletion
+        self.startCompletion = nil
+        ready?(.success(Int(port.rawValue)))
+      case .failed:
+        self.finish(.failure(LoopbackFailure(message: "Loopback listener failed")))
+      case .cancelled:
+        self.finish(.failure(LoopbackFailure(message: "Loopback listener was cancelled")))
+      default:
+        break
+      }
+    }
+    listener.newConnectionHandler = { [weak self] connection in
+      guard let self, !self.closed, !self.finishing, self.connections.count < 4 else {
+        connection.cancel()
+        return
+      }
+      let id = UUID()
+      self.connections[id] = connection
+      connection.start(queue: self.queue)
+      self.receive(connection, id: id, buffer: Data())
+    }
+    let timer = DispatchWorkItem { [weak self] in
+      self?.finish(.failure(LoopbackFailure(message: "Loopback listener startup timed out")))
+    }
+    startTimer = timer
+    queue.asyncAfter(deadline: .now() + .seconds(10), execute: timer)
+    listener.start(queue: queue)
+  }
+
+  func awaitCallback(timeoutMs: Double, completion: @escaping (Result<CallbackResult, LoopbackFailure>) -> Void) {
+    guard !awaiting else {
+      // A duplicate waiter must not remove or close the original session.
+      completion(.failure(LoopbackFailure(message: "Callback is already being awaited")))
+      return
+    }
+    awaiting = true
+    callbackCompletion = completion
+    guard timeoutMs.isFinite, timeoutMs >= 1, timeoutMs <= Double(Int32.max) else {
+      let invalid = LoopbackFailure(message: "Invalid callback timeout")
+      if closed {
+        callbackCompletion = nil
+        completion(.failure(invalid))
+      } else {
+        finish(.failure(invalid))
+      }
+      return
+    }
+    if let outcome {
+      callbackCompletion = nil
+      completion(outcome)
+      return
+    }
+    let timer = DispatchWorkItem { [weak self] in
+      self?.finish(.failure(LoopbackFailure(message: "OAuth callback timed out")))
+    }
+    callbackTimer = timer
+    queue.asyncAfter(deadline: .now() + .milliseconds(Int(timeoutMs)), execute: timer)
+  }
+
+  private func receive(_ connection: NWConnection, id: UUID, buffer: Data) {
+    connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { [weak self] data, _, complete, error in
+      guard let self, !self.closed, !self.finishing, self.connections[id] != nil else { return }
+      var bytes = buffer
+      if let data { bytes.append(data) }
+      guard bytes.count <= 16_384 else {
+        self.respond(connection, id: id, status: "400 Bad Request", message: "Invalid sign-in request.")
+        return
+      }
+      if let end = bytes.range(of: Data("\r\n\r\n".utf8)) {
+        guard let header = String(data: bytes[..<end.lowerBound], encoding: .utf8),
+              let line = header.components(separatedBy: "\r\n").first else {
+          self.respond(connection, id: id, status: "400 Bad Request", message: "Invalid sign-in request.")
+          return
+        }
+        self.handle(line, connection: connection, id: id)
+      } else if complete || error != nil {
+        self.connections.removeValue(forKey: id)?.cancel()
+      } else {
+        self.receive(connection, id: id, buffer: bytes)
+      }
+    }
+  }
+
+  private func handle(_ line: String, connection: NWConnection, id: UUID) {
+    let parts = line.components(separatedBy: " ")
+    guard parts.count == 3, parts[0] == "GET", ["HTTP/1.0", "HTTP/1.1"].contains(parts[2]),
+          parts[1].hasPrefix("/") else {
+      respond(connection, id: id, status: "400 Bad Request", message: "Invalid sign-in request.")
+      return
+    }
+    let target = parts[1].split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+    guard target[0] == path else {
+      respond(connection, id: id, status: "404 Not Found", message: "This page was not found.")
+      return
+    }
+    do {
+      let query = try parseQuery(target.count == 2 ? String(target[1]) : "")
+      guard query["state"] == expectedState else {
+        failResponse(connection, id: id, message: "Sign-in could not be verified. Please try again.", error: "OAuth callback state mismatch")
+        return
+      }
+      if query["error"] != nil {
+        // error_description is decoded but never reflected into HTML or logs.
+        failResponse(connection, id: id, message: "Sign-in was not completed. Please return to OpenCalorieTracker and try again.", error: "OAuth authorization failed")
+        return
+      }
+      guard let code = query["code"], !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        failResponse(connection, id: id, message: "The sign-in response is missing an authorization code.", error: "Missing OAuth authorization code")
+        return
+      }
+      finishing = true
+      respond(connection, id: id, status: "200 OK", message: "Sign-in complete — you can return to OpenCalorieTracker.", result: .success(CallbackResult(code: code, state: expectedState)))
+    } catch {
+      failResponse(connection, id: id, message: "Invalid sign-in response.", error: "Invalid OAuth callback query")
+    }
+  }
+
+  private func parseQuery(_ rawQuery: String) throws -> [String: String] {
+    var query: [String: String] = [:]
+    for pair in rawQuery.split(separator: "&") {
+      let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+      guard let key = String(parts[0]).replacingOccurrences(of: "+", with: " ").removingPercentEncoding,
+            let value = (parts.count == 2 ? String(parts[1]) : "").replacingOccurrences(of: "+", with: " ").removingPercentEncoding,
+            query[key] == nil else {
+        throw LoopbackFailure(message: "Invalid callback parameter")
+      }
+      query[key] = value
+    }
+    return query
+  }
+
+  private func failResponse(_ connection: NWConnection, id: UUID, message: String, error: String) {
+    finishing = true
+    respond(connection, id: id, status: "400 Bad Request", message: message, result: .failure(LoopbackFailure(message: error)))
+  }
+
+  private func respond(_ connection: NWConnection, id: UUID, status: String, message: String,
+                       result: Result<CallbackResult, LoopbackFailure>? = nil) {
+    let body = Data("""
+    <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OpenCalorieTracker sign-in</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#1a1b26;color:#c0caf5;font:18px system-ui,sans-serif}main{max-width:32rem;padding:2rem;text-align:center}h1{color:#7aa2f7;font-size:1.4rem}</style></head><body><main><h1>OpenCalorieTracker</h1><p>\(message)</p></main></body></html>
+    """.utf8)
+    let headers = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.count)\r\nConnection: close\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'\r\n\r\n"
+    connection.send(content: Data(headers.utf8) + body, contentContext: .finalMessage, isComplete: true,
+                    completion: .contentProcessed { [weak self] error in
+      connection.cancel()
+      guard let self else { return }
+      self.connections.removeValue(forKey: id)
+      if let result {
+        self.finish(error == nil ? result : .failure(LoopbackFailure(message: "Could not send the sign-in response")))
+      }
+    })
+  }
+
+  private func finish(_ result: Result<CallbackResult, LoopbackFailure>) {
+    guard !closed else { return }
+    closed = true
+    outcome = result
+    startTimer?.cancel()
+    callbackTimer?.cancel()
+    startTimer = nil
+    callbackTimer = nil
+    listener.stateUpdateHandler = nil
+    listener.newConnectionHandler = nil
+    listener.cancel()
+    connections.values.forEach { $0.cancel() }
+    connections.removeAll()
+    let starting = startCompletion
+    let waiting = callbackCompletion
+    startCompletion = nil
+    callbackCompletion = nil
+    starting?(.failure(LoopbackFailure(message: "Loopback listener closed before it became ready")))
+    waiting?(result)
+  }
+
+  func close() {
+    finish(.failure(LoopbackFailure(message: "Sign-in was cancelled")))
+  }
+}

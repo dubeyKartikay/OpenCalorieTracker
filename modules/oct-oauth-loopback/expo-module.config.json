@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["OctOAuthLoopbackModule"]
+  },
+  "android": {
+    "modules": ["org.opencalorietracker.oauth.OctOAuthLoopbackModule"]
+  }
+}

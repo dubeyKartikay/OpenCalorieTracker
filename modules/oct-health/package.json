@@ -1,0 +1,15 @@
+{
+  "name": "oct-health",
+  "version": "0.1.0",
+  "description": "Local Health Connect and HealthKit adapter for OpenCalorieTracker",
+  "main": "index.ts",
+  "private": true,
+  "license": "Apache-2.0",
+  "author": "OpenCalorieTracker contributors",
+  "homepage": "https://github.com/opencalorietracker",
+  "peerDependencies": {
+    "expo": "*",
+    "expo-modules-core": "*",
+    "react-native": "*"
+  }
+}

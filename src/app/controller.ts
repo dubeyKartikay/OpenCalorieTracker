@@ -15,6 +15,7 @@ import { createMemoryCredentialStore, maskSecretKey } from './credentials';
 import type { CredentialStore } from './credentials';
 
 export const MEALS = ['Breakfast', 'Lunch', 'Snack', 'Dinner'] as const;
+export const UNDO_TIMEOUT_MS = 5000;
 export type Meal = typeof MEALS[number];
 export const localDate = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 export function shiftDate(date: string, days: number) {
@@ -22,11 +23,51 @@ export function shiftDate(date: string, days: number) {
   value.setDate(value.getDate() + days);
   return localDate(value);
 }
+export function parseRouteDate(
+  value: string | string[] | undefined,
+  options?: { maxDate?: string | null },
+): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const trimmed = raw?.trim();
+  if (!trimmed || !isoDateSchema.safeParse(trimmed).success) return undefined;
+  const maxDate = options?.maxDate === undefined ? localDate() : options.maxDate;
+  if (maxDate && trimmed > maxDate) return undefined;
+  return trimmed;
+}
+export function mealsForDay(
+  configuredMeals: readonly string[],
+  entries: readonly DiaryEntrySnapshot[],
+  extraMeals: readonly (string | null | undefined)[] = [],
+): string[] {
+  return [...new Set([
+    ...configuredMeals,
+    ...entries.map(entry => entry.meal),
+    ...extraMeals.map(meal => meal?.trim()).filter((meal): meal is string => Boolean(meal)),
+  ])];
+}
+
 export function defaultQuantity(food: FoodRecord): Quantity {
-  return food.basis === 'per_serving' ? { amount: 1, unit: 'serving' }
-    : food.serving_g !== null ? { amount: food.serving_g, unit: 'g' }
-      : food.serving_ml !== null ? { amount: food.serving_ml, unit: 'ml' }
-        : { amount: 100, unit: food.basis === 'per_100ml' ? 'ml' : 'g' };
+  const candidates: Quantity[] = food.basis === 'per_serving'
+    ? [{ amount: 1, unit: 'serving' }]
+    : food.basis === 'per_100ml'
+      ? [
+          ...(food.serving_ml !== null ? [{ amount: food.serving_ml, unit: 'ml' }] : []),
+          { amount: 100, unit: 'ml' },
+        ]
+      : [
+          ...(food.serving_g !== null ? [{ amount: food.serving_g, unit: 'g' }] : []),
+          { amount: 100, unit: 'g' },
+        ];
+  for (const candidate of candidates) {
+    try {
+      resolveQuantityToBasis(food, candidate);
+      return candidate;
+    } catch { /* fall through to canonical basis */ }
+  }
+  return {
+    amount: food.basis === 'per_serving' ? 1 : 100,
+    unit: food.basis === 'per_serving' ? 'serving' : food.basis === 'per_100ml' ? 'ml' : 'g',
+  };
 }
 export function availableUnits(food: FoodRecord) {
   return [...new Set(['g', 'oz', 'ml', 'serving', ...food.units.map(unit => unit.label)])].filter(unit => {
@@ -48,7 +89,17 @@ export interface ControllerDependencies {
   photoDrafts?: PhotoDraftRepo;
   healthPort?: HealthPlatformPort;
 }
-export interface UndoAction { label: string; run: () => Promise<void> }
+export interface UndoAction {
+  label: string;
+  kind?: 'add' | 'move' | 'update' | 'delete' | 'copy' | 'water';
+  date?: string;
+  meal?: string;
+  run: () => Promise<void>;
+}
+
+export function canUndoMealAdd(undo: UndoAction | null | undefined, date: string, meal: string): boolean {
+  return Boolean(undo && undo.kind === 'add' && undo.date === date && undo.meal === meal);
+}
 
 const preferencesSchema = z.strictObject({
   onboardingCompleted: z.boolean().default(false), ageConfirmed18Plus: z.boolean().default(false),
@@ -106,6 +157,7 @@ export class AppController {
   private activeDraft: { proposal: MealDraftProposal; meal: string; date: string } | null = null;
   private draftGeneration = 0;
   private confirmingDraft: Promise<DiaryEntrySnapshot[]> | null = null;
+  private undoTimer: ReturnType<typeof setTimeout> | null = null;
   undoAction: UndoAction | null = null;
   constructor(deps: ControllerDependencies) {
     this.deps = deps;
@@ -120,16 +172,45 @@ export class AppController {
     this.barcodeResolver = deps.barcodeResolver ?? new BarcodeResolver({ catalog: deps.catalog,
       offCacheDb: deps.offCacheDb ?? null, getAllowLiveOffLookup: () => this.getPreferences().then(p => p.allowLiveOffLookup) });
   }
+  private clearUndoTimer() {
+    if (this.undoTimer !== null) {
+      clearTimeout(this.undoTimer);
+      this.undoTimer = null;
+    }
+  }
+  private setUndoAction(action: UndoAction | null) {
+    this.clearUndoTimer();
+    this.undoAction = action;
+    if (action) {
+      const timer = setTimeout(() => {
+        if (this.undoAction === action) {
+          this.undoTimer = null;
+          this.undoAction = null;
+          this.refresh();
+        }
+      }, UNDO_TIMEOUT_MS);
+      if (typeof timer === 'object' && timer !== null && 'unref' in timer && typeof timer.unref === 'function') {
+        timer.unref();
+      }
+      this.undoTimer = timer;
+    }
+  }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getRevision = () => this.revision;
   refresh = () => { this.revision++; this.listeners.forEach(listener => listener()); };
-  dismissUndo = () => { this.undoAction = null; this.refresh(); };
+  dismissUndo = () => { this.setUndoAction(null); this.refresh(); };
   async undo() {
     const action = this.undoAction;
     if (!action) return;
-    await action.run();
-    if (this.undoAction === action) this.undoAction = null;
-    this.refresh();
+    this.clearUndoTimer();
+    try {
+      await action.run();
+      if (this.undoAction === action) this.setUndoAction(null);
+      this.refresh();
+    } catch (error) {
+      if (this.undoAction === action) this.setUndoAction(action);
+      throw error;
+    }
   }
   search(query: string) { return this.deps.catalog.search(query); }
   async preview(food: FoodRecord, quantity: Quantity) {
@@ -149,31 +230,54 @@ export class AppController {
       portion_certainty: 'stated', estimate_range: null, draft_state: 'confirmed',
     };
   }
-  private async added(entry: DiaryEntrySnapshot) {
+  private async confirmEntryInTx(tx: SqlDatabase, candidate: DiaryEntrySnapshot, savedMealId?: string | null) {
+    const result = await new DiaryRepo(tx).confirmEntryWithStatus(candidate);
+    if (savedMealId && result.changed) {
+      const library = new LibraryRepo(tx);
+      const saved = await library.getSavedMeal(savedMealId);
+      if (saved) await library.upsertSavedMeal({ ...saved, use_count: saved.use_count + 1, last_used_at: result.entry.occurred_at });
+    }
+    return result;
+  }
+  private async added(result: { entry: DiaryEntrySnapshot; changed: boolean }) {
+    if (!result.changed) return result.entry;
+    const { entry } = result;
     await this.healthEngine.syncEntryConfirmed(entry);
-    this.undoAction = { label: `Added to ${entry.meal}`, run: async () => {
-      await this.deps.diary.deleteEntry(entry.id);
-      await this.healthEngine.syncEntryDeleted(entry.id);
-    } };
+    this.setUndoAction({
+      label: `Added to ${entry.meal}`,
+      kind: 'add',
+      date: entry.date,
+      meal: entry.meal,
+      run: async () => {
+        await this.deps.diary.deleteEntry(entry.id);
+        await this.healthEngine.syncEntryDeleted(entry.id);
+      },
+    });
     this.refresh();
     return entry;
   }
   async confirm(input: { food: FoodRecord; quantity: Quantity; meal: string; date?: string; idempotencyKey: string }) {
     const preview = await this.preview(input.food, input.quantity);
     if (!preview) throw new Error('This portion has no nutrition');
-    return this.added(await this.deps.diary.confirmEntry(this.snapshot(input, preview)));
+    const candidate = this.snapshot(input, preview);
+    const savedMealId = !input.food.source_pack_id && input.food.id.startsWith('meal:') ? input.food.id.slice(5) : null;
+    if (savedMealId) {
+      const confirmed = await this.deps.userDb.withTransactionAsync(tx => this.confirmEntryInTx(tx, candidate, savedMealId));
+      return this.added(confirmed);
+    }
+    return this.added(await this.deps.diary.confirmEntryWithStatus(candidate));
   }
   getPreferences() { return readPreferences(this.deps.userDb); }
   async addWater(amountMl: number, date = localDate()): Promise<WaterLog> {
     if (!Number.isFinite(amountMl) || amountMl <= 0) throw new Error('Enter an amount greater than zero');
     isoDateSchema.parse(date);
     const log = await this.water.addWaterLog({ id: generateId(), date, occurred_at: new Date().toISOString(), amount_ml: amountMl });
-    this.undoAction = { label: `Added ${amountMl} ml water`, run: async () => { await this.water.deleteWaterLog(log.id); } };
+    this.setUndoAction({ label: `Added ${amountMl} ml water`, kind: 'water', run: async () => { await this.water.deleteWaterLog(log.id); } });
     this.refresh(); return log;
   }
   async deleteWaterLog(id: string): Promise<WaterLog | null> {
     const log = await this.water.deleteWaterLog(id);
-    if (log) this.undoAction = { label: 'Water entry removed', run: async () => { await this.water.addWaterLog(log); } };
+    if (log) this.setUndoAction({ label: 'Water entry removed', kind: 'water', run: async () => { await this.water.addWaterLog(log); } });
     this.refresh(); return log;
   }
   async getDailyWater(date = localDate()): Promise<{ totalMl: number; logs: WaterLog[] }> {
@@ -261,9 +365,7 @@ export class AppController {
       const food = await adapter.getById(id); const preview = await adapter.getNutritionForQuantity(id, quantity);
       if (!food || !preview) throw new Error('Saved meal not found');
       const candidate = this.snapshot({ food, quantity, meal, ...(date === undefined ? {} : { date }), idempotencyKey }, preview);
-      const confirmed = await new DiaryRepo(tx).confirmEntry(candidate);
-      if (confirmed.id === candidate.id) await library.upsertSavedMeal({ ...saved, use_count: saved.use_count + 1, last_used_at: confirmed.occurred_at });
-      return confirmed;
+      return this.confirmEntryInTx(tx, candidate, savedMealId);
     });
     return this.added(entry);
   }
@@ -323,16 +425,16 @@ export class AppController {
       nutrients: total.nutrients, provenance_kind: 'recipe_batch', source_id: input.batch.id, source_version: String(input.batch.recipe_version) });
     const quantity = input.amount.mode === 'grams' ? { amount: input.amount.grams, unit: 'g' } : { amount: input.amount.fraction, unit: 'serving' };
     const entry = this.snapshot({ ...input, food, quantity }, this.previewBatchServing(input.batch, input.amount));
-    return this.added(await this.deps.diary.confirmEntry(entry));
+    return this.added(await this.deps.diary.confirmEntryWithStatus(entry));
   }
   async deleteEntry(id: string) {
     const snapshot = await this.deps.diary.deleteEntry(id);
     if (snapshot) {
       await this.healthEngine.syncEntryDeleted(id);
-      this.undoAction = { label: 'Entry deleted', run: async () => {
+      this.setUndoAction({ label: 'Entry deleted', kind: 'delete', run: async () => {
         const restored = await this.deps.diary.restoreEntry(snapshot);
         await this.healthEngine.syncEntryConfirmed(restored);
-      } };
+      } });
     }
     this.refresh();
     return snapshot;
@@ -340,14 +442,18 @@ export class AppController {
   async moveEntry(entry: DiaryEntrySnapshot, meal: string) {
     await this.moveEntries([entry.id], entry.date, meal);
   }
-  async copyEntries(ids: string[], toDate: string, toMeal?: string) {
+  private async copyResolvedEntries(
+    select: (diary: DiaryRepo) => Promise<DiaryEntrySnapshot[]>,
+    toDate: string,
+    toMeal?: string,
+  ): Promise<DiaryEntrySnapshot[]> {
     isoDateSchema.parse(toDate);
     const copies = await this.deps.userDb.withTransactionAsync(async tx => {
       const diary = new DiaryRepo(tx);
+      const selected = await select(diary);
       const created: DiaryEntrySnapshot[] = [];
-      for (const id of new Set(ids)) {
-        const entry = await diary.getEntry(id);
-        if (!entry || entry.draft_state !== 'confirmed') continue;
+      for (const entry of selected) {
+        if (entry.draft_state !== 'confirmed') continue;
         created.push(await diary.confirmEntry({
           ...entry,
           id: generateId(),
@@ -361,8 +467,9 @@ export class AppController {
     });
     for (const entry of copies) await this.healthEngine.syncEntryConfirmed(entry);
     if (copies.length) {
-      this.undoAction = {
+      this.setUndoAction({
         label: toMeal ? `Copied to ${toMeal}` : `Copied ${copies.length} ${copies.length === 1 ? 'entry' : 'entries'}`,
+        kind: 'copy',
         run: async () => {
           await this.deps.userDb.withTransactionAsync(async tx => {
             const diary = new DiaryRepo(tx);
@@ -370,10 +477,20 @@ export class AppController {
           });
           for (const entry of copies) await this.healthEngine.syncEntryDeleted(entry.id);
         },
-      };
+      });
     }
     this.refresh();
     return copies;
+  }
+  async copyEntries(ids: string[], toDate: string, toMeal?: string) {
+    return this.copyResolvedEntries(async diary => {
+      const found: DiaryEntrySnapshot[] = [];
+      for (const id of new Set(ids)) {
+        const entry = await diary.getEntry(id);
+        if (entry) found.push(entry);
+      }
+      return found;
+    }, toDate, toMeal);
   }
   async getWeekSummary(endDate = localDate()) {
     isoDateSchema.parse(endDate);
@@ -388,25 +505,11 @@ export class AppController {
     });
   }
   async copyMeal(fromDate: string, fromMeal: string, toDate: string, toMeal: string) {
-    isoDateSchema.parse(fromDate); isoDateSchema.parse(toDate);
-    const entries = await this.deps.userDb.withTransactionAsync(async tx => {
-      const diary = new DiaryRepo(tx); const day = await diary.getDiaryDay(fromDate);
-      const copies: DiaryEntrySnapshot[] = [];
-      for (const entry of day?.entries ?? []) {
-        if (entry.meal !== fromMeal || entry.draft_state !== 'confirmed') continue;
-        copies.push(await diary.confirmEntry({ ...entry, id: generateId(), idempotency_key: generateId(),
-          date: toDate, meal: toMeal, occurred_at: new Date().toISOString() }));
-      }
-      return copies;
-    });
-    for (const entry of entries) await this.healthEngine.syncEntryConfirmed(entry);
-    if (entries.length) this.undoAction = { label: `Copied to ${toMeal}`, run: async () => {
-      await this.deps.userDb.withTransactionAsync(async tx => {
-        const diary = new DiaryRepo(tx); for (const entry of entries) await diary.deleteEntry(entry.id);
-      });
-      for (const entry of entries) await this.healthEngine.syncEntryDeleted(entry.id);
-    } };
-    this.refresh(); return entries;
+    isoDateSchema.parse(fromDate);
+    return this.copyResolvedEntries(async diary => {
+      const day = await diary.getDiaryDay(fromDate);
+      return (day?.entries ?? []).filter(entry => entry.meal === fromMeal);
+    }, toDate, toMeal);
   }
   async deleteEntries(ids: string[]) {
     const snapshots = await this.deps.userDb.withTransactionAsync(async tx => {
@@ -415,14 +518,14 @@ export class AppController {
       return deleted;
     });
     for (const snapshot of snapshots) await this.healthEngine.syncEntryDeleted(snapshot.id);
-    if (snapshots.length) this.undoAction = { label: 'Entries deleted', run: async () => {
+    if (snapshots.length) this.setUndoAction({ label: 'Entries deleted', kind: 'delete', run: async () => {
       const restored = await this.deps.userDb.withTransactionAsync(async tx => {
         const diary = new DiaryRepo(tx); const entries: DiaryEntrySnapshot[] = [];
         for (const snapshot of snapshots) entries.push(await diary.restoreEntry(snapshot));
         return entries;
       });
       for (const entry of restored) await this.healthEngine.syncEntryConfirmed(entry);
-    } };
+    } });
     this.refresh(); return snapshots;
   }
   async moveEntries(ids: string[], toDate: string, toMeal: string) {
@@ -436,12 +539,17 @@ export class AppController {
       return { originals, moved };
     });
     for (const entry of result.moved) await this.healthEngine.syncEntryConfirmed(entry);
-    if (result.originals.length) this.undoAction = { label: 'Entries moved', run: async () => {
+    if (result.originals.length) this.setUndoAction({
+      label: result.originals.length === 1
+        ? `Moved ${result.originals[0]!.food.name} to ${toMeal}`
+        : `Moved ${result.originals.length} entries to ${toMeal}`,
+      kind: 'move',
+      run: async () => {
       await this.deps.userDb.withTransactionAsync(async tx => {
         const diary = new DiaryRepo(tx); for (const entry of result.originals) await diary.updateEntry(entry);
       });
       for (const entry of result.originals) await this.healthEngine.syncEntryConfirmed(entry);
-    } };
+    } });
     this.refresh(); return result.moved;
   }
   async updateEntryQuantity(entry: DiaryEntrySnapshot, newQuantity: Quantity) {
@@ -456,10 +564,10 @@ export class AppController {
       return { original, updated };
     });
     await this.healthEngine.syncEntryConfirmed(updated);
-    this.undoAction = { label: 'Portion updated', run: async () => {
+    this.setUndoAction({ label: 'Portion updated', kind: 'update', run: async () => {
       await this.deps.diary.updateEntry(original);
       await this.healthEngine.syncEntryConfirmed(original);
-    } };
+    } });
     this.refresh(); return updated;
   }
   async day(date: string) {
@@ -502,6 +610,7 @@ export class AppController {
     const clientId = process.env.EXPO_PUBLIC_OPENAI_OAUTH_CLIENT_ID;
     if (!clientId) return { ok: false, message: 'ChatGPT sign-in is not configured in this build. You can connect an OpenAI API key or keep tracking manually.' };
     let session: Awaited<ReturnType<LoopbackAuthPort['listen']>> | undefined;
+    let cancelledByUser = false;
     const timeout = new AbortController(); const timer = setTimeout(() => timeout.abort(), 120_000);
     try {
       const pkce = await generatePkcePair();
@@ -509,16 +618,51 @@ export class AppController {
       const callback = session.callback;
       // Attach a handler before opening the browser so cancellation cannot reject unobserved.
       void callback.catch(() => undefined);
-      const { openURL } = await import('expo-linking');
-      await openURL(buildAuthorizationUrl({ clientId, port: session.port, codeChallenge: pkce.codeChallenge, state: pkce.state }));
-      const response = await Promise.race([callback, new Promise<never>((_, reject) => {
+      const authUrl = buildAuthorizationUrl({ clientId, port: session.port, codeChallenge: pkce.codeChallenge, state: pkce.state });
+      let dismissBrowser: (() => void) | undefined;
+      let browserOutcome: Promise<never> | null = null;
+      try {
+        const webBrowser = await import('expo-web-browser');
+        // Launch in-app Custom Tabs / Safari without awaiting Android's immediate 'opened' result;
+        // fail fast on iOS user cancel/dismiss or launch failure instead of waiting for the 2-minute timeout.
+        browserOutcome = webBrowser.openBrowserAsync(authUrl).then(
+          result => {
+            if (result?.type === 'cancel' || result?.type === 'dismiss') {
+              cancelledByUser = true;
+              throw new Error('ChatGPT sign-in was cancelled.');
+            }
+            return new Promise<never>(() => {});
+          },
+          async () => {
+            const { openURL } = await import('expo-linking');
+            await openURL(authUrl);
+            return new Promise<never>(() => {});
+          },
+        );
+        void browserOutcome.catch(() => undefined);
+        dismissBrowser = () => {
+          void Promise.resolve().then(() => webBrowser.dismissBrowser?.()).catch(() => undefined);
+        };
+      } catch {
+        const { openURL } = await import('expo-linking');
+        await openURL(authUrl);
+      }
+      const timeoutPromise = new Promise<never>((_, reject) => {
         const abort = () => reject(new AIError('timeout'));
         if (timeout.signal.aborted) abort(); else timeout.signal.addEventListener('abort', abort, { once: true });
-      })]);
+      });
+      const response = await Promise.race([
+        callback,
+        timeoutPromise,
+        ...(browserOutcome ? [browserOutcome] : []),
+      ]).finally(() => { dismissBrowser?.(); });
       const tokens = await exchangeAuthorizationCode({ clientId, port: session.port, ...response, codeVerifier: pkce.codeVerifier, expectedState: pkce.state, signal: timeout.signal });
       await this.credentials.setOAuthToken(tokens.access_token); this.draftGeneration++; this.refresh();
       return { ok: true, message: 'Connected with ChatGPT.' };
-    } catch (error) { return { ok: false, message: error instanceof AIError ? error.message : 'ChatGPT sign-in could not finish. Try again or connect an OpenAI API key.' }; }
+    } catch (error) {
+      if (cancelledByUser) return { ok: false, message: 'ChatGPT sign-in was cancelled.' };
+      return { ok: false, message: error instanceof AIError ? error.message : 'ChatGPT sign-in could not finish. Try again or connect an OpenAI API key.' };
+    }
     finally { clearTimeout(timer); await session?.close(); }
   }
   async disconnectAI(): Promise<void> {
@@ -612,25 +756,37 @@ export class AppController {
     if (this.confirmingDraft) return this.confirmingDraft;
     const draft = this.activeDraft; if (!draft) return Promise.resolve([]);
     const confirmation = this.deps.userDb.withTransactionAsync(async tx => {
-      const diary = new DiaryRepo(tx); const entries: DiaryEntrySnapshot[] = [];
+      const diary = new DiaryRepo(tx);
+      const entries: DiaryEntrySnapshot[] = [];
+      const newlyConfirmed: DiaryEntrySnapshot[] = [];
       for (const [index, item] of draft.proposal.items.entries()) {
         const aggregate = this.draftTotals([item]);
         const snapshot = this.snapshot({ food: item.food, quantity: item.quantity, meal: draft.meal, date: draft.date,
           idempotencyKey: `${idempotencyPrefix}:${index}` }, aggregate);
-        entries.push(await diary.confirmEntry({ ...snapshot, provenance_kind: item.provenance_kind,
+        const result = await diary.confirmEntryWithStatus({ ...snapshot, provenance_kind: item.provenance_kind,
           portion_certainty: item.portion_certainty,
-          estimate_range: item.estimate_range ? { min_g: item.estimate_range.min_g, max_g: item.estimate_range.max_g } : null }));
+          estimate_range: item.estimate_range ? { min_g: item.estimate_range.min_g, max_g: item.estimate_range.max_g } : null });
+        entries.push(result.entry);
+        if (result.changed) newlyConfirmed.push(result.entry);
       }
-      return entries;
-    }).then(async entries => {
-      for (const entry of entries) await this.healthEngine.syncEntryConfirmed(entry);
+      return { entries, newlyConfirmed };
+    }).then(async ({ entries, newlyConfirmed }) => {
+      for (const entry of newlyConfirmed) await this.healthEngine.syncEntryConfirmed(entry);
       if (this.activeDraft === draft) this.activeDraft = null;
-      this.undoAction = { label: `Added ${entries.length} ${entries.length === 1 ? 'item' : 'items'} to ${draft.meal}`, run: async () => {
-        await this.deps.userDb.withTransactionAsync(async tx => {
-          const diary = new DiaryRepo(tx); for (const entry of entries) await diary.deleteEntry(entry.id);
+      if (newlyConfirmed.length) {
+        this.setUndoAction({
+          label: `Added ${newlyConfirmed.length} ${newlyConfirmed.length === 1 ? 'item' : 'items'} to ${draft.meal}`,
+          kind: 'add',
+          date: draft.date,
+          meal: draft.meal,
+          run: async () => {
+            await this.deps.userDb.withTransactionAsync(async tx => {
+              const diary = new DiaryRepo(tx); for (const entry of newlyConfirmed) await diary.deleteEntry(entry.id);
+            });
+            for (const entry of newlyConfirmed) await this.healthEngine.syncEntryDeleted(entry.id);
+          },
         });
-        for (const entry of entries) await this.healthEngine.syncEntryDeleted(entry.id);
-      } };
+      }
       this.refresh(); return entries;
     }).finally(() => { this.confirmingDraft = null; });
     this.confirmingDraft = confirmation; return confirmation;
@@ -690,9 +846,10 @@ export class AppController {
     const { bundle } = this.previewRestore(json);
     await restoreBundleV1(this.deps.userDb, bundle, { mode });
     if (mode === 'replace') { await this.deps.catalog.close(); this.foodCounts.clear(); }
-    this.undoAction = null; this.refresh();
+    this.setUndoAction(null); this.refresh();
   }
   async close() {
+    this.clearUndoTimer();
     this.draftGeneration++; await this.deps.catalog.close();
     await this.deps.offCacheDb?.closeAsync(); await this.deps.userDb.closeAsync();
   }

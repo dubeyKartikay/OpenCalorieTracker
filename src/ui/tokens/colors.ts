@@ -11,6 +11,10 @@ export const colors = {
   surface: '#24283b',
   /** Raised elements stacked on a surface: chips, inputs, list rows. */
   raised: '#292e42',
+  /** Circular daypart icon wells along the meal rail. */
+  well: '#2e3040',
+  /** Docked input & keypad sheet surface slightly above ground. */
+  dock: '#202332',
   /** Visible stroke for focus rings and outlined controls. */
   border: '#414868',
   /** Quiet 1px divider drawn on top of `surface`. */

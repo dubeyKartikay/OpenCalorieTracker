@@ -1,0 +1,12 @@
+{
+  "name": "oct-oauth-loopback",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.ts",
+  "description": "Device-local OAuth callback listener for OpenCalorieTracker",
+  "license": "MIT",
+  "peerDependencies": {
+    "expo": "*",
+    "expo-modules-core": "*"
+  }
+}

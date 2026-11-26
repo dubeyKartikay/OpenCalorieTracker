@@ -1,88 +1,26 @@
-import { useState } from 'react';
+import { useId, useRef, useState } from 'react';
+import type { ComponentRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import type { LayoutChangeEvent, StyleProp, ViewStyle } from 'react-native';
-import {
-  colors,
-  fontSize,
-  fontWeight,
-  macroColors,
-  MIN_TOUCH_TARGET,
-  radius,
-  spacing,
-  tabularNums,
-} from '../../tokens';
+import type { StyleProp, ViewStyle } from 'react-native';
+import { router } from 'expo-router';
+import Svg, { Circle, ClipPath, Defs, G, Line, Path, Pattern, Polygon, Rect, Text as SvgText } from 'react-native-svg';
+import { colors, fontFace, fontFamily, macroColors, tabularNums } from '../../tokens';
+import { DoopIcon } from '../DoopIcons';
+import { energyValue, formatShortDate, formatWeekdayDate, number } from '../primitives';
+import { CompletenessMark } from './CompletenessMark';
 import type { CompletenessStatus } from './CompletenessMark';
+import { AnchoredPopover, measurePopoverAnchor } from './HistoryControls';
+import type { PopoverAnchor } from './HistoryControls';
 
-const CALORIE_PLOT_HEIGHT = 150;
-const TREND_PLOT_HEIGHT = 130;
-const TREND_AXIS_WIDTH = 44;
-const TREND_INSET_X = 7;
-const TREND_INSET_Y = 8;
-const TREND_SEGMENT_HEIGHT = 2;
-const TREND_MARKER_SIZE = 9;
-const TREND_LABEL_WIDTH = 36;
+const CALORIE_PLOT_HEIGHT = 168;
+const TREND_PLOT_HEIGHT = 148;
 const KG_TO_LB = 2.2046226218;
-const KCAL_TO_KJ = 4.184;
-
-function displayEnergy(kcal: number, energyUnit: 'kcal' | 'kJ'): number {
-  return energyUnit === 'kJ' ? Math.round(kcal * KCAL_TO_KJ) : Math.round(kcal);
-}
-
-const TARGET_DASHES = Array.from({ length: 20 }, (_, index) => index);
-
-const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
-const MONTH_SHORT = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-] as const;
-
-const STATUS_LABEL: Record<CompletenessStatus, string> = {
-  complete: 'Complete',
-  partial: 'Partially logged',
-  none: 'Nothing logged',
-};
-
-const STATUS_COLOR: Record<CompletenessStatus, string> = {
-  complete: colors.success,
-  partial: colors.warning,
-  none: colors.muted,
-};
-
-function formatNumber(value: number, digits = 0): string {
-  if (!Number.isFinite(value)) return '—';
-  return value.toLocaleString(undefined, { maximumFractionDigits: digits });
-}
-
-function formatChartDate(value: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  if (!match) return value;
-  const year = Number(match[1] ?? '');
-  const month = Number(match[2] ?? '');
-  const day = Number(match[3] ?? '');
-  const date = new Date(Date.UTC(year, month - 1, day));
-  if (Number.isNaN(date.getTime())) return value;
-  const weekday = WEEKDAY_SHORT[date.getUTCDay()] ?? '';
-  const monthName = MONTH_SHORT[date.getUTCMonth()] ?? '';
-  return `${weekday} ${day} ${monthName}`.trim();
-}
-
-function safeKcal(value: number): number {
-  return Number.isFinite(value) ? Math.max(0, value) : 0;
-}
-
-function formatMacro(value: number | undefined): string {
-  return value == null ? '—' : `${formatNumber(value, 1)} g`;
-}
+const DAY_MS = 86_400_000;
+const dateMs = (date: string) => Date.parse(`${date}T00:00:00Z`);
+const shortDate = formatShortDate;
+const fullDate = formatWeekdayDate;
+const fmt = number;
+const positive = (value: number | undefined) => value != null && Number.isFinite(value) ? Math.max(0, value) : 0;
 
 export interface CalorieBarChartDay {
   date: string;
@@ -94,64 +32,28 @@ export interface CalorieBarChartDay {
   carbsG?: number | undefined;
   fatG?: number | undefined;
 }
-
 export interface ProgDayPopProps {
   day: CalorieBarChartDay;
   energyUnit?: 'kcal' | 'kJ' | undefined;
   onClose?: (() => void) | undefined;
+  onOpenHistory?: ((date: string) => void) | undefined;
 }
 
-function PopMacro({ label, value, color }: { label: string; value: number | undefined; color: string }) {
-  return (
-    <View style={styles.popMacro}>
-      <Text style={[styles.popMacroLabel, { color }]}>{label}</Text>
-      <Text style={styles.popMacroValue}>{formatMacro(value)}</Text>
+export function ProgDayPop({ day, energyUnit = 'kcal', onClose, onOpenHistory }: ProgDayPopProps) {
+  return <View style={styles.dayPop}>
+    <View style={styles.popHeader}><Text style={styles.popDate}>{fullDate(day.date)}</Text><CompletenessMark status={day.completeness} />
+      {onClose ? <Pressable accessibilityRole="button" accessibilityLabel="Dismiss day summary" onPress={onClose} style={styles.closeButton}><DoopIcon name="close" size={14} color={colors.muted} /></Pressable> : null}
     </View>
-  );
-}
-
-/** Inline summary for the day selected in the calorie chart. */
-export function ProgDayPop({ day, energyUnit = 'kcal', onClose }: ProgDayPopProps) {
-  const energyValue =
-    day.completeness === 'none' && !(day.kcal > 0)
-      ? '—'
-      : formatNumber(displayEnergy(day.kcal, energyUnit));
-  return (
-    <View style={styles.pop} accessibilityLiveRegion="polite">
-      <View style={styles.popHead}>
-        <View style={styles.popHeadText}>
-          <Text style={styles.popDate}>{formatChartDate(day.date)}</Text>
-          <Text style={[styles.popStatus, { color: STATUS_COLOR[day.completeness] }]}>
-            {STATUS_LABEL[day.completeness]}
-          </Text>
-        </View>
-        {onClose ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Dismiss day summary"
-            onPress={onClose}
-            style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
-          >
-            <Text style={styles.closeGlyph}>×</Text>
-          </Pressable>
-        ) : null}
-      </View>
-      <View style={styles.popFigures}>
-        <Text style={styles.popKcal}>{energyValue}</Text>
-        <Text style={styles.popKcalUnit}>{energyUnit}</Text>
-        {day.targetKcal != null ? (
-          <Text style={styles.popTarget}>
-            {`/ ${formatNumber(displayEnergy(day.targetKcal, energyUnit))} target`}
-          </Text>
-        ) : null}
-      </View>
-      <View style={styles.popMacros}>
-        <PopMacro label="P" value={day.proteinG} color={macroColors.protein} />
-        <PopMacro label="C" value={day.carbsG} color={macroColors.carbs} />
-        <PopMacro label="F" value={day.fatG} color={macroColors.fat} />
-      </View>
-    </View>
-  );
+    <View style={styles.figures}><Text style={styles.popKcal}>{fmt(energyValue(day.kcal, energyUnit))}</Text><Text style={styles.unit}>{energyUnit}</Text></View>
+    <View style={styles.popMacros}>{([
+      ['P', day.proteinG, macroColors.protein], ['C', day.carbsG, macroColors.carbs], ['F', day.fatG, macroColors.fat],
+    ] as const).map(([label, value, color]) => <View key={label} style={styles.popMacro}><Text style={[styles.macroLetter, { color }]}>{label}</Text><Text style={styles.popMacroValue}>{fmt(value)}<Text style={styles.unit}>g</Text></Text></View>)}</View>
+    <Pressable accessibilityRole="button" onPress={() => {
+      onClose?.();
+      if (onOpenHistory) onOpenHistory(day.date);
+      else router.push({ pathname: '/(tabs)/history', params: { date: day.date, selection: String(Date.now()) } });
+    }} style={styles.historyLink}><Text style={styles.linkText}>Open in History</Text><DoopIcon name="chevronRight" size={15} color={colors.accent} /></Pressable>
+  </View>;
 }
 
 export interface CalorieBarChartProps {
@@ -159,131 +61,96 @@ export interface CalorieBarChartProps {
   energyUnit?: 'kcal' | 'kJ' | undefined;
   selectedDate?: string | null | undefined;
   onSelectDay?: ((date: string | null) => void) | undefined;
+  onOpenHistory?: ((date: string) => void) | undefined;
   style?: StyleProp<ViewStyle> | undefined;
 }
 
-/** Seven-ish day calorie bars with a dashed target line and tap-to-inspect pop. */
-export function CalorieBarChart({
-  days,
-  energyUnit = 'kcal',
-  selectedDate,
-  onSelectDay,
-  style,
-}: CalorieBarChartProps) {
-  const targetRef = days.find(day => day.targetKcal != null)?.targetKcal ?? null;
-  const scaleMax =
-    Math.max(1, ...days.map(day => Math.max(safeKcal(day.kcal), day.targetKcal ?? 0))) * 1.08;
-  const targetTop =
-    targetRef == null ? null : CALORIE_PLOT_HEIGHT - (targetRef / scaleMax) * CALORIE_PLOT_HEIGHT;
-  const selectedDay =
-    selectedDate == null ? null : (days.find(day => day.date === selectedDate) ?? null);
+interface TargetChange { index: number; from: number; to: number; date: string; x: number; y: number }
 
-  const dense = days.length > 10;
-  const labelStep = dense ? Math.max(2, Math.ceil(days.length / 6)) : 1;
-
-  return (
-    <View style={[styles.card, style]}>
-      <View style={styles.cardHead}>
-        <Text style={styles.cardTitle}>{energyUnit === 'kJ' ? 'ENERGY' : 'CALORIES'}</Text>
-        <Text numberOfLines={1} style={styles.cardMeta}>
-          {targetRef == null
-            ? 'no target'
-            : `target ${formatNumber(displayEnergy(targetRef, energyUnit))} ${energyUnit}`}
-        </Text>
-      </View>
-
-      {days.length === 0 ? (
-        <View style={styles.chartEmpty}>
-          <Text style={styles.emptyLabel}>No days to chart</Text>
-        </View>
-      ) : (
-        <>
-          <View style={styles.plot}>
-            <View style={[styles.bars, dense && styles.barsDense]}>
-              {days.map(day => {
-                const selected = day.date === selectedDate;
-                const height =
-                  day.completeness === 'none'
-                    ? 0
-                    : Math.max(3, (safeKcal(day.kcal) / scaleMax) * CALORIE_PLOT_HEIGHT);
-                const targetText =
-                  day.targetKcal == null
-                    ? null
-                    : `target ${formatNumber(displayEnergy(day.targetKcal, energyUnit))} ${energyUnit}`;
-                const hasIntake = day.completeness !== 'none' || day.kcal > 0;
-                const label = [
-                  formatChartDate(day.date),
-                  STATUS_LABEL[day.completeness],
-                  ...(hasIntake
-                    ? [`${formatNumber(displayEnergy(safeKcal(day.kcal), energyUnit))} ${energyUnit}`]
-                    : []),
-                  ...(targetText == null ? [] : [targetText]),
-                ].join(' · ');
-                return (
-                  <Pressable
-                    key={day.date}
-                    accessibilityRole={onSelectDay ? 'button' : undefined}
-                    accessibilityLabel={label}
-                    accessibilityState={{ selected }}
-                    hitSlop={{ left: 2, right: 2 }}
-                    onPress={() => onSelectDay?.(selected ? null : day.date)}
-                    style={({ pressed }) => [
-                      styles.barColumn,
-                      selected && styles.barColumnSelected,
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    {day.completeness === 'none' ? (
-                      <View style={[styles.emptyTick, dense && styles.emptyTickDense]} />
-                    ) : (
-                      <View
-                        style={[
-                          styles.bar,
-                          dense && styles.barDense,
-                          day.completeness === 'complete' ? styles.barComplete : styles.barPartial,
-                          { height },
-                        ]}
-                      />
-                    )}
-                  </Pressable>
-                );
-              })}
-            </View>
-            {targetTop == null ? null : (
-              <View pointerEvents="none" style={[styles.targetLine, { top: targetTop }]}>
-                {TARGET_DASHES.map(dash => (
-                  <View key={`dash-${dash}`} style={styles.targetDash} />
-                ))}
-              </View>
-            )}
-          </View>
-
-          <View style={[styles.axisRow, dense && styles.axisRowDense]}>
-            {days.map((day, index) => {
-              const showLabel = !dense || index === 0 || index === days.length - 1 || index % labelStep === 0;
-              return (
-                <Text
-                  key={`axis-${day.date}`}
-                  numberOfLines={1}
-                  style={[styles.axisLabel, day.date === selectedDate && styles.axisLabelSelected]}
-                >
-                  {showLabel ? day.shortLabel : ''}
-                </Text>
-              );
-            })}
-          </View>
-        </>
-      )}
-
-      {selectedDay == null ? null : (
-        <ProgDayPop
-          day={selectedDay}
-          energyUnit={energyUnit}
-          onClose={onSelectDay ? () => onSelectDay(null) : undefined}
-        />
-      )}
+/** Real stacked SVG bars; partial days are hatched, and unlogged days remain gaps. */
+export function CalorieBarChart({ days, energyUnit = 'kcal', selectedDate, onSelectDay, onOpenHistory, style }: CalorieBarChartProps) {
+  const [width, setWidth] = useState(0);
+  const [localSelection, setLocalSelection] = useState<string | null>(null);
+  const [dayAnchor, setDayAnchor] = useState<PopoverAnchor | null>(null);
+  const [targetAnchor, setTargetAnchor] = useState<PopoverAnchor | null>(null);
+  const [targetChange, setTargetChange] = useState<TargetChange | null>(null);
+  const plotRef = useRef<ComponentRef<typeof View>>(null);
+  const id = useId().replace(/[^a-zA-Z0-9]/g, '');
+  const hatchId = `partial${id}`;
+  const selected = selectedDate === undefined ? localSelection : selectedDate;
+  const selectedIndex = days.findIndex(day => day.date === selected);
+  const selectedDay = days[selectedIndex];
+  const slot = width / Math.max(1, days.length);
+  const barWidth = Math.max(0.5, Math.min(days.length <= 7 ? 26 : 9, slot * (days.length <= 7 ? 0.55 : 0.62)));
+  const max = Math.max(1, ...days.map(day => Math.max(positive(day.kcal), positive(day.targetKcal ?? undefined)))) * 1.08;
+  const y = (value: number) => CALORIE_PLOT_HEIGHT - Math.max(0, value) / max * CALORIE_PLOT_HEIGHT;
+  const changes: TargetChange[] = [];
+  let targetPath = '';
+  days.forEach((day, index) => {
+    if (day.targetKcal == null || !Number.isFinite(day.targetKcal)) return;
+    const currentY = y(day.targetKcal);
+    const prior = days[index - 1];
+    const x = index * slot;
+    if (!prior || prior.targetKcal == null) targetPath += `M${x},${currentY}`;
+    else if (prior.targetKcal !== day.targetKcal) {
+      targetPath += `V${currentY}`;
+      changes.push({ index, from: prior.targetKcal, to: day.targetKcal, date: day.date, x, y: (y(prior.targetKcal) + currentY) / 2 });
+    }
+    targetPath += `H${(index + 1) * slot}`;
+  });
+  const closeDay = () => { setDayAnchor(null); setLocalSelection(null); onSelectDay?.(null); };
+  const inspect = (day: CalorieBarChartDay, index: number) => {
+    setTargetAnchor(null);
+    if (selected === day.date && dayAnchor) { closeDay(); return; }
+    setLocalSelection(day.date); onSelectDay?.(day.date);
+    plotRef.current?.measureInWindow((x, top) => setDayAnchor({ x: x + index * slot, y: top + y(positive(day.kcal)), width: slot, height: CALORIE_PLOT_HEIGHT - y(positive(day.kcal)) }));
+  };
+  const axisDays = days.length ? [days[0]!, days[Math.floor(days.length / 2)]!, days[days.length - 1]!] : [];
+  return <View style={[styles.chart, style]}>
+    <View ref={plotRef} onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ height: CALORIE_PLOT_HEIGHT, width: '100%' }}>
+      {width > 0 ? <Svg width={width} height={CALORIE_PLOT_HEIGHT} viewBox={`0 0 ${width} ${CALORIE_PLOT_HEIGHT}`} accessible={false}>
+        <Defs><Pattern id={hatchId} patternUnits="userSpaceOnUse" width={4} height={4} patternTransform="rotate(45)"><Line x1={0} y1={0} x2={0} y2={4} stroke={colors.border} strokeWidth={1} /></Pattern>
+          {days.map((day, index) => day.completeness === 'complete' ? <ClipPath id={`bar${id}${index}`} key={day.date}><Rect x={index * slot + (slot - barWidth) / 2} y={y(positive(day.kcal))} width={barWidth} height={CALORIE_PLOT_HEIGHT - y(positive(day.kcal))} rx={2} /></ClipPath> : null)}
+        </Defs>
+        {days.map((day, index) => {
+          if (day.completeness === 'none') return null;
+          const x = index * slot + (slot - barWidth) / 2;
+          const height = CALORIE_PLOT_HEIGHT - y(positive(day.kcal));
+          if (day.completeness === 'partial') return <Rect key={day.date} x={x} y={y(positive(day.kcal))} width={barWidth} height={height} rx={2} fill={`url(#${hatchId})`} stroke={colors.border} strokeWidth={0.8} />;
+          const p = positive(day.proteinG) * 4;
+          const c = positive(day.carbsG) * 4;
+          const f = positive(day.fatG) * 9;
+          const total = p + c + f;
+          if (!total || day.proteinG == null || day.carbsG == null || day.fatG == null) return <Rect key={day.date} x={x} y={y(positive(day.kcal))} width={barWidth} height={height} rx={2} fill={colors.accent} />;
+          const fatHeight = f / total * height;
+          const carbHeight = c / total * height;
+          const proteinHeight = p / total * height;
+          return <G key={day.date} clipPath={`url(#bar${id}${index})`}>
+            <Rect x={x} y={CALORIE_PLOT_HEIGHT - fatHeight} width={barWidth} height={fatHeight} fill={macroColors.fat} />
+            <Rect x={x} y={CALORIE_PLOT_HEIGHT - fatHeight - carbHeight} width={barWidth} height={carbHeight} fill={macroColors.carbs} />
+            <Rect x={x} y={y(positive(day.kcal))} width={barWidth} height={proteinHeight} fill={macroColors.protein} />
+          </G>;
+        })}
+        {selectedIndex >= 0 && selectedDay?.completeness !== 'none' ? <Rect x={selectedIndex * slot} y={0} width={slot} height={CALORIE_PLOT_HEIGHT} fill={colors.accent} opacity={0.12} /> : null}
+        <Path d={targetPath} fill="none" stroke={colors.muted} strokeWidth={1} strokeDasharray="3 4" strokeOpacity={0.7} />
+        {changes.map(change => <Polygon key={change.date} points={`${change.x},${change.y - 5} ${change.x + 5},${change.y} ${change.x},${change.y + 5} ${change.x - 5},${change.y}`} fill={colors.ground} stroke={colors.muted} strokeWidth={1} />)}
+        <Line x1={0} y1={CALORIE_PLOT_HEIGHT - 0.5} x2={width} y2={CALORIE_PLOT_HEIGHT - 0.5} stroke={colors.hairline} />
+      </Svg> : null}
+      {days.map((day, index) => day.completeness !== 'none' ? <Pressable key={day.date} accessibilityRole="button" accessibilityLabel={`${fullDate(day.date)}, ${day.completeness}, ${fmt(energyValue(day.kcal, energyUnit))} ${energyUnit}`} accessibilityState={{ selected: day.date === selected }} onPress={() => inspect(day, index)} style={{ position: 'absolute', left: index * slot, top: 0, width: slot, height: CALORIE_PLOT_HEIGHT }} /> : null)}
+      {changes.map(change => <Pressable key={change.date} accessibilityRole="button" accessibilityLabel={`Target changed from ${fmt(energyValue(change.from, energyUnit))} to ${fmt(energyValue(change.to, energyUnit))} ${energyUnit}, ${shortDate(change.date)}`} onPress={() => {
+        closeDay(); setTargetChange(change);
+        plotRef.current?.measureInWindow((x, y) => setTargetAnchor({ x: x + change.x - 5, y: y + change.y - 5, width: 10, height: 10 }));
+      }} style={{ position: 'absolute', left: change.x - 20, top: change.y - 20, width: 40, height: 40 }} />)}
+      {days.length === 0 ? <View style={styles.empty}><Text style={styles.emptyText}>No days to chart</Text></View> : null}
     </View>
-  );
+    <View style={styles.axis}>{axisDays.map((day, i) => <Text key={i} style={[styles.axisText, { textAlign: i === 0 ? 'left' : i === 2 ? 'right' : 'center' }]}>{shortDate(day.date)}</Text>)}</View>
+    <AnchoredPopover key={`day-${selected ?? ''}`} anchor={selectedDay ? dayAnchor : null} onClose={closeDay} width={216} label="Day summary" preferAbove>
+      {selectedDay ? <ProgDayPop day={selectedDay} energyUnit={energyUnit} onClose={closeDay} onOpenHistory={onOpenHistory} /> : null}
+    </AnchoredPopover>
+    <AnchoredPopover anchor={targetAnchor} onClose={() => setTargetAnchor(null)} width={280} label="Target change">
+      {targetChange ? <Text style={styles.targetPop}><Text style={styles.targetValue}>{fmt(energyValue(targetChange.from, energyUnit))}</Text>{' → '}<Text style={styles.targetValue}>{fmt(energyValue(targetChange.to, energyUnit))}</Text>{` · from ${shortDate(targetChange.date)}`}</Text> : null}
+    </AnchoredPopover>
+  </View>;
 }
 
 export interface WeightTrendPoint {
@@ -292,527 +159,109 @@ export interface WeightTrendPoint {
   rawKg: number;
   trendKg: number;
 }
-
-export interface ProgTrendPopProps {
-  onClose?: (() => void) | undefined;
-}
-
-/** Explains why the plotted trend differs from the raw weigh-ins. */
+export interface ProgTrendPopProps { onClose?: (() => void) | undefined }
 export function ProgTrendPop({ onClose }: ProgTrendPopProps) {
-  return (
-    <View style={styles.pop} accessibilityLiveRegion="polite">
-      <View style={styles.popHead}>
-        <Text style={styles.popDate}>EWMA · 10% weight</Text>
-        {onClose ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Close trend explanation"
-            onPress={onClose}
-            style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
-          >
-            <Text style={styles.closeGlyph}>×</Text>
-          </Pressable>
-        ) : null}
-      </View>
-      <Text style={styles.popBody}>
-        {
-          "Smoothed with EWMA (10% weight per weigh-in) so daily water swings don't look like fat change."
-        }
-      </Text>
-    </View>
-  );
+  return <View style={styles.trendPop}>
+    <Text style={styles.trendExplanation}>Each weigh-in moves the trend 10% toward the new measurement (exponential moving average), smoothing daily water swings.</Text>
+    {onClose ? <Pressable accessibilityRole="button" accessibilityLabel="Close trend explanation" onPress={onClose} style={styles.closeButton}><DoopIcon name="close" size={14} color={colors.muted} /></Pressable> : null}
+  </View>;
 }
-
 export interface WeightTrendChartProps {
   points: WeightTrendPoint[];
   unit: 'kg' | 'lb';
+  startDate?: string | undefined;
+  endDate?: string | undefined;
   showInfo?: boolean | undefined;
   onToggleInfo?: (() => void) | undefined;
   style?: StyleProp<ViewStyle> | undefined;
 }
 
-/** Raw weigh-in dots joined by an EWMA trend line, scaled to the visible range. */
-export function WeightTrendChart({
-  points,
-  unit,
-  showInfo,
-  onToggleInfo,
-  style,
-}: WeightTrendChartProps) {
-  const [plotWidth, setPlotWidth] = useState(0);
-  const plotPoints = points.filter(
-    point => Number.isFinite(point.rawKg) && Number.isFinite(point.trendKg),
-  );
-
-  const allKg = plotPoints.flatMap(point => [point.rawKg, point.trendKg]);
-  let minKg = allKg.length > 0 ? Math.min(...allKg) : 0;
-  let maxKg = allKg.length > 0 ? Math.max(...allKg) : 1;
-  if (maxKg - minKg < 0.4) {
-    const middle = (maxKg + minKg) / 2;
-    minKg = middle - 0.2;
-    maxKg = middle + 0.2;
+interface XY { x: number; y: number }
+/** Horizontal cubic controls join EWMA observations smoothly without overshooting their values. */
+function smoothPath(points: XY[]): string {
+  const first = points[0];
+  if (!first) return '';
+  let path = `M${first.x},${first.y}`;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]!;
+    const b = points[i]!;
+    const mid = (a.x + b.x) / 2;
+    path += `C${mid},${a.y} ${mid},${b.y} ${b.x},${b.y}`;
   }
-  const padding = (maxKg - minKg) * 0.08;
-  minKg -= padding;
-  maxKg += padding;
-  const span = Math.max(0.0001, maxKg - minKg);
+  return path;
+}
 
-  const toDisplay = (kg: number) => (unit === 'lb' ? kg * KG_TO_LB : kg);
-  const usableHeight = TREND_PLOT_HEIGHT - TREND_INSET_Y * 2;
-  const usableWidth = Math.max(0, plotWidth - TREND_INSET_X * 2);
-  const xFor = (index: number) =>
-    plotPoints.length <= 1
-      ? plotWidth / 2
-      : TREND_INSET_X + (index / (plotPoints.length - 1)) * usableWidth;
-  const yFor = (kg: number) =>
-    TREND_INSET_Y + (1 - (kg - minKg) / span) * usableHeight;
-
-  const handlePlotLayout = (event: LayoutChangeEvent) => {
-    const nextWidth = event.nativeEvent.layout.width;
-    setPlotWidth(current => (Math.abs(current - nextWidth) > 0.5 ? nextWidth : current));
-  };
-
-  return (
-    <View style={[styles.card, style]}>
-      <View style={styles.cardHead}>
-        <Text style={styles.cardTitle}>WEIGHT</Text>
-        <View style={styles.headRight}>
-          <Text style={styles.cardMeta}>{unit.toUpperCase()}</Text>
-          {onToggleInfo ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="About the weight trend"
-              accessibilityState={{ expanded: showInfo === true }}
-              onPress={onToggleInfo}
-              style={({ pressed }) => [styles.infoButton, pressed && styles.pressed]}
-            >
-              <View style={[styles.infoRing, showInfo === true && styles.infoRingActive]}>
-                <Text style={[styles.infoGlyph, showInfo === true && styles.infoGlyphActive]}>i</Text>
-              </View>
-            </Pressable>
-          ) : null}
-        </View>
-      </View>
-
-      {plotPoints.length === 0 ? (
-        <View style={styles.trendEmpty}>
-          <Text style={styles.emptyLabel}>No weigh-ins in this range</Text>
-        </View>
-      ) : (
-        <>
-          <View style={styles.trendBody}>
-            <View style={styles.trendAxis}>
-              <Text style={styles.axisValue}>{formatNumber(toDisplay(maxKg), 1)}</Text>
-              <Text style={styles.axisValue}>{formatNumber(toDisplay(minKg), 1)}</Text>
-            </View>
-            <View style={styles.trendPlotArea} onLayout={handlePlotLayout}>
-              {plotWidth > 0 ? (
-                <>
-                  {plotPoints.map((point, index) => (
-                    <View
-                      key={`raw-${point.date}-${index}`}
-                      pointerEvents="none"
-                      style={[
-                        styles.rawDot,
-                        { left: xFor(index) - 3, top: yFor(point.rawKg) - 3 },
-                      ]}
-                    />
-                  ))}
-                  {plotPoints.map((point, index) => {
-                    const next = plotPoints[index + 1];
-                    if (!next) return null;
-                    const x1 = xFor(index);
-                    const y1 = yFor(point.trendKg);
-                    const x2 = xFor(index + 1);
-                    const y2 = yFor(next.trendKg);
-                    const length = Math.hypot(x2 - x1, y2 - y1);
-                    const angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
-                    return (
-                      <View
-                        key={`trend-${point.date}-${index}`}
-                        pointerEvents="none"
-                        style={[
-                          styles.trendSegment,
-                          {
-                            width: length,
-                            left: (x1 + x2) / 2 - length / 2,
-                            top: (y1 + y2) / 2 - TREND_SEGMENT_HEIGHT / 2,
-                            transform: [{ rotate: `${angle}deg` }],
-                          },
-                        ]}
-                      />
-                    );
-                  })}
-                  {plotPoints.map((point, index) => (
-                    <View
-                      key={`marker-${point.date}-${index}`}
-                      pointerEvents="none"
-                      style={[
-                        styles.trendMarker,
-                        {
-                          left: xFor(index) - TREND_MARKER_SIZE / 2,
-                          top: yFor(point.trendKg) - TREND_MARKER_SIZE / 2,
-                        },
-                      ]}
-                    />
-                  ))}
-                </>
-              ) : null}
-            </View>
-          </View>
-
-          <View style={styles.trendAxisRow}>
-            <View style={styles.axisSpacer} />
-            <View style={styles.trendLabels}>
-              {plotWidth > 0
-                ? plotPoints.map((point, index) => (
-                    <Text
-                      key={`label-${point.date}-${index}`}
-                      numberOfLines={1}
-                      style={[styles.trendTick, { left: xFor(index) - TREND_LABEL_WIDTH / 2 }]}
-                    >
-                      {point.shortLabel}
-                    </Text>
-                  ))
-                : null}
-            </View>
-          </View>
-        </>
-      )}
-
-      {showInfo === true ? <ProgTrendPop onClose={onToggleInfo} /> : null}
+/** Raw daily observations over the existing 10% EWMA, with a translucent trend area. */
+export function WeightTrendChart({ points, unit, startDate, endDate, showInfo, onToggleInfo, style }: WeightTrendChartProps) {
+  const [width, setWidth] = useState(0);
+  const [infoAnchor, setInfoAnchor] = useState<PopoverAnchor | null>(null);
+  const infoRef = useRef<ComponentRef<typeof View>>(null);
+  const factor = unit === 'lb' ? KG_TO_LB : 1;
+  const valid = points.filter(p => Number.isFinite(p.rawKg) && Number.isFinite(p.trendKg) && Number.isFinite(dateMs(p.date))).sort((a, b) => a.date.localeCompare(b.date));
+  const values = valid.flatMap(p => [p.rawKg * factor, p.trendKg * factor]);
+  const rawMin = values.length ? Math.min(...values) : 0;
+  const rawMax = values.length ? Math.max(...values) : 1;
+  const span = Math.max(rawMax - rawMin, unit === 'lb' ? 0.8 : 0.4);
+  const low = (rawMin + rawMax) / 2 - span * 0.57;
+  const high = (rawMin + rawMax) / 2 + span * 0.57;
+  const rawStep = span / 3;
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+  const normal = rawStep / magnitude;
+  const step = (normal <= 1 ? 1 : normal <= 2 ? 2 : normal <= 5 ? 5 : 10) * magnitude;
+  const ticks: number[] = [];
+  for (let v = Math.ceil(low / step) * step; v <= high + step * 0.001; v += step) ticks.push(v);
+  const start = startDate ?? valid[0]?.date;
+  const end = endDate ?? valid[valid.length - 1]?.date;
+  const startMs = start ? dateMs(start) : 0;
+  const endMs = end ? dateMs(end) : DAY_MS;
+  const x = (date: string) => 6 + Math.max(0, Math.min(1, (dateMs(date) - startMs) / Math.max(DAY_MS, endMs - startMs))) * Math.max(0, width - 24);
+  const y = (kg: number) => 6 + (high - kg * factor) / (high - low) * (TREND_PLOT_HEIGHT - 12);
+  const linePoints = valid.map(p => ({ x: x(p.date), y: y(p.trendKg) }));
+  const first = linePoints[0];
+  const last = linePoints[linePoints.length - 1];
+  const path = smoothPath(linePoints);
+  const area = first && last ? `${path}L${last.x},${TREND_PLOT_HEIGHT}L${first.x},${TREND_PLOT_HEIGHT}Z` : '';
+  const middleDate = start && end ? new Date(startMs + Math.ceil((endMs - startMs) / DAY_MS / 2) * DAY_MS).toISOString().slice(0, 10) : null;
+  return <View style={[styles.chart, style]}>
+    {onToggleInfo ? <Pressable ref={infoRef} accessibilityRole="button" accessibilityLabel="How the trend is smoothed" onPress={() => { measurePopoverAnchor(infoRef.current, setInfoAnchor); onToggleInfo(); }} style={styles.standaloneInfo}><DoopIcon name="info" size={16} color={colors.muted} /></Pressable> : null}
+    <View onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ height: TREND_PLOT_HEIGHT }}>
+      {width > 0 && valid.length ? <Svg width={width} height={TREND_PLOT_HEIGHT} viewBox={`0 0 ${width} ${TREND_PLOT_HEIGHT}`} accessible accessibilityLabel={`${unit} weight trend, ${valid.length} weigh-ins, smoothed with a 10% exponential moving average`}>
+        {ticks.map(tick => {
+          const top = y(tick / factor);
+          return <G key={tick}><Line x1={0} x2={Math.max(0, width - 20)} y1={top} y2={top} stroke={colors.hairline} strokeWidth={1} /><SvgText x={width - 2} y={top - 3} textAnchor="end" fill={colors.muted} opacity={0.65} fontSize={9} fontFamily={fontFamily.body}>{fmt(tick, 1)}</SvgText></G>;
+        })}
+        <Path d={area} fill="rgba(122,162,247,0.12)" />
+        <Path d={path} fill="none" stroke={colors.accent} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        {valid.map((p, i) => <Circle key={`${p.date}-${i}`} cx={x(p.date)} cy={y(p.rawKg)} r={2.5} fill={i === valid.length - 1 ? colors.ink : colors.muted} opacity={i === valid.length - 1 ? 1 : 0.6} />)}
+      </Svg> : <View style={styles.empty}><Text style={styles.emptyText}>Log a weigh-in to see your trend</Text></View>}
     </View>
-  );
+    <View style={styles.axis}>{start && end && middleDate ? [start, middleDate, end].map((date, i) => <Text key={i} style={[styles.axisText, { textAlign: i === 0 ? 'left' : i === 2 ? 'right' : 'center' }]}>{shortDate(date)}</Text>) : null}</View>
+    <AnchoredPopover anchor={showInfo ? infoAnchor : null} onClose={() => { setInfoAnchor(null); onToggleInfo?.(); }} width={312} label="How the trend is smoothed"><ProgTrendPop /></AnchoredPopover>
+  </View>;
 }
 
 const styles = StyleSheet.create({
-  card: {
-    width: '100%',
-    minWidth: 0,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    borderRadius: radius.r16,
-    padding: spacing.s16,
-    gap: spacing.s12,
-  },
-  cardHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.s8,
-    minHeight: 24,
-  },
-  cardTitle: {
-    color: colors.muted,
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.bold,
-    letterSpacing: 1,
-  },
-  cardMeta: {
-    color: colors.muted,
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.medium,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  headRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.s4,
-  },
-  chartEmpty: {
-    height: CALORIE_PLOT_HEIGHT,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  plot: {
-    width: '100%',
-    minWidth: 0,
-    height: CALORIE_PLOT_HEIGHT,
-    position: 'relative',
-    justifyContent: 'flex-end',
-  },
-  bars: {
-    width: '100%',
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    height: CALORIE_PLOT_HEIGHT,
-    gap: spacing.s6,
-  },
-  barsDense: {
-    gap: spacing.s2,
-  },
-  barColumn: {
-    flex: 1,
-    minWidth: 0,
-    height: '100%',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    borderRadius: radius.r8,
-  },
-  barColumnSelected: {
-    backgroundColor: colors.raised,
-  },
-  bar: {
-    width: '56%',
-    maxWidth: 26,
-    minWidth: 6,
-    borderTopLeftRadius: radius.r8,
-    borderTopRightRadius: radius.r8,
-  },
-  barDense: {
-    width: '78%',
-    maxWidth: 10,
-    minWidth: 3,
-    borderTopLeftRadius: 3,
-    borderTopRightRadius: 3,
-  },
-  barComplete: {
-    backgroundColor: colors.accent,
-  },
-  barPartial: {
-    backgroundColor: colors.track,
-    borderWidth: 1,
-    borderColor: colors.muted,
-  },
-  emptyTick: {
-    width: 10,
-    height: 2,
-    borderRadius: 1,
-    backgroundColor: colors.border,
-  },
-  emptyTickDense: {
-    width: 4,
-  },
-  targetLine: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    gap: spacing.s4,
-    zIndex: 1,
-  },
-  targetDash: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  axisRow: {
-    width: '100%',
-    minWidth: 0,
-    flexDirection: 'row',
-    gap: spacing.s6,
-    marginTop: -spacing.s4,
-  },
-  axisRowDense: {
-    gap: spacing.s2,
-  },
-  axisLabel: {
-    flex: 1,
-    textAlign: 'center',
-    color: colors.muted,
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.medium,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  axisLabelSelected: {
-    color: colors.ink,
-    fontWeight: fontWeight.bold,
-  },
-  pop: {
-    backgroundColor: colors.raised,
-    borderRadius: radius.r12,
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    padding: spacing.s12,
-    gap: spacing.s8,
-  },
-  popHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.s8,
-  },
-  popHeadText: {
-    flex: 1,
-    gap: spacing.s2,
-  },
-  popDate: {
-    color: colors.ink,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.semibold,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  popStatus: {
-    fontSize: fontSize.t11,
-    fontWeight: fontWeight.medium,
-  },
-  closeButton: {
-    minWidth: MIN_TOUCH_TARGET,
-    minHeight: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radius.full,
-  },
-  closeGlyph: {
-    color: colors.muted,
-    fontSize: fontSize.t18,
-    fontWeight: fontWeight.medium,
-  },
-  popFigures: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: spacing.s6,
-  },
-  popKcal: {
-    color: colors.ink,
-    fontSize: fontSize.t24,
-    fontWeight: fontWeight.extrabold,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  popKcalUnit: {
-    color: colors.muted,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.medium,
-  },
-  popTarget: {
-    color: colors.muted,
-    fontSize: fontSize.t11,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  popMacros: {
-    flexDirection: 'row',
-    gap: spacing.s6,
-  },
-  popMacro: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: spacing.s4,
-    backgroundColor: colors.surface,
-    borderRadius: radius.r8,
-    paddingHorizontal: spacing.s8,
-    paddingVertical: spacing.s6,
-  },
-  popMacroLabel: {
-    fontSize: fontSize.t11,
-    fontWeight: fontWeight.bold,
-  },
-  popMacroValue: {
-    color: colors.ink,
-    fontSize: fontSize.t11,
-    fontWeight: fontWeight.medium,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  popBody: {
-    color: colors.muted,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.medium,
-    lineHeight: 19,
-  },
-  trendBody: {
-    flexDirection: 'row',
-    gap: spacing.s8,
-  },
-  trendAxis: {
-    width: TREND_AXIS_WIDTH,
-    height: TREND_PLOT_HEIGHT,
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-  },
-  axisValue: {
-    color: colors.muted,
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.medium,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  trendPlotArea: {
-    flex: 1,
-    height: TREND_PLOT_HEIGHT,
-    position: 'relative',
-  },
-  trendEmpty: {
-    height: TREND_PLOT_HEIGHT,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radius.r12,
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    borderStyle: 'dashed',
-  },
-  emptyLabel: {
-    color: colors.muted,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.medium,
-  },
-  rawDot: {
-    position: 'absolute',
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.muted,
-    opacity: 0.55,
-  },
-  trendSegment: {
-    position: 'absolute',
-    height: TREND_SEGMENT_HEIGHT,
-    borderRadius: 1,
-    backgroundColor: colors.accent,
-  },
-  trendMarker: {
-    position: 'absolute',
-    width: TREND_MARKER_SIZE,
-    height: TREND_MARKER_SIZE,
-    borderRadius: TREND_MARKER_SIZE / 2,
-    backgroundColor: colors.accent,
-    borderWidth: 2,
-    borderColor: colors.surface,
-  },
-  trendAxisRow: {
-    flexDirection: 'row',
-    gap: spacing.s8,
-    marginTop: -spacing.s4,
-  },
-  axisSpacer: { width: TREND_AXIS_WIDTH },
-  trendLabels: {
-    flex: 1,
-    height: 16,
-    position: 'relative',
-  },
-  trendTick: {
-    position: 'absolute',
-    width: TREND_LABEL_WIDTH,
-    textAlign: 'center',
-    color: colors.muted,
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.medium,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  infoButton: {
-    width: MIN_TOUCH_TARGET,
-    height: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  infoRing: {
-    width: 24,
-    height: 24,
-    borderRadius: radius.full,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  infoRingActive: {
-    borderColor: colors.accent,
-  },
-  infoGlyph: {
-    color: colors.muted,
-    fontSize: fontSize.t11,
-    fontWeight: fontWeight.bold,
-  },
-  infoGlyphActive: {
-    color: colors.accent,
-  },
-  pressed: { opacity: 0.7 },
+  chart: { width: '100%', minWidth: 0 },
+  axis: { flexDirection: 'row', marginTop: 4, height: 18 },
+  axisText: { ...fontFace('medium'), ...tabularNums, flex: 1, color: colors.muted, fontSize: 11, lineHeight: 16 },
+  empty: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
+  emptyText: { ...fontFace('medium'), color: colors.muted, fontSize: 12 },
+  dayPop: { paddingHorizontal: 12, paddingTop: 10 },
+  popHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 20 },
+  popDate: { ...fontFace('semibold'), ...tabularNums, color: colors.muted, fontSize: 12, flex: 1 },
+  figures: { flexDirection: 'row', alignItems: 'baseline', gap: 4, marginTop: 3 },
+  popKcal: { ...fontFace('extrabold'), ...tabularNums, color: colors.ink, fontSize: 24, letterSpacing: -0.6 },
+  unit: { ...fontFace('medium'), color: colors.muted, fontSize: 11 },
+  popMacros: { flexDirection: 'row', gap: 11, marginTop: 6 },
+  popMacro: { flexDirection: 'row', alignItems: 'baseline', gap: 3 },
+  macroLetter: { ...fontFace('bold'), fontSize: 10 },
+  popMacroValue: { ...fontFace('semibold'), ...tabularNums, color: colors.ink, fontSize: 12 },
+  historyLink: { minHeight: 44, marginTop: 8, borderTopWidth: 1, borderTopColor: colors.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  linkText: { ...fontFace('semibold'), color: colors.accent, fontSize: 12 },
+  closeButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -12, marginTop: -10, marginBottom: -10 },
+  targetPop: { ...fontFace('medium'), ...tabularNums, color: colors.muted, fontSize: 12, paddingVertical: 12, paddingHorizontal: 12 },
+  targetValue: { ...fontFace('bold'), color: colors.ink },
+  trendPop: { padding: 12, flexDirection: 'row', gap: 8 },
+  trendExplanation: { ...fontFace('medium'), flex: 1, color: colors.muted, fontSize: 11, lineHeight: 17 },
+  standaloneInfo: { alignSelf: 'flex-end', width: 40, height: 40, borderRadius: 12, borderWidth: 1, borderColor: colors.hairline, alignItems: 'center', justifyContent: 'center' },
 });

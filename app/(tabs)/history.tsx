@@ -1,85 +1,442 @@
-import { useState } from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
-import { router } from 'expo-router';
-import { useAction, useAppRuntime, useHistoryDay, usePreferences, useWeekSummary } from '../../src/app/AppRuntimeContext';
-import { localDate, MEALS, shiftDate, sourceLabel } from '../../src/app/controller';
-import type { DiaryEntrySnapshot } from '../../src/domain';
-import { MacroRow, UndoToast } from '../../src/ui/components/Diary';
-import { ActionSheetPopover, CompletenessMark, InlineKeypad, MultiSelectBar, SourceBadge, WeekDateRail } from '../../src/ui/components/doop';
-import { Button, Card, energy, ErrorMessage, Heading, Label, Muted, number, Page, ui } from '../../src/ui/components/primitives';
-import { colors, MIN_TOUCH_TARGET, spacing, TwoPane } from '../../src/ui/tokens';
+import { useCallback, useRef, useState, type ComponentRef, type ReactNode } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useAction, useActiveDraft, useAppRuntime, useDateRangeCalendarLoader, useHistoryDay, useOfflinePhotoDrafts, usePreferences, useTodayDiary, useTodaySuggestions, useWeekSummary } from '../../src/app/AppRuntimeContext';
+import { defaultQuantity, localDate, MEALS, mealsForDay, parseRouteDate, shiftDate, type TodaySuggestion } from '../../src/app/controller';
+import { generateId, type DiaryEntrySnapshot } from '../../src/domain';
+import { DayCompletenessToggle, MealRailShell, UndoToast } from '../../src/ui/components/Diary';
+import { EntryEditPopover, MultiSelectBar, RevealPanel, WeekDateRail } from '../../src/ui/components/doop';
+import { AnchoredPopover, measurePopoverAnchor } from '../../src/ui/components/doop/HistoryControls';
+import type { PopoverAnchor } from '../../src/ui/components/doop/HistoryControls';
+import { RailMonthSheet, railRangeLabel, shortRailDate, weekEndForDate } from '../../src/ui/components/doop/WeekDateRail';
+import { isDraftForMeal, MealActiveDraftBlock, MealComposerField, MealComposerFooter, MealDraftAuxBlock, useMealInlineComposer, useScrollToMealComposer } from '../../src/ui/components/capture';
+import { DraggableEntryRow, MealEntryDragProvider, MealHoldFan, useMealEntryDrag } from '../../src/ui/components/gestures';
+import { DoopIcon } from '../../src/ui/components/DoopIcons';
+import { Button, energyValue, ErrorMessage, Muted, NoticePill, number, Page, ui, useTimedNotice } from '../../src/ui/components/primitives';
+import { colors, fontFace, macroColors, radius, tabularNums, TwoPane } from '../../src/ui/tokens';
 
-const rangeDate = (date: string) => new Date(`${date}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+const entryTime = (entry: DiaryEntrySnapshot) => {
+  const date = new Date(entry.occurred_at);
+  if (Number.isNaN(date.getTime())) return '—';
+  try { return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: entry.time_zone }); }
+  catch { return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); }
+};
 
 export default function History() {
-  const [date, setDate] = useState(localDate);
-  const [weekEnd, setWeekEnd] = useState(localDate);
+  const params = useLocalSearchParams<{ date?: string; selection?: string }>();
+  return <HistoryDay key={`${params.date ?? ''}-${params.selection ?? ''}`} initialDate={parseRouteDate(params.date) ?? localDate()} />;
+}
+
+function HistoryDay({ initialDate }: { initialDate: string }) {
+  const [date, setDate] = useState(initialDate);
+  const [weekEnd, setWeekEnd] = useState(() => weekEndForDate(initialDate));
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [amount, setAmount] = useState('');
   const [menu, setMenu] = useState<string | null>(null);
+  const [anchor, setAnchor] = useState<PopoverAnchor | null>(null);
+  const [calendarIntent, setCalendarIntent] = useState<'navigate' | 'move' | 'copy'>('navigate');
+  const [copyMeal, setCopyMeal] = useState<string | null>(null);
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [moving, setMoving] = useState(false);
+  const [savedMeal, setSavedMeal] = useState<string | null>(null);
+  const [fanMeal, setFanMeal] = useState<string | null>(null);
+  const [draggingEntry, setDraggingEntry] = useState(false);
+  const [notice, setNotice] = useTimedNotice();
+  const totalAnchor = useRef<ComponentRef<typeof View>>(null);
+  const scrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
+  const scrollOffsetRef = useRef(0);
+  const mealRowRefs = useRef<Record<string, ComponentRef<typeof View> | null>>({});
+
   const { controller } = useAppRuntime();
   const preferences = usePreferences();
+  const todayDiary = useTodayDiary();
+  const suggestions = useTodaySuggestions(3);
+  const activeDraft = useActiveDraft();
+  const offlinePhotos = useOfflinePhotoDrafts();
   const result = useHistoryDay(date);
   const week = useWeekSummary(weekEnd);
+  const loadCalendar = useDateRangeCalendarLoader();
   const action = useAction();
-  const entries = result.value?.day?.entries.filter(entry => entry.draft_state === 'confirmed') ?? [];
+
+  const today = localDate();
+  const activeDay = result.value ?? (date === today ? todayDiary.value : undefined);
+  const entries = activeDay?.day?.entries.filter(entry => entry.draft_state === 'confirmed') ?? [];
   const configuredMeals = preferences.value?.mealSections ?? [...MEALS];
-  const meals = [...new Set([...configuredMeals, ...entries.map(entry => entry.meal)])];
   const unit = preferences.value?.energyUnit ?? 'kcal';
+  const draft = activeDraft.draft;
+  const draftForDate = Boolean(draft && draft.date === date);
+  const failedDraftMeal = activeDraft.actionError?.operation === 'capture' && activeDraft.actionError.date === date ? activeDraft.actionError.meal : null;
+  const dayOfflinePhotos = (offlinePhotos.value ?? []).filter(photo => photo.date === date);
+
+  const chooseDateRaw = useCallback((next: string) => {
+    setDate(next);
+    setWeekEnd(weekEndForDate(next));
+    setExpanded(null);
+    setAnchor(null);
+    setSelected([]);
+    setSelecting(false);
+    setMoving(false);
+  }, []);
+
+  const composer = useMealInlineComposer({
+    date,
+    returnTab: 'history',
+    defaultMeal: configuredMeals[0] ?? 'Breakfast',
+    onNotice: setNotice,
+    onTargetDateChange: chooseDateRaw,
+  });
+
+  const meals = mealsForDay(configuredMeals, entries, [
+    composer.fieldMeal,
+    draftForDate ? draft?.meal : null,
+    failedDraftMeal,
+    ...dayOfflinePhotos.map(photo => photo.meal),
+  ]);
+
+  useScrollToMealComposer(scrollRef, scrollOffsetRef, mealRowRefs, composer);
+
+  const blocked = action.busy || composer.blocked;
+
   const clearSelection = () => { setSelected([]); setSelecting(false); setMoving(false); };
-  const chooseDate = (next: string) => { setDate(next); setExpanded(null); setMenu(null); clearSelection(); };
-  const bulkCopy = async () => { await controller.copyEntries(selected, localDate()); clearSelection(); };
-  const renderEntry = (entry: DiaryEntrySnapshot) => <Card key={entry.id} style={{ borderWidth: 1, borderColor: selected.includes(entry.id) ? colors.accent : colors.hairline }}>
-    <Pressable accessibilityRole={selecting ? 'checkbox' : 'button'} accessibilityLabel={`${entry.food.name}, ${number(entry.quantity.amount, 2)} ${entry.quantity.unit}, ${energy(entry.nutrients.kcal, unit)}`}
-      accessibilityState={selecting ? { checked: selected.includes(entry.id) } : { expanded: expanded === entry.id }}
-      onPress={() => {
-        if (selecting) setSelected(values => values.includes(entry.id) ? values.filter(id => id !== entry.id) : [...values, entry.id]);
-        else { setExpanded(value => value === entry.id ? null : entry.id); setAmount(String(entry.quantity.amount)); }
-      }} style={{ minHeight: MIN_TOUCH_TARGET, gap: 8 }}>
-      <View style={[ui.row, { justifyContent: 'space-between' }]}><View style={{ flex: 1 }}><Heading>{entry.food.name}</Heading><Muted>{number(entry.quantity.amount, 2)} {entry.quantity.unit}</Muted></View>
-        <Label style={ui.number}>{energy(entry.nutrients.kcal, unit)}</Label></View>
-      <View style={ui.wrap}><SourceBadge label={sourceLabel(entry.food)} /></View>
-      {(entry.nutrients.fiber_g === null || (entry.unknown_nutrient_counts?.fiber_g ?? 0) > 0) && <Muted>Fiber · {entry.unknown_nutrient_counts?.fiber_g || 1} unknown</Muted>}
-    </Pressable>
-    {!selecting && expanded === entry.id && <><InlineKeypad value={amount} onChange={setAmount} maxDecimals={2} />
-      <Button label="Save portion" primary disabled={action.busy || !(Number(amount) > 0)} onPress={() => void action.run(async () => {
-        await controller.updateEntryQuantity(entry, { ...entry.quantity, amount: Number(amount) }); setExpanded(null);
-      })} /><Muted>Move to</Muted><View style={ui.wrap}>{configuredMeals.map(meal => <Button key={meal} label={meal} selected={entry.meal === meal} disabled={action.busy}
-        onPress={() => void action.run(async () => {
-          await controller.moveEntry(entry, meal);
-          setExpanded(null);
-        })} />)}</View><Button label="Delete" disabled={action.busy} onPress={() => void action.run(() => controller.deleteEntry(entry.id))} /></>}
-  </Card>;
-  return <Page title="History" footer={<View style={{ gap: 8 }}>
-    {selecting && <MultiSelectBar count={selected.length} onCopyToToday={() => { if (selected.length) void action.run(bulkCopy); }} onMove={() => { if (selected.length) setMoving(value => !value); }}
-      onDelete={() => { if (selected.length) void action.run(async () => { await controller.deleteEntries(selected); clearSelection(); }); }} onDone={clearSelection} />}
-    <UndoToast /></View>}>
-    <TwoPane primary={<View style={{ gap: spacing.s16 }}>
-    <ScrollView horizontal showsHorizontalScrollIndicator={false}><WeekDateRail style={{ minWidth: 352 }} days={(week.value ?? []).map(day => ({ date: day.date, weekdayInitial: new Date(`${day.date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'narrow' }), dayNumber: day.date.slice(8), completeness: day.completeness, kcal: day.kcal ?? 0 }))}
-      selectedDate={date} rangeLabel={`${rangeDate(shiftDate(weekEnd, -6))} – ${rangeDate(weekEnd)}`} onSelectDate={chooseDate}
-      onPrevWeek={() => { const next = shiftDate(weekEnd, -7); setWeekEnd(next); chooseDate(next); }}
-      onNextWeek={() => { const next = shiftDate(weekEnd, 7); setWeekEnd(next); chooseDate(next); }} disableNext={weekEnd >= localDate()} /></ScrollView>
-    <View style={[ui.row, { justifyContent: 'space-between', flexWrap: 'wrap' }]}><Heading>{new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}</Heading>
-      <View style={ui.row}><CompletenessMark status={result.value?.day?.completeness ?? 'none'} /><Button label={energy(result.value?.totals.nutrients?.kcal, unit)} onPress={() => setMenu(value => value === 'day' ? null : 'day')} />
-        <Button label={selecting ? 'Done' : 'Select'} selected={selecting} onPress={() => { if (selecting) clearSelection(); else { setSelecting(true); setExpanded(null); } }} /></View></View>
-    {menu === 'day' && <ActionSheetPopover title="Day completeness" actions={(['complete', 'partial'] as const).map(value => ({ key: value, label: value === 'complete' ? 'Complete' : 'Partial', selected: result.value?.day?.completeness === value,
-      onPress: () => void action.run(async () => { await controller.setCompleteness(date, value); setMenu(null); }) }))} />}
-    <ErrorMessage message={action.error ?? result.error ?? week.error ?? preferences.error} />{result.loading && <Muted>Loading saved day…</Muted>}
-    {result.value && <Card style={{ padding: 12 }}><MacroRow totals={result.value.totals} /></Card>}
-    </View>} secondary={<View style={{ gap: spacing.s16 }}>
-    {moving && <Card><Heading>Move selected entries</Heading><View style={ui.wrap}>{configuredMeals.map(meal => <Button key={meal} label={meal} disabled={action.busy} onPress={() => void action.run(async () => {
-      await controller.moveEntries(selected, date, meal); clearSelection();
-    })} />)}</View></Card>}
-    {!entries.length && !result.loading && <Muted>No logged entries for this day.</Muted>}
-    {meals.map(meal => <View key={meal} style={{ gap: 12 }}><View style={[ui.row, { justifyContent: 'space-between' }]}><Heading>{meal}</Heading>
-      <Button label="…" accessibilityLabel={`Actions for ${meal}`} onPress={() => setMenu(value => value === `meal:${meal}` ? null : `meal:${meal}`)} /></View>
-      {menu === `meal:${meal}` && <ActionSheetPopover title={meal} actions={[
-        { key: 'copy', label: 'Copy to Today', onPress: () => void action.run(async () => { await controller.copyMeal(date, meal, localDate(), meal); setMenu(null); }) },
-        { key: 'add', label: `Add to ${meal}`, onPress: () => { setMenu(null); router.push({ pathname: '/(tabs)/library', params: { meal } }); } },
-      ]} />}{entries.filter(entry => entry.meal === meal).map(renderEntry)}</View>)}
-    </View>} />
-  </Page>;
+  const closeMenu = () => { setAnchor(null); };
+  const chooseDate = (next: string) => {
+    composer.closeField();
+    chooseDateRaw(next);
+  };
+  const openMenu = (value: string, node: ComponentRef<typeof View> | null) => measurePopoverAnchor(node, measured => { setAnchor(measured); setMenu(value); });
+
+  const moveEntry = (entry: DiaryEntrySnapshot, toDate: string, meal = entry.meal) => void action.run(async () => {
+    await controller.moveEntries([entry.id], toDate, meal);
+    closeMenu();
+    setExpanded(null);
+  });
+
+  const calendarSelect = (next: string) => {
+    if (action.busy) return;
+    if (calendarIntent === 'move') {
+      const entry = entries.find(item => item.id === expanded);
+      if (entry) moveEntry(entry, next);
+    } else if (calendarIntent === 'copy' && copyMeal) {
+      void action.run(async () => { await controller.copyMeal(date, copyMeal, next, copyMeal); closeMenu(); });
+    } else chooseDate(next);
+  };
+
+  const commitUsual = (suggestion: TodaySuggestion, meal: string) => void action.run(async () => {
+    if (suggestion.kind === 'saved_meal') await controller.logSavedMeal(suggestion.id, meal, date, generateId());
+    else await controller.confirm({ food: suggestion.food, quantity: defaultQuantity(suggestion.food), meal, date, idempotencyKey: generateId() });
+  });
+
+  const toggleEntry = (id: string) => setSelected(values => values.includes(id) ? values.filter(value => value !== id) : [...values, id]);
+  const activeEntry = entries.find(entry => entry.id === expanded);
+  const activeMeal = menu?.startsWith('meal:') ? menu.slice(5) : null;
+  const mealEntries = activeMeal ? entries.filter(entry => entry.meal === activeMeal) : [];
+  const totals = activeDay?.totals.nutrients;
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const value = shiftDate(weekEnd, index - 6);
+    const saved = week.value?.find(day => day.date === value);
+    return { date: value, weekdayInitial: ['M', 'T', 'W', 'T', 'F', 'S', 'S'][index] ?? '', dayNumber: value.slice(8), completeness: saved?.completeness ?? 'none' as const, kcal: saved?.kcal ?? 0 };
+  });
+
+  const handleDragMoveEntry = (entry: DiaryEntrySnapshot, targetMeal: string) => {
+    if (entry.meal === targetMeal) return;
+    void action.run(async () => {
+      await controller.moveEntries([entry.id], date, targetMeal);
+      closeMenu();
+      setExpanded(null);
+    });
+  };
+
+  return <MealEntryDragProvider
+    energyUnit={unit}
+    disabled={blocked || selecting || Boolean(fanMeal) || Boolean(composer.fieldMeal) || draftForDate || Boolean(anchor)}
+    scrollRef={scrollRef}
+    scrollOffsetRef={scrollOffsetRef}
+    onMoveEntry={handleDragMoveEntry}
+    onDraggingChange={setDraggingEntry}
+  >
+    <Page
+      scrollRef={scrollRef}
+      scrollEnabled={!fanMeal && !draggingEntry}
+      onScroll={event => { scrollOffsetRef.current = event.nativeEvent.contentOffset.y; }}
+      footer={<View style={{ gap: 8 }}>
+        <RevealPanel visible={selecting} direction="up">
+          <MultiSelectBar count={selected.length} onCopyToToday={() => { if (selected.length) void action.run(async () => { await controller.copyEntries(selected, today); clearSelection(); }); }} onMove={() => { if (selected.length) setMoving(value => !value); }}
+            onDelete={() => { if (selected.length) void action.run(async () => { await controller.deleteEntries(selected); clearSelection(); }); }} onDone={clearSelection} />
+        </RevealPanel>
+        <MealComposerFooter composer={composer} />
+      </View>}
+      overlay={!selecting && !composer.fieldMeal ? <UndoToast /> : null}
+    >
+      <TwoPane gap={28} primary={<View>
+        <WeekDateRail days={days} selectedDate={date} rangeLabel={railRangeLabel(shiftDate(weekEnd, -6), weekEnd)} energyUnit={unit} onSelectDate={chooseDate} maxDate={today}
+          onOpenCalendar={node => { setCalendarIntent('navigate'); openMenu('calendar', node); }}
+          onPrevWeek={() => chooseDate(shiftDate(date, -7))}
+          onNextWeek={() => chooseDate(shiftDate(date, 7) > today ? today : shiftDate(date, 7))} disableNext={weekEnd >= weekEndForDate(today)}
+          trailing={<Pressable accessibilityRole="button" accessibilityLabel="Settings" onPress={() => router.push('/settings')} style={styles.iconButton}><DoopIcon name="settings" size={20} color={colors.muted} /></Pressable>} />
+        <View style={styles.summaryBlock}>
+          <View style={styles.summaryTopRow}>
+            <Pressable ref={totalAnchor} accessibilityRole="button" accessibilityLabel={`Day actions, ${number(energyValue(totals?.kcal, unit))} ${unit}, ${activeDay?.day?.completeness ?? 'none'}`} accessibilityState={{ expanded: Boolean(anchor) && menu === 'day' }}
+              onPress={() => openMenu('day', totalAnchor.current)} style={styles.summary}>
+              <View style={styles.totalRow}><Text style={styles.total}>{number(energyValue(totals?.kcal, unit))}</Text><Text style={styles.target}>{`/ ${number(energyValue(activeDay?.goal?.target_kcal, unit))} ${unit}`}</Text><DoopIcon name="chevronDown" size={14} color={colors.muted} /></View>
+            </Pressable>
+            <DayCompletenessToggle
+              status={activeDay?.day?.completeness ?? 'none'}
+              disabled={action.busy}
+              onToggle={next => void action.run(() => controller.setCompleteness(date, next))}
+            />
+          </View>
+          <View style={styles.macros}>{([
+            ['Protein', 'protein_g', macroColors.protein], ['Carbs', 'carbs_g', macroColors.carbs], ['Fat', 'fat_g', macroColors.fat],
+          ] as const).map(([label, key, color]) => <View key={key} style={styles.macro}><Text style={[styles.macroLabel, { color }]}>{label}</Text><Text style={styles.macroValue}>{number(totals?.[key])}<Text style={styles.macroUnit}>g</Text></Text></View>)}</View>
+        </View>
+        <ErrorMessage message={action.error ?? composer.action.error ?? result.error ?? week.error ?? preferences.error ?? offlinePhotos.error} />
+        <NoticePill message={notice} onDismiss={() => setNotice('')} style={{ marginTop: 8 }} />
+        {result.loading && !activeDay ? <Muted>Loading saved day…</Muted> : null}
+      </View>} secondary={<View style={{ zIndex: fanMeal ? 100 : 0 }}>
+        <RevealPanel visible={moving} direction="down" style={styles.movePanel}>
+          <Text style={styles.menuTitle}>Move selected entries</Text>
+          <View style={ui.wrap}>{configuredMeals.map(meal => <Button key={meal} label={meal} disabled={action.busy} onPress={() => void action.run(async () => { await controller.moveEntries(selected, date, meal); clearSelection(); })} />)}</View>
+        </RevealPanel>
+        {meals.map((meal, index) => {
+          const logged = entries.filter(entry => entry.meal === meal).sort((a, b) => b.occurred_at.localeCompare(a.occurred_at));
+          const nextMeal = meals[index + 1];
+          const nextLogged = !!nextMeal && entries.some(entry => entry.meal === nextMeal);
+          const kcal = logged.reduce((total, entry) => total + entry.nutrients.kcal, 0);
+          const usual = suggestions.value?.[Math.min(index, (suggestions.value?.length ?? 1) - 1)];
+          const showDraft = isDraftForMeal(draft, meal, date);
+
+          return <View key={meal} ref={node => { mealRowRefs.current[meal] = node; }} collapsable={false} style={[styles.meal, { zIndex: fanMeal === meal ? 100 : meals.length - index }]}>
+            {showDraft ? (
+              <MealActiveDraftBlock
+                meal={meal}
+                date={date}
+                entries={logged}
+                energyUnit={unit}
+                blocked={blocked}
+                onSavedAsMeal={name => setNotice(`Saved ${name} to your meals.`)}
+              />
+            ) : composer.fieldMeal === meal ? (
+              <MealComposerField composer={composer} meal={meal} />
+            ) : (
+              <HistoryMealSection
+                meal={meal}
+                logged={logged}
+                kcal={kcal}
+                unit={unit}
+                hasNext={index < meals.length - 1 && !draftForDate}
+                nextLogged={nextLogged}
+                selecting={selecting}
+                selected={selected}
+                expandedEntryId={Boolean(anchor) && menu === 'entry' ? expanded : null}
+                blocked={blocked}
+                onOpenMealMenu={node => { setSavedMeal(null); openMenu(`meal:${meal}`, node); }}
+                onPressEntry={(entry, node) => {
+                  if (selecting) toggleEntry(entry.id);
+                  else { setExpanded(entry.id); openMenu('entry', node); }
+                }}
+                ending={
+                  <MealHoldFan
+                    accessibilityLabel={`Add to ${meal}`}
+                    empty={!logged.length}
+                    disabled={blocked}
+                    onOpenChange={open => setFanMeal(current => open ? meal : current === meal ? null : current)}
+                    onTapAdd={() => composer.openField(meal)}
+                    onSelectAction={kind => {
+                      if (kind === 'camera') composer.openCamera(meal);
+                      else if (kind === 'voice') composer.voice(meal);
+                      else if (kind === 'barcode') composer.openBarcode(meal);
+                      else composer.openField(meal, kind === 'quick-add');
+                    }}
+                    {...(usual ? { usual: { id: usual.id, label: usual.name }, onSelectUsual: () => { if (!blocked) commitUsual(usual, meal); } } : {})}
+                  />
+                }
+              />
+            )}
+            <MealDraftAuxBlock meal={meal} date={date} blocked={blocked} composer={composer} offlinePhotos={dayOfflinePhotos} />
+          </View>;
+        })}
+      </View>} />
+      <AnchoredPopover anchor={menu ? anchor : null} onClose={closeMenu} width={menu === 'calendar' ? 350 : menu === 'entry' ? 304 : 214} label={menu === 'calendar' ? 'Choose date' : menu === 'entry' ? 'Edit entry' : menu === 'day' ? 'Day actions' : 'Meal actions'} surface={menu === 'calendar'}>
+        {menu === 'calendar' ? <RailMonthSheet selectedDate={date} maxDate={today} days={days} loadMonth={loadCalendar} onSelectDate={calendarSelect} onClose={closeMenu} /> : null}
+        {menu === 'day' ? <View style={styles.menu}>
+          <Pressable disabled={action.busy || !entries.length} accessibilityRole="button" accessibilityLabel="Copy day to Today" onPress={() => void action.run(async () => { await controller.copyEntries(entries.map(entry => entry.id), today); closeMenu(); })} style={styles.menuRow}><DoopIcon name="today" size={16} color={colors.muted} /><Text style={styles.menuText}>Copy day to Today</Text></Pressable>
+          <Pressable disabled={action.busy || !entries.length} accessibilityRole="button" accessibilityLabel="Select entries" onPress={() => { closeMenu(); setExpanded(null); setSelecting(true); setSelected([]); }} style={styles.menuRow}><DoopIcon name="check" size={16} color={colors.muted} /><Text style={styles.menuText}>Select entries</Text></Pressable>
+        </View> : null}
+        {activeMeal ? <View style={styles.menu}>
+          <Pressable disabled={action.busy || !mealEntries.length} accessibilityRole="button" onPress={() => void action.run(async () => { await controller.copyMeal(date, activeMeal, today, activeMeal); closeMenu(); })} style={styles.menuRow}><DoopIcon name="today" size={16} color={colors.muted} /><Text style={styles.menuText}>Copy to Today</Text></Pressable>
+          <Pressable disabled={action.busy || !mealEntries.length} accessibilityRole="button" onPress={() => { setCalendarIntent('copy'); setCopyMeal(activeMeal); setMenu('calendar'); }} style={styles.menuRow}><DoopIcon name="today" size={16} color={colors.muted} /><Text style={styles.menuText}>Copy to…</Text><DoopIcon name="chevronDown" size={14} color={colors.muted} /></Pressable>
+          <Pressable disabled={action.busy || !mealEntries.length || savedMeal === activeMeal} accessibilityRole="button" onPress={() => void action.run(async () => { await controller.saveSavedMeal({ name: activeMeal, items: mealEntries.map(({ food, quantity }) => ({ food, quantity })) }); setSavedMeal(activeMeal); })} style={styles.menuRow}><DoopIcon name={savedMeal === activeMeal ? 'check' : 'pin'} size={16} color={savedMeal === activeMeal ? colors.success : colors.muted} /><Text style={styles.menuText}>{savedMeal === activeMeal ? 'Saved as meal' : 'Save as meal'}</Text></Pressable>
+        </View> : null}
+        {menu === 'entry' && activeEntry ? (
+          <EntryEditPopover
+            entry={activeEntry}
+            date={date}
+            today={today}
+            dateLabel={shortRailDate(date)}
+            meals={configuredMeals}
+            energyUnit={unit}
+            busy={action.busy}
+            onUpdateQuantity={quantity => void action.run(() => controller.updateEntryQuantity(activeEntry, quantity))}
+            onMoveMeal={meal => void action.run(async () => {
+              if (meal !== activeEntry.meal) await controller.moveEntries([activeEntry.id], date, meal);
+              closeMenu();
+            })}
+            onMoveToday={() => moveEntry(activeEntry, today)}
+            onPickDate={() => { setCalendarIntent('move'); setMenu('calendar'); }}
+            onRemove={() => void action.run(async () => { await controller.deleteEntry(activeEntry.id); closeMenu(); setExpanded(null); })}
+          />
+        ) : null}
+        {menu ? <View style={{ paddingHorizontal: 12 }}><ErrorMessage message={action.error} /></View> : null}
+      </AnchoredPopover>
+    </Page>
+  </MealEntryDragProvider>;
 }
+
+function HistoryMealSection({
+  meal,
+  logged,
+  kcal,
+  unit,
+  hasNext,
+  nextLogged,
+  selecting,
+  selected,
+  expandedEntryId,
+  blocked,
+  onOpenMealMenu,
+  onPressEntry,
+  ending,
+}: {
+  meal: string;
+  logged: DiaryEntrySnapshot[];
+  kcal: number;
+  unit: 'kcal' | 'kJ';
+  hasNext: boolean;
+  nextLogged: boolean;
+  selecting: boolean;
+  selected: string[];
+  expandedEntryId: string | null;
+  blocked: boolean;
+  onOpenMealMenu: (node: ComponentRef<typeof View> | null) => void;
+  onPressEntry: (entry: DiaryEntrySnapshot, node: ComponentRef<typeof View> | null) => void;
+  ending: ReactNode;
+}) {
+  const drag = useMealEntryDrag();
+
+  return (
+    <MealRailShell
+      meal={meal}
+      logged={logged.length > 0}
+      totalText={logged.length ? number(energyValue(kcal, unit)) : '—'}
+      hasNext={hasNext}
+      nextLogged={nextLogged}
+      accessibilityLabel={`Actions for ${meal}`}
+      onPressHeader={onOpenMealMenu}
+      ending={ending}
+    >
+      {logged.length ? (
+        <View style={styles.entries}>
+          {logged.map(entry => {
+            const checked = selected.includes(entry.id);
+            return (
+              <HistoryEntryRow
+                key={entry.id}
+                entry={entry}
+                meal={meal}
+                unit={unit}
+                selecting={selecting}
+                checked={checked}
+                expanded={expandedEntryId === entry.id}
+                disabled={selecting || blocked}
+                onPress={node => {
+                  if (drag?.shouldSuppressTap()) return;
+                  onPressEntry(entry, node);
+                }}
+              />
+            );
+          })}
+        </View>
+      ) : null}
+    </MealRailShell>
+  );
+}
+
+function HistoryEntryRow({
+  entry,
+  meal,
+  unit,
+  selecting,
+  checked,
+  expanded,
+  disabled,
+  onPress,
+}: {
+  entry: DiaryEntrySnapshot;
+  meal: string;
+  unit: 'kcal' | 'kJ';
+  selecting: boolean;
+  checked: boolean;
+  expanded: boolean;
+  disabled: boolean;
+  onPress: (node: ComponentRef<typeof View> | null) => void;
+}) {
+  const rowRef = useRef<ComponentRef<typeof View> | null>(null);
+  return (
+    <DraggableEntryRow entry={entry} sourceMeal={meal} disabled={disabled}>
+      <Pressable
+        ref={rowRef}
+        accessibilityRole={selecting ? 'checkbox' : 'button'}
+        accessibilityLabel={`${entry.food.name}, ${entryTime(entry)}, ${number(energyValue(entry.nutrients.kcal, unit))} ${unit}`}
+        accessibilityHint={selecting ? 'Tap to change selection' : 'Tap to edit; hold and drag to move to another meal'}
+        accessibilityState={selecting ? { checked } : { expanded }}
+        onPress={() => onPress(rowRef.current)}
+        style={({ pressed }) => [styles.entry, pressed && { opacity: 0.65 }]}
+      >
+        {selecting ? (
+          <View style={[styles.checkCircle, checked && { backgroundColor: colors.accent, borderColor: colors.accent }]}>
+            {checked ? <DoopIcon name="check" size={12} color={colors.onAccent} /> : null}
+          </View>
+        ) : (
+          <View style={styles.dragGrip} accessible={false}>
+            <DoopIcon name="grip" size={14} color={colors.muted} />
+          </View>
+        )}
+        <Text numberOfLines={1} style={styles.entryName}>{entry.food.name}</Text>
+        <Text style={styles.time}>{entryTime(entry)}</Text>
+        <Text style={styles.entryKcal}>
+          {number(energyValue(entry.nutrients.kcal, unit))}
+          <Text style={styles.entryUnit}>{` ${unit}`}</Text>
+        </Text>
+      </Pressable>
+    </DraggableEntryRow>
+  );
+}
+
+const styles = StyleSheet.create({
+  iconButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: radius.r12 },
+  summaryBlock: { marginTop: 22, gap: 4 },
+  summaryTopRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', columnGap: 10, rowGap: 4 },
+  summary: { minHeight: 44, justifyContent: 'center', flexShrink: 1 },
+  totalRow: { flexDirection: 'row', alignItems: 'baseline', gap: 5 },
+  total: { ...fontFace('extrabold'), ...tabularNums, fontSize: 32, lineHeight: 38, letterSpacing: -0.8, color: colors.ink },
+  target: { ...fontFace('medium'), ...tabularNums, fontSize: 13, color: colors.muted },
+  macros: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', gap: 12 },
+  macro: { flexDirection: 'row', alignItems: 'baseline', gap: 4 },
+  macroLabel: { ...fontFace('semibold'), fontSize: 12 },
+  macroValue: { ...fontFace('bold'), ...tabularNums, fontSize: 16, color: colors.ink },
+  macroUnit: { ...fontFace('medium'), fontSize: 12, color: colors.muted },
+  meal: { position: 'relative' },
+  entries: { marginLeft: 52, marginRight: 52, marginBottom: 6 },
+  entry: { height: 42, borderTopWidth: 1, borderTopColor: colors.hairline, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  entryName: { ...fontFace('medium'), flex: 1, minWidth: 0, color: colors.ink, fontSize: 14 },
+  time: { ...fontFace('medium'), ...tabularNums, fontSize: 12, color: colors.muted },
+  entryKcal: { ...fontFace('bold'), ...tabularNums, color: colors.ink, fontSize: 13, textAlign: 'right', minWidth: 46 },
+  entryUnit: { ...fontFace('medium'), color: colors.muted, fontSize: 10 },
+  checkCircle: { width: 18, height: 18, borderWidth: 1.5, borderColor: colors.border, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  dragGrip: { width: 14, alignItems: 'center', justifyContent: 'center', opacity: 0.6 },
+  menu: { padding: 6 },
+  menuRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8, borderRadius: radius.r12 },
+  menuText: { ...fontFace('semibold'), flexShrink: 1, color: colors.ink, fontSize: 13 },
+  menuTitle: { ...fontFace('bold'), color: colors.ink, fontSize: 14 },
+  movePanel: { gap: 10, marginBottom: 16 },
+});

@@ -1,0 +1,14 @@
+{
+  "name": "oct-barcode-scanner",
+  "version": "0.1.0",
+  "description": "Local CameraX/ZXing-C++ and AVFoundation/Vision barcode scanner for OpenCalorieTracker.",
+  "main": "index.ts",
+  "license": "Apache-2.0",
+  "private": true,
+  "peerDependencies": {
+    "expo": "*",
+    "expo-modules-core": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}

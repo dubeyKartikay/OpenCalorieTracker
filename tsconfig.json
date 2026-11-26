@@ -6,5 +6,5 @@
     "exactOptionalPropertyTypes": true,
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["app/**/*.ts", "app/**/*.tsx", "src/**/*.ts", "src/**/*.tsx", "vitest.config.ts"]
+  "include": ["app/**/*.ts", "app/**/*.tsx", "src/**/*.ts", "src/**/*.tsx", "modules/**/*.ts", "modules/**/*.tsx", "vitest.config.ts"]
 }

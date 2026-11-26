@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { bootstrap } from './bootstrap';
 import type { AppRuntime } from './runtime';
-import { localDate } from './controller';
+import { localDate, shiftDate } from './controller';
 import type { AppController } from './controller';
 import type { OfflinePhotoDraft, Quantity, WaterLog } from '../domain';
 import type { SavedMeal } from '../storage';
@@ -35,27 +35,50 @@ export function useAppRuntime() {
   useSyncExternalStore(runtime.controller.subscribe, runtime.controller.getRevision, runtime.controller.getRevision);
   return runtime;
 }
-export function useAsyncResource<T>(load: () => Promise<T>) {
-  const [state, setState] = useState<{ load: () => Promise<T>; value?: T; error: string | null; loading: boolean }>({ load, error: null, loading: true });
+export function useAsyncResource<T>(load: () => Promise<T>, resourceKey?: string) {
+  const [state, setState] = useState<{ load: () => Promise<T>; key?: string; value?: T; error: string | null; loading: boolean }>({
+    load,
+    ...(resourceKey === undefined ? {} : { key: resourceKey }),
+    error: null,
+    loading: true,
+  });
   useEffect(() => {
     let active = true;
-    load().then(value => { if (active) setState({ load, value, error: null, loading: false }); })
-      .catch(error => { if (active) setState({ load, error: error instanceof Error ? error.message : String(error), loading: false }); });
+    load()
+      .then(value => {
+        if (active) {
+          setState({ load, ...(resourceKey === undefined ? {} : { key: resourceKey }), value, error: null, loading: false });
+        }
+      })
+      .catch(error => {
+        if (active) {
+          setState(previous => ({
+            load,
+            ...(resourceKey === undefined ? {} : { key: resourceKey }),
+            ...(resourceKey !== undefined && previous.key !== resourceKey ? {} : { value: previous.value }),
+            error: error instanceof Error ? error.message : String(error),
+            loading: false,
+          }));
+        }
+      });
     return () => { active = false; };
-  }, [load]);
-  return state.load === load ? state : { error: null, loading: true, value: undefined };
+  }, [load, resourceKey]);
+  if (resourceKey !== undefined && state.key !== resourceKey) {
+    return { load, key: resourceKey, value: undefined as T | undefined, error: null, loading: true };
+  }
+  return state.load === load ? state : { ...state, error: null, loading: true };
 }
 export function useHistoryDay(date: string) {
   const { controller } = useAppRuntime();
   const revision = controller.getRevision();
-  return useAsyncResource(useCallback(() => { void revision; return controller.day(date); }, [controller, date, revision]));
+  return useAsyncResource(useCallback(() => { void revision; return controller.day(date); }, [controller, date, revision]), date);
 }
 export function useTodayDiary() { return useHistoryDay(localDate()); }
 export function useTodayWater(date = localDate()) {
   const { controller } = useAppRuntime(); const revision = controller.getRevision();
   return useAsyncResource<{ totalMl: number; logs: WaterLog[] }>(useCallback(() => {
     void revision; return controller.getDailyWater(date);
-  }, [controller, date, revision]));
+  }, [controller, date, revision]), date);
 }
 export function useOfflinePhotoDrafts() {
   const { controller } = useAppRuntime(); const revision = controller.getRevision();
@@ -87,20 +110,48 @@ export function useRecipes() {
 }
 export function useRecipeBatches(recipeId: string) {
   const { controller } = useAppRuntime(); const revision = controller.getRevision();
-  return useAsyncResource(useCallback(() => { void revision; return controller.listBatches(recipeId); }, [controller, recipeId, revision]));
+  return useAsyncResource(useCallback(() => { void revision; return controller.listBatches(recipeId); }, [controller, recipeId, revision]), recipeId);
 }
 export function useWeekSummary(endDate = localDate()) {
   const { controller } = useAppRuntime(); const revision = controller.getRevision();
-  return useAsyncResource(useCallback(() => { void revision; return controller.getWeekSummary(endDate); }, [controller, endDate, revision]));
+  return useAsyncResource(useCallback(() => { void revision; return controller.getWeekSummary(endDate); }, [controller, endDate, revision]), endDate);
 }
 export function useProgressData(range = 7, endDate = localDate()) {
   const { controller } = useAppRuntime(); const revision = controller.getRevision();
-  return useAsyncResource(useCallback(() => { void revision; return controller.progress(range, endDate); }, [controller, range, endDate, revision]));
+  return useAsyncResource(useCallback(() => { void revision; return controller.progress(range, endDate); }, [controller, range, endDate, revision]), `${range}:${endDate}`);
 }
-export function useCatalogSearch(query: string) {
+export function useDateRangeCalendarLoader() {
+  const { controller } = useAppRuntime();
+  return useCallback(async (start: string, end: string) => {
+    const days = [];
+    for (let cursor = start; cursor <= end; cursor = shiftDate(cursor, 7)) {
+      days.push(...await controller.getWeekSummary(shiftDate(cursor, 6)));
+    }
+    return days;
+  }, [controller]);
+}
+export function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    if (value === '' || delayMs <= 0) {
+      const immediate = setTimeout(() => setDebounced(value), 0);
+      return () => clearTimeout(immediate);
+    }
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [delayMs, value]);
+  return value === '' ? value : debounced;
+}
+export function useCatalogSearch(query: string, debounceMs = 180) {
   const { controller } = useAppRuntime();
   const revision = controller.getRevision();
-  return useAsyncResource(useCallback(() => { void revision; return controller.search(query); }, [controller, query, revision]));
+  const normalized = query.trim();
+  const debounced = useDebouncedValue(normalized, debounceMs);
+  const resource = useAsyncResource(
+    useCallback(() => { void revision; return controller.search(debounced); }, [controller, debounced, revision]),
+    debounced,
+  );
+  return { ...resource, debouncing: normalized !== debounced };
 }
 export function usePacksManager() {
   const runtime = useAppRuntime();
@@ -126,31 +177,81 @@ export function useAIStatus() {
   return useAsyncResource(useCallback(() => { void revision; return controller.getAIStatus(); }, [controller, revision]));
 }
 
-// Capture can start in Library and finish in Today. Keep its action state with the controller.
+// Capture can start in Library and finish in Today or History. Keep its action state and photo with the controller.
 type CaptureInput = { text: string; imageDataUrl?: string; meal: string; date?: string };
-const draftActions = new WeakMap<AppController, { busy: boolean; error: string | null; lastCapture: CaptureInput | null }>();
+type NormalizedCaptureInput = { text: string; imageDataUrl?: string; meal: string; date: string };
+export interface DraftActionError {
+  message: string;
+  operation: 'capture' | 'draft';
+  meal: string;
+  date: string;
+}
+const draftActions = new WeakMap<AppController, {
+  busy: boolean;
+  actionError: DraftActionError | null;
+  lastCapture: NormalizedCaptureInput | null;
+  photoUri: string | null;
+}>();
 export function useActiveDraft() {
   const { controller } = useAppRuntime();
   let state = draftActions.get(controller);
-  if (!state) { state = { busy: false, error: null, lastCapture: null }; draftActions.set(controller, state); }
+  if (!state) { state = { busy: false, actionError: null, lastCapture: null, photoUri: null }; draftActions.set(controller, state); }
   const actionState = state;
-  const run = async <T,>(action: () => Promise<T>): Promise<T | undefined> => {
+  const run = async <T,>(
+    context: { operation: 'capture' | 'draft'; meal: string; date: string },
+    action: () => Promise<T>,
+  ): Promise<T | undefined> => {
     if (actionState.busy) return;
-    actionState.busy = true; actionState.error = null; controller.refresh();
+    actionState.busy = true; actionState.actionError = null; controller.refresh();
     try { return await action(); }
-    catch (reason) { actionState.error = reason instanceof Error ? reason.message : String(reason); return undefined; }
+    catch (reason) {
+      actionState.actionError = {
+        message: reason instanceof Error ? reason.message : String(reason),
+        ...context,
+      };
+      return undefined;
+    }
     finally { actionState.busy = false; controller.refresh(); }
   };
-  return { draft: controller.getActiveDraft(), busy: actionState.busy, error: actionState.error, lastCapture: actionState.lastCapture,
-    clearError: () => { actionState.error = null; controller.refresh(); },
-    capture: (input: CaptureInput) => run(() => { actionState.lastCapture = input; return controller.captureMealWithAI(input); }),
-    answerQuestion: (questionId: string, optionId: string) => run(() => controller.answerDraftQuestion(questionId, optionId)),
+  return {
+    draft: controller.getActiveDraft(),
+    photoUri: actionState.photoUri,
+    busy: actionState.busy,
+    error: actionState.actionError?.message ?? null,
+    actionError: actionState.actionError,
+    lastCapture: actionState.lastCapture,
+    clearError: () => { actionState.actionError = null; controller.refresh(); },
+    capture: (input: CaptureInput) => {
+      const normalized: NormalizedCaptureInput = { ...input, date: input.date ?? localDate() };
+      return run({ operation: 'capture', meal: normalized.meal, date: normalized.date }, async () => {
+        actionState.lastCapture = normalized;
+        const proposal = await controller.captureMealWithAI(normalized);
+        actionState.photoUri = normalized.imageDataUrl ?? null;
+        return proposal;
+      });
+    },
+    answerQuestion: (questionId: string, optionId: string) => {
+      const active = controller.getActiveDraft();
+      const context = active
+        ? { operation: 'draft' as const, meal: active.meal, date: active.date }
+        : { operation: 'draft' as const, meal: '', date: localDate() };
+      return run(context, () => controller.answerDraftQuestion(questionId, optionId));
+    },
     removeItem: (itemId: string) => controller.removeDraftItem(itemId),
     updateItemQuantity: (index: number, quantity: Quantity) => controller.updateDraftItemQuantity(index, quantity),
     saveAsMeal: (name: string): Promise<SavedMeal> => controller.saveActiveDraftAsMeal(name),
-    confirmAll: (idempotencyPrefix?: string) => run(async () => {
-      const entries = await controller.confirmActiveDraft(idempotencyPrefix); actionState.lastCapture = null; return entries;
-    }),
-    discard: () => { actionState.error = null; actionState.lastCapture = null; controller.discardActiveDraft(); },
+    confirmAll: (idempotencyPrefix?: string) => {
+      const active = controller.getActiveDraft();
+      const context = active
+        ? { operation: 'draft' as const, meal: active.meal, date: active.date }
+        : { operation: 'draft' as const, meal: '', date: localDate() };
+      return run(context, async () => {
+        const entries = await controller.confirmActiveDraft(idempotencyPrefix);
+        actionState.lastCapture = null;
+        actionState.photoUri = null;
+        return entries;
+      });
+    },
+    discard: () => { actionState.actionError = null; actionState.lastCapture = null; actionState.photoUri = null; controller.discardActiveDraft(); },
   };
 }

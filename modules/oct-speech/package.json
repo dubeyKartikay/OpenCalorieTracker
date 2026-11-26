@@ -1,0 +1,7 @@
+{
+  "name": "oct-speech",
+  "version": "0.1.0",
+  "description": "Local Expo module for native OS speech-to-text dictation (Android SpeechRecognizer + iOS SFSpeechRecognizer).",
+  "main": "index.ts",
+  "private": true
+}

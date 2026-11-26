@@ -9,6 +9,7 @@ export function calculateRecipeTotal(ingredients: readonly RecipeIngredient[]): 
   }));
 }
 
+export const MAX_BATCH_FRACTION = 1;
 export type BatchPortion = { grams: number } | { fraction: number };
 /** A numeric amount is grams; fractions are explicit to avoid interpreting 0.5 g as half a batch. */
 export function calculateBatchServing(batchInput: RecipeBatch, amountGramsOrFraction: number | BatchPortion): NutrientAggregate {
@@ -21,7 +22,7 @@ export function calculateBatchServing(batchInput: RecipeBatch, amountGramsOrFrac
     if (batch.cooked_weight_g === null) throw new RangeError('Cooked batch weight is required for a gram portion');
     fraction = amount / batch.cooked_weight_g;
   } else {
-    if (amount > 1) throw new RangeError('Batch fraction must be between zero and one');
+    if (amount > MAX_BATCH_FRACTION) throw new RangeError('Batch fraction must be between zero and one');
     fraction = amount;
   }
   const total = calculateRecipeTotal(batch.ingredients);

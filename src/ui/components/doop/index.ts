@@ -9,11 +9,12 @@ export type { WaterCardProps } from './WaterCard';
 export { MicronutrientsCard } from './MicronutrientsCard';
 export type { MicronutrientsCardProps } from './MicronutrientsCard';
 
-export { applyKeypadKey, InlineKeypad, LibV2Keypad, LibV2UnitRail } from './InlineKeypad';
+export { applyKeypadKey, InlineKeypad, LibV2Keypad, LibV2UnitRail, NumericEditor } from './InlineKeypad';
 export type {
   InlineKeypadProps,
   LibV2KeypadProps,
   LibV2UnitRailProps,
+  NumericEditorProps,
 } from './InlineKeypad';
 
 export { CompletenessMark, RailTrendDayMark } from './CompletenessMark';
@@ -47,6 +48,7 @@ export {
   LibV2MacroBar,
   LibV2PortionChip,
   MacroProportionBar,
+  MealDestinationPills,
   SourceBadge,
 } from './PortionAndMacro';
 export type {
@@ -56,22 +58,24 @@ export type {
   LibV2MacroBarProps,
   LibV2PortionChipProps,
   MacroProportionBarProps,
+  MealDestinationPillsProps,
   SourceBadgeProps,
   SourceTone,
 } from './PortionAndMacro';
 
 export {
   ActionSheetPopover,
+  EntryEditPopover,
   MultiSelectBar,
-  QuickAddPanel,
   RailSelectBar,
 } from './HistoryControls';
 export type {
   ActionSheetPopoverAction,
   ActionSheetPopoverProps,
   ActionSheetTone,
+  EntryEditPopoverProps,
   MultiSelectBarProps,
-  QuickAddEntry,
-  QuickAddPanelProps,
   RailSelectBarProps,
 } from './HistoryControls';
+export { RevealPanel } from './Motion';
+export type { RevealPanelProps } from './Motion';

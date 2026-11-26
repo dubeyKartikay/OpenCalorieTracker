@@ -3,17 +3,28 @@ import type { ComponentRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 import * as Haptics from 'expo-haptics';
-import { colors, fontFamily, fontSize, fontWeight, radius, spacing, tabularNums } from '../../tokens';
+import { energyValue, number } from '../../format';
+import { colors, fontFace, spacing, tabularNums } from '../../tokens';
 import { findActiveTarget, SERVING_STOPS, snapServingStop } from './hitTest';
 import type { GestureTarget, ScreenRect, ServingMultiplier } from './hitTest';
 
-const KCAL_TO_KJ = 4.184;
+import { DoopIcon, inferFoodGlyph, mealDaypartGlyph } from '../DoopIcons';
 
-export type LogMeal = 'breakfast' | 'lunch' | 'snack' | 'dinner';
+export type LogMeal = string;
+export interface HoldToLogGestureControl {
+  start: (x: number, y: number) => void;
+  update: (x: number, y: number) => void;
+  finish: (x: number, y: number, success: boolean) => void;
+  cancel: () => void;
+}
+
 export interface HoldToLogPanelProps {
   foodLabel: string;
+  portionLabel?: string;
+  onGestureReady?: (control: HoldToLogGestureControl | null) => void;
   kcalForMultiplier: (multiplier: ServingMultiplier) => number;
   onLog: (meal: LogMeal, multiplier: ServingMultiplier) => void;
   onDismiss: () => void;
@@ -24,14 +35,13 @@ export interface HoldToLogPanelProps {
   style?: StyleProp<ViewStyle>;
 }
 
-const meals: { id: LogMeal; label: string }[] = [
-  { id: 'breakfast', label: 'Breakfast' }, { id: 'lunch', label: 'Lunch' },
-  { id: 'snack', label: 'Snack' }, { id: 'dinner', label: 'Dinner' },
-];
+const DEFAULT_MEALS = ['Breakfast', 'Lunch', 'Snack', 'Dinner'] as const;
 const servingLabels = ['½', '1', '1½', '2'];
 
 export function HoldToLogPanel({
   foodLabel,
+  portionLabel = '1 serving',
+  onGestureReady,
   kcalForMultiplier,
   onLog,
   onDismiss,
@@ -40,6 +50,11 @@ export function HoldToLogPanel({
   mealLabels,
   style,
 }: HoldToLogPanelProps) {
+  const resolvedMeals = useMemo(() => {
+    const trimmed = (mealLabels ?? []).map(label => label.trim()).filter(Boolean);
+    const unique = [...new Set(trimmed)];
+    return unique.length > 0 ? unique : [...DEFAULT_MEALS];
+  }, [mealLabels]);
   const [multiplier, setMultiplier] = useState<ServingMultiplier>(initialMultiplier);
   const [activeMeal, setActiveMeal] = useState<LogMeal | null>(null);
   const value = useRef(multiplier);
@@ -130,34 +145,34 @@ export function HoldToLogPanel({
     setActiveMeal(null);
   }, []);
 
+  useLayoutEffect(() => {
+    onGestureReady?.({ start, update, finish, cancel });
+    return () => onGestureReady?.(null);
+  }, [onGestureReady, start, update, finish, cancel]);
+
   // RNGH stores these callbacks for future gesture events; none run during render.
   /* eslint-disable react-hooks/refs */
-  const gesture = useMemo(() => Gesture.Pan().minDistance(4).maxPointers(1).shouldCancelWhenOutside(false)
-    .onStart(event => { runOnJS(start)(event.absoluteX, event.absoluteY); })
-    .onUpdate(event => { runOnJS(update)(event.absoluteX, event.absoluteY); })
-    .onEnd((event, success) => { runOnJS(finish)(event.absoluteX, event.absoluteY, success); })
-    .onFinalize(() => { runOnJS(cancel)(); }), [start, update, finish, cancel]);
+  const gesture = useMemo(() => Gesture.Pan().enabled(!onGestureReady).minDistance(4).maxPointers(1).shouldCancelWhenOutside(false)
+    .onStart(event => { scheduleOnRN(start, event.absoluteX, event.absoluteY); })
+    .onUpdate(event => { scheduleOnRN(update, event.absoluteX, event.absoluteY); })
+    .onEnd((event, success) => { scheduleOnRN(finish, event.absoluteX, event.absoluteY, success); })
+    .onFinalize(() => { scheduleOnRN(cancel); }), [start, update, finish, cancel, onGestureReady]);
   /* eslint-enable react-hooks/refs */
 
-  const mealRefs = useMemo(() => Object.fromEntries(meals.map(({ id }) => [id,
-      (node: ComponentRef<typeof View> | null) => {
-        if (node) mealNodes.current.set(id, node);
-        else { mealNodes.current.delete(id); targets.current.delete(id); }
-      }])) as Record<LogMeal, (node: ComponentRef<typeof View> | null) => void>, []);
-  const canTap = () => !dragging.current && Date.now() >= suppressUntil.current;
+  const setMealNode = useCallback((meal: LogMeal, node: ComponentRef<typeof View> | null) => {
+    if (node) mealNodes.current.set(meal, node);
+    else { mealNodes.current.delete(meal); targets.current.delete(meal); }
+  }, []);
+  const canTap = useCallback(() => !dragging.current && Date.now() >= suppressUntil.current, []);
+  const multiRow = resolvedMeals.length > 4;
 
   return <GestureDetector gesture={gesture}>
     <Animated.View style={[styles.panel, style]} onLayout={measure} onAccessibilityEscape={dismiss}>
       <View style={styles.heading}>
-        <Text numberOfLines={2} style={styles.title}>{foodLabel}</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel="Cancel logging food" onPress={() => { if (canTap()) dismiss(); }} style={styles.cancel}>
-          <Text style={styles.muted}>Cancel</Text>
-        </Pressable>
+        <DoopIcon name={inferFoodGlyph(foodLabel)} size={18} color={colors.muted} />
+        <View style={styles.headingCopy}><Text numberOfLines={2} style={styles.title}>{foodLabel}</Text><Text style={styles.muted}>{portionLabel} · Hold to log</Text></View>
+        <View style={styles.total}><Text accessibilityLiveRegion="polite" style={styles.kcal}>{number(energyValue(kcalForMultiplier(multiplier), energyUnit))}</Text><Text style={styles.energyUnit}>{energyUnit}</Text></View>
       </View>
-      <Text accessibilityLiveRegion="polite" style={styles.kcal}>
-        {Math.round(energyUnit === 'kJ' ? kcalForMultiplier(multiplier) * KCAL_TO_KJ : kcalForMultiplier(multiplier))} {energyUnit}
-      </Text>
-      <Text style={styles.muted}>Servings</Text>
       <View ref={slider} collapsable={false} onLayout={measure} style={styles.slider}
         accessibilityRole="adjustable" accessibilityLabel="Servings" accessibilityValue={{ min: 0.5, max: 2, now: multiplier, text: `${multiplier} servings` }}
         accessibilityActions={[{ name: 'increment', label: 'Increase servings' }, { name: 'decrement', label: 'Decrease servings' }]}
@@ -172,40 +187,41 @@ export function HoldToLogPanel({
           <Text style={[styles.stopLabel, stop === multiplier && styles.selectedText]}>{servingLabels[index]}</Text>
         </Pressable>)}
       </View>
-      <View style={styles.meals}>
-        {meals.map((meal, index) => {
-          const displayLabel = mealLabels?.[index]?.trim() || meal.label;
-          return <View key={meal.id} ref={mealRefs[meal.id]} collapsable={false} onLayout={measure} style={styles.mealSlot}>
-            <Pressable accessibilityRole="button" accessibilityLabel={`Log ${foodLabel} to ${displayLabel}, ${multiplier} servings`}
-              accessibilityState={{ selected: activeMeal === meal.id }} onPress={() => { if (canTap()) commit(meal.id); }}
-              style={[styles.meal, activeMeal === meal.id && styles.mealSelected]}>
-              <Text numberOfLines={1} style={[styles.mealLabel, activeMeal === meal.id && styles.selectedText]}>{displayLabel}</Text>
+      <View style={styles.divider} />
+      <View style={[styles.meals, multiRow && styles.mealsWrap]}>
+        {resolvedMeals.map(meal => (
+          <View key={meal} ref={node => setMealNode(meal, node)} collapsable={false} onLayout={measure} style={multiRow ? styles.mealSlotWrap : styles.mealSlot}>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Log ${foodLabel} to ${meal}, ${multiplier} servings`}
+              accessibilityState={{ selected: activeMeal === meal }} onPress={() => { if (canTap()) commit(meal); }}
+              style={styles.meal}>
+              <View style={[styles.mealCircle, activeMeal === meal && styles.mealSelected]}><DoopIcon name={mealDaypartGlyph(meal)} size={18} color={activeMeal === meal ? colors.onAccent : colors.muted} /></View>
+              <Text numberOfLines={1} style={[styles.mealLabel, activeMeal === meal && { color: colors.ink }]}>{meal}</Text>
             </Pressable>
-          </View>;
-        })}
+          </View>
+        ))}
       </View>
     </Animated.View>
   </GestureDetector>;
 }
 
 const styles = StyleSheet.create({
-  panel: { padding: spacing.s16, gap: spacing.s8, borderRadius: radius.r24, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
-  heading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.s8 },
-  title: { flex: 1, fontFamily: fontFamily.body, fontSize: fontSize.t16, fontWeight: fontWeight.bold, color: colors.ink },
-  muted: { fontFamily: fontFamily.body, fontSize: fontSize.t12, color: colors.muted },
-  kcal: { fontFamily: fontFamily.number, fontSize: fontSize.t28, fontWeight: fontWeight.bold, color: colors.ink, fontVariant: [...tabularNums.fontVariant] },
-  cancel: { minWidth: spacing.s44, minHeight: spacing.s44, justifyContent: 'center', alignItems: 'center' },
-  slider: { flexDirection: 'row', justifyContent: 'space-between', minHeight: spacing.s56 },
-  track: { position: 'absolute', top: spacing.s12, left: spacing.s44 / 2, right: spacing.s44 / 2, height: spacing.s4, borderRadius: radius.full, backgroundColor: colors.track },
-  fill: { height: '100%', borderRadius: radius.full, backgroundColor: colors.accent },
-  stop: { width: spacing.s44, minHeight: spacing.s56, alignItems: 'center', paddingTop: spacing.s6, gap: spacing.s6 },
-  dot: { width: spacing.s16, height: spacing.s16, borderRadius: radius.full, borderWidth: 2, borderColor: colors.border, backgroundColor: colors.raised },
-  dotSelected: { borderColor: colors.accent, backgroundColor: colors.accent },
-  stopLabel: { color: colors.muted, fontFamily: fontFamily.number, fontSize: fontSize.t13 },
-  selectedText: { color: colors.accent },
-  meals: { flexDirection: 'row', gap: spacing.s4 },
-  mealSlot: { flex: 1, minWidth: spacing.s44 },
-  meal: { minHeight: spacing.s48, borderRadius: radius.r12, backgroundColor: colors.raised, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.s2 },
-  mealSelected: { borderColor: colors.accent, transform: [{ scale: 1.04 }] },
-  mealLabel: { color: colors.ink, fontFamily: fontFamily.body, fontSize: fontSize.t11, fontWeight: fontWeight.semibold },
+  panel: { paddingTop: 15, paddingBottom: 12, borderTopWidth: 1, borderBottomWidth: 1, borderColor: colors.hairline, backgroundColor: colors.ground },
+  heading: { flexDirection: 'row', alignItems: 'center', gap: 8 }, headingCopy: { flex: 1, gap: 1 },
+  title: { ...fontFace('semibold'), fontSize: 16, color: colors.ink }, muted: { ...fontFace('medium'), fontSize: 12, color: colors.muted },
+  total: { flexDirection: 'row', alignItems: 'baseline', gap: 4 }, kcal: { ...fontFace('bold'), fontSize: 28, color: colors.ink, letterSpacing: -0.8, fontVariant: [...tabularNums.fontVariant] }, energyUnit: { ...fontFace('semibold'), fontSize: 10, color: colors.muted },
+  slider: { marginTop: 8, height: 46, flexDirection: 'row', justifyContent: 'space-between' },
+  track: { position: 'absolute', top: 9, left: 22, right: 22, height: 4, borderRadius: 999, backgroundColor: colors.track },
+  fill: { height: '100%', borderRadius: 999, backgroundColor: colors.accent },
+  stop: { width: 44, height: 46, alignItems: 'center', paddingTop: 6, gap: 10 },
+  dot: { width: 9, height: 9, borderRadius: 999, backgroundColor: colors.border },
+  dotSelected: { width: 20, height: 20, marginTop: -5, marginBottom: -6, borderWidth: 2, borderColor: colors.accent, backgroundColor: colors.surface, boxShadow: '0 0 0 4px rgba(122,162,247,0.15)' },
+  stopLabel: { ...fontFace('semibold'), color: colors.muted, fontSize: 10.5 }, selectedText: { color: colors.ink },
+  divider: { height: 1, marginTop: 8, backgroundColor: colors.hairline },
+  meals: { flexDirection: 'row', gap: 4, marginTop: 10 },
+  mealsWrap: { flexWrap: 'wrap', rowGap: 8 },
+  mealSlot: { flex: 1, minWidth: 44 },
+  mealSlotWrap: { flexGrow: 1, flexBasis: '23%', minWidth: 68 },
+  meal: { height: 62, alignItems: 'center', gap: 4 }, mealCircle: { width: 44, height: 44, borderWidth: 1, borderColor: colors.border, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
+  mealSelected: { backgroundColor: colors.accent, borderColor: colors.accent, boxShadow: '0 0 0 5px rgba(122,162,247,0.16)' },
+  mealLabel: { ...fontFace('semibold'), color: colors.muted, fontSize: 10, lineHeight: 14 },
 });

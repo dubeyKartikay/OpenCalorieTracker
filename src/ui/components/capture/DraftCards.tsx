@@ -1,15 +1,7 @@
 import { useState, type ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import {
-  colors,
-  fontSize,
-  fontWeight,
-  MIN_TOUCH_TARGET,
-  radius,
-  spacing,
-  tabularNums,
-} from '../../tokens';
-import { SourceBadge } from '../doop';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { colors, fontFace, radius, tabularNums } from '../../tokens';
+import { DoopIcon, mealDaypartGlyph } from '../DoopIcons';
 import { Button, Input, Muted, ui } from '../primitives';
 
 export interface SparklePromptRowProps {
@@ -18,36 +10,12 @@ export interface SparklePromptRowProps {
   busy?: boolean | undefined;
   disabled?: boolean | undefined;
 }
-
-/**
- * Dashed lavender prompt that offers an AI draft.
- * It reads as an offer rather than a commitment: the dashed edge keeps it
- * visually quieter than a primary action, and the busy state keeps the same
- * geometry so nothing reflows while a draft is being estimated.
- */
 export function SparklePromptRow({ summary, onPress, busy, disabled }: SparklePromptRowProps) {
-  const blocked = disabled === true || busy === true;
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={summary}
-      accessibilityState={{ disabled: blocked, busy: busy === true }}
-      disabled={blocked}
-      onPress={onPress}
-      style={({ pressed }) => [styles.sparkleRow, pressed && styles.pressed]}
-    >
-      <Text style={styles.sparkleGlyph}>✦</Text>
-      <Text numberOfLines={1} style={styles.sparkleSummary}>
-        {summary}
-      </Text>
-      <Text style={styles.sparkleChevron}>{busy === true ? '…' : '›'}</Text>
-    </Pressable>
-  );
+  return <Pressable accessibilityRole="button" accessibilityLabel={summary} accessibilityState={{ disabled: !!disabled || !!busy, busy: !!busy }} disabled={disabled || busy} onPress={onPress} style={({ pressed }) => [styles.sparkleRow, pressed && styles.pressed]}>
+    <DoopIcon name="sparkle" size={17} color={colors.lavender} /><Text numberOfLines={1} style={styles.sparkleSummary}>{summary}</Text><Text style={styles.sparkleEnd}>{busy ? '…' : '↵'}</Text>
+  </Pressable>;
 }
-
 export type DraftPortionCertainty = 'stated' | 'estimated';
-
 export interface DraftItemCardProps {
   name: string;
   sourceLabel: string;
@@ -64,204 +32,41 @@ export interface DraftItemCardProps {
   currentUnit?: string | undefined;
   onChangeAmount?: ((nextAmount: number) => void) | undefined;
 }
-
-/**
- * One drafted line.
- *
- * The card deliberately splits the two questions a draft raises: *what it is*
- * (name plus provenance pill) sits on top, and *how much* sits underneath,
- * marked either with a solid mint rule for a stated portion or a dashed
- * lavender pill with its estimate range for a guessed one.
- */
-export function DraftItemCard({
-  name,
-  sourceLabel,
-  isEstimatedSource,
-  portionText,
-  portionCertainty,
-  estimateRangeText,
-  energyText,
-  macrosText,
-  fiberUnknown,
-  onPressEdit,
-  onRemove,
-  currentAmount,
-  currentUnit,
-  onChangeAmount,
-}: DraftItemCardProps) {
+export function DraftItemCard({ name, sourceLabel, isEstimatedSource, portionText, portionCertainty, estimateRangeText, energyText, macrosText, fiberUnknown, onPressEdit, onRemove, currentAmount, currentUnit, onChangeAmount }: DraftItemCardProps) {
   const [editing, setEditing] = useState(false);
   const [amount, setAmount] = useState('');
-  const parsedAmount = Number(amount.trim().replace(',', '.'));
-  const validAmount = amount.trim() !== '' && Number.isFinite(parsedAmount) && parsedAmount > 0;
   const estimated = portionCertainty === 'estimated';
-  const showApprox =
-    estimated && !energyText.startsWith('≈') && !energyText.startsWith('~');
-  const hasRange = estimateRangeText != null && estimateRangeText !== '';
-  const hasMacros = macrosText != null && macrosText !== '';
-
-  const detail = (
-    <View style={styles.detail}>
-      <View style={styles.nameRow}>
-        <Text numberOfLines={2} style={styles.name}>
-          {name}
-        </Text>
-        <SourceBadge
-          label={sourceLabel}
-          tone={isEstimatedSource === true ? 'estimated' : 'neutral'}
-        />
-      </View>
-
-      {hasMacros ? (
-        <Text numberOfLines={1} style={styles.macros}>
-          {macrosText}
-        </Text>
-      ) : null}
-
-      <View style={styles.portionRow}>
-        {estimated ? (
-          <View style={styles.portionEstimated}>
-            <Text numberOfLines={1} style={styles.portionEstimatedText}>
-              {portionText}
-            </Text>
-            {hasRange ? (
-              <Text numberOfLines={1} style={styles.portionRange}>
-                {estimateRangeText}
-              </Text>
-            ) : null}
-          </View>
-        ) : (
-          <View style={styles.portionStated}>
-            <View style={styles.statedDot} />
-            <View style={styles.statedRule}>
-              <Text numberOfLines={1} style={styles.portionStatedText}>
-                {portionText}
-              </Text>
-            </View>
-          </View>
-        )}
-        {fiberUnknown === true ? <Text style={styles.fiberUnknown}>Fiber unknown</Text> : null}
-      </View>
+  const toggleEdit = () => { if (onPressEdit) onPressEdit(); else if (onChangeAmount) { setAmount(String(currentAmount ?? '')); setEditing(value => !value); } };
+  return <View style={styles.item}>
+    <View style={styles.itemRow}>
+      <Pressable accessibilityRole="button" accessibilityLabel={`Edit ${name}`} disabled={!onPressEdit && !onChangeAmount} onPress={toggleEdit} style={styles.itemCopy}>
+        <View style={styles.nameRow}><Text numberOfLines={1} style={styles.name}>{name}</Text><View style={styles.badge}><Text numberOfLines={1} style={styles.badgeText}>{isEstimatedSource ? 'AI ESTIMATE' : /^ifct/i.test(sourceLabel) ? 'IFCT' : sourceLabel.toUpperCase()}</Text></View></View>
+        <View style={styles.portionRow}><View style={[styles.dot, estimated && styles.estimateDot]} /><Text numberOfLines={1} style={styles.portion}>{estimated && estimateRangeText ? estimateRangeText : portionText}</Text></View>
+      </Pressable>
+      <Text style={styles.itemEnergy}>{estimated && !/^[≈~]/.test(energyText) ? '≈' : ''}{energyText}</Text>
+      {onRemove && <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${name}`} onPress={onRemove} style={styles.iconButton}><DoopIcon name="close" size={14} color={colors.muted} /></Pressable>}
     </View>
-  );
-
-  const energy = (
-    <View style={styles.energyBox}>
-      <Text numberOfLines={1} style={styles.energyValue}>
-        {showApprox ? <Text style={styles.energyApprox}>≈</Text> : null}
-        {energyText}
-      </Text>
-    </View>
-  );
-
-  return (
-    <View style={{ gap: spacing.s8 }}><View style={styles.itemCard}>
-      {onPressEdit != null ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Edit ${name}`}
-          onPress={onPressEdit}
-          style={({ pressed }) => [styles.itemMain, pressed && styles.pressed]}
-        >
-          {detail}
-          {energy}
-        </Pressable>
-      ) : (
-        <View style={styles.itemMain}>
-          {detail}
-          {energy}
-        </View>
-      )}
-
-      {onRemove != null ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Remove ${name}`}
-          hitSlop={4}
-          onPress={onRemove}
-          style={({ pressed }) => [styles.removeButton, pressed && styles.pressed]}
-        >
-          <Text style={styles.removeGlyph}>×</Text>
-        </Pressable>
-      ) : null}
-    </View>
-      {onChangeAmount && <View style={{ gap: spacing.s8 }}>
-        <Button label={editing ? 'Close amount' : 'Edit amount'} quiet onPress={() => { setAmount(String(currentAmount ?? '')); setEditing(value => !value); }} />
-        {editing && <>
-          <Input label={`Amount${currentUnit ? ` (${currentUnit})` : ''}`} value={amount} keyboardType="decimal-pad" onChangeText={next => {
-            setAmount(next);
-            const value = Number(next.trim().replace(',', '.'));
-            if (next.trim() && Number.isFinite(value) && value > 0) onChangeAmount(value);
-          }} />
-          {!validAmount && <Muted>Enter an amount greater than zero.</Muted>}
-          <Muted>Nutrition recalculates instantly on this device.</Muted>
-        </>}
-      </View>}
-    </View>
-  );
+    {editing && onChangeAmount && <View style={styles.editBlock}>
+      <Input label={`Amount${currentUnit ? ` (${currentUnit})` : ''}`} value={amount} keyboardType="decimal-pad" onChangeText={next => { setAmount(next); const value = Number(next.trim().replace(',', '.')); if (next.trim() && Number.isFinite(value) && value > 0) onChangeAmount(value); }} />
+      {macrosText && <Muted>{macrosText}</Muted>}{fiberUnknown && <Muted>Fiber unknown</Muted>}
+      <Button label="Done" quiet onPress={() => setEditing(false)} />
+    </View>}
+  </View>;
 }
-
-export interface DraftAskOption {
-  id: string;
-  label: string;
-  selected?: boolean | undefined;
+export interface DraftAskOption { id: string; label: string; selected?: boolean | undefined }
+export interface DraftAskChipsProps { questionId: string; label: string; options: DraftAskOption[]; onSelect: (questionId: string, optionId: string) => void }
+export function DraftAskChips({ questionId, label, options, onSelect }: DraftAskChipsProps) {
+  return <View style={styles.askRow} accessibilityRole="radiogroup" accessibilityLabel={label}><Text style={styles.askLabel}>{label.replace(/:$/, '')}:</Text>
+    <View style={styles.askOptions}>{options.map(option => <Pressable key={option.id} accessibilityRole="radio" accessibilityLabel={option.label} accessibilityState={{ checked: !!option.selected }} onPress={() => onSelect(questionId, option.id)} style={styles.chipTouch}>
+      <View style={[styles.chip, option.selected && styles.chipSelected]}><Text style={[styles.chipLabel, option.selected && { color: colors.lavender }]}>{option.label}</Text></View>
+    </Pressable>)}</View>
+  </View>;
 }
-
-export interface DraftAskChipsProps {
-  questionId: string;
-  label: string;
-  options: DraftAskOption[];
-  onSelect: (questionId: string, optionId: string) => void;
-}
-
-/**
- * One inline clarifying question, e.g. `Fat: Ghee · Oil · Butter · Not sure`.
- * The row stays on one visual line where it fits and wraps its chips instead
- * of truncating them, because the answer is the point.
- */
-export function DraftAskChips({
-  questionId,
-  label,
-  options,
-  onSelect,
-}: DraftAskChipsProps) {
-  const heading = label.endsWith(':') ? label : `${label}:`;
-
-  return (
-    <View style={styles.askRow} accessibilityRole="radiogroup" accessibilityLabel={label}>
-      <Text style={styles.askLabel}>{heading}</Text>
-      <View style={styles.askOptions}>
-        {options.map(option => {
-          const selected = option.selected === true;
-          return (
-            <Pressable
-              key={option.id}
-              accessibilityRole="radio"
-              accessibilityLabel={option.label}
-              accessibilityState={{ checked: selected }}
-              onPress={() => onSelect(questionId, option.id)}
-              style={({ pressed }) => [
-                styles.askChip,
-                selected && styles.askChipSelected,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text
-                numberOfLines={1}
-                style={[styles.askChipLabel, selected && styles.askChipLabelSelected]}
-              >
-                {option.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-    </View>
-  );
-}
-
 export interface MealDraftPanelProps {
   mealLabel: string;
   draftEnergyText: string;
+  loggedEnergyText?: string | undefined;
+  photoUri?: string | null | undefined;
   fiberNote?: string | null | undefined;
   itemCount: number;
   onConfirmAll: () => void;
@@ -270,89 +75,28 @@ export interface MealDraftPanelProps {
   children?: ReactNode | undefined;
   onSaveAsMeal?: ((name: string) => void) | undefined;
 }
-
-/**
- * Wrapper for a meal's whole draft set: the items, any clarifying chips, the
- * estimate disclosure, one primary confirmation and a quiet discard.
- * Confirming logs everything; discarding never touches the diary.
- */
-export function MealDraftPanel({
-  mealLabel,
-  draftEnergyText,
-  fiberNote,
-  itemCount,
-  onConfirmAll,
-  onDismissAll,
-  confirming,
-  children,
-  onSaveAsMeal,
-}: MealDraftPanelProps) {
+export function MealDraftPanel({ mealLabel, draftEnergyText, loggedEnergyText = '—', photoUri, fiberNote, itemCount, onConfirmAll, onDismissAll, confirming, children, onSaveAsMeal }: MealDraftPanelProps) {
   const [naming, setNaming] = useState(false);
   const [mealName, setMealName] = useState('');
-  const countText = `${itemCount} ${itemCount === 1 ? 'item' : 'items'}`;
-  const hasFiberNote = fiberNote != null && fiberNote !== '';
-  const confirmLabel = `Confirm to ${mealLabel}`;
-
-  return (
-    <View style={styles.panel}>
-      <View style={styles.panelHead}>
-        <Text style={styles.panelTitle}>Today · drafts</Text>
-        <Text style={styles.panelMeal}>{mealLabel}</Text>
-      </View>
-
-      <View style={styles.panelSummary}>
-        <Text
-          numberOfLines={1}
-          accessibilityLabel={`Draft total ${draftEnergyText}`}
-          style={styles.panelEnergy}
-        >
-          {draftEnergyText}
-        </Text>
-        <Text style={styles.panelCount}>{countText}</Text>
-      </View>
-
-      {children != null ? <View style={styles.panelItems}>{children}</View> : null}
-
-      {hasFiberNote ? <Text style={styles.panelNote}>{fiberNote}</Text> : null}
-
-      <Text style={styles.disclosure}>Estimates can be wrong. Not medical advice.</Text>
-
-      {onSaveAsMeal && <View style={{ gap: spacing.s8 }}>
-        <Button label={naming ? 'Close meal name' : 'Save as meal'} disabled={confirming === true} quiet onPress={() => setNaming(value => !value)} />
-        {naming && <>
-          <Input label="Saved meal name" value={mealName} onChangeText={setMealName} editable={!confirming} placeholder="e.g. My usual lunch" />
-          <View style={ui.wrap}><Button label="Save reviewed meal" disabled={confirming || !mealName.trim() || itemCount === 0} onPress={() => onSaveAsMeal(mealName.trim())} /></View>
-          <Muted>Saves these reviewed portions to your library. Confirm below to log them.</Muted>
-        </>}
-      </View>}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={confirmLabel}
-        accessibilityState={{ disabled: confirming === true, busy: confirming === true }}
-        disabled={confirming === true}
-        onPress={onConfirmAll}
-        style={({ pressed }) => [
-          styles.primaryButton,
-          confirming === true && styles.primaryButtonDisabled,
-          pressed && styles.pressed,
-        ]}
-      >
-        <Text style={styles.primaryLabel}>{confirmLabel}</Text>
-      </Pressable>
-
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Discard"
-        disabled={confirming === true}
-        onPress={onDismissAll}
-        style={({ pressed }) => [styles.quietButton, pressed && styles.pressed]}
-      >
-        <Text style={styles.quietLabel}>Discard</Text>
-      </Pressable>
+  const [disclosure, setDisclosure] = useState(true);
+  return <View>
+    <View style={styles.panelHead}>
+      <View style={styles.node}><DoopIcon name={mealDaypartGlyph(mealLabel)} size={27} color={colors.ink} /></View>
+      <Text numberOfLines={1} style={styles.mealName}>{mealLabel}</Text>
+      <Text style={styles.loggedEnergy}>{loggedEnergyText}</Text><Text accessibilityLabel={`Draft total ${draftEnergyText}`} style={styles.draftEnergy}>+{draftEnergyText}</Text>
+      {onSaveAsMeal && <Pressable accessibilityRole="button" accessibilityLabel="Save this set as a meal" disabled={confirming} onPress={() => setNaming(value => !value)} style={styles.iconButton}><DoopIcon name="pin" size={17} color={naming ? colors.lavender : colors.muted} /></Pressable>}
+      <Pressable accessibilityRole="button" accessibilityLabel={`Confirm to ${mealLabel}`} accessibilityState={{ disabled: !!confirming || itemCount === 0, busy: !!confirming }} disabled={confirming || itemCount === 0} onPress={onConfirmAll} style={[styles.confirm, (confirming || itemCount === 0) && styles.disabled]}><DoopIcon name="check" size={20} color={colors.onAccent} /></Pressable>
     </View>
-  );
+    <View style={styles.panel}>
+      {disclosure && <View style={styles.disclosureRow}><Text style={styles.disclosure}>Estimates can be wrong. Not medical advice.</Text><Pressable accessibilityRole="button" accessibilityLabel="Dismiss estimate notice" onPress={() => setDisclosure(false)} style={styles.iconButton}><DoopIcon name="close" size={12} color={colors.muted} /></Pressable></View>}
+      {photoUri && <View style={styles.photoRow}><Image source={{ uri: photoUri }} accessibilityLabel={`Attached photo for ${mealLabel}`} style={styles.photo} /><Text style={styles.portion}>{mealLabel} · 1 photo</Text></View>}
+      {children}
+      {fiberNote && <Text style={styles.fiberNote}>{fiberNote}</Text>}
+      {naming && onSaveAsMeal && <View style={styles.editBlock}><Input label="Saved meal name" value={mealName} onChangeText={setMealName} editable={!confirming} placeholder="My usual lunch" /><Button label="Save reviewed meal" quiet disabled={confirming || !mealName.trim() || !itemCount} onPress={() => onSaveAsMeal(mealName.trim())} /></View>}
+      <Pressable accessibilityRole="button" accessibilityLabel="Discard drafts" disabled={confirming} onPress={onDismissAll} style={styles.discard}><Text style={styles.discardLabel}>Discard drafts</Text></Pressable>
+    </View>
+  </View>;
 }
-
 export interface AIFailedCardProps {
   mealLabel?: string | undefined;
   reasonText: string;
@@ -361,429 +105,56 @@ export interface AIFailedCardProps {
   onQuickAdd: () => void;
   onDismiss?: (() => void) | undefined;
 }
-
-function FailedAction({ label, onPress }: { label: string; onPress: () => void }) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      onPress={onPress}
-      style={({ pressed }) => [styles.failedAction, pressed && styles.pressed]}
-    >
-      <Text numberOfLines={1} style={styles.failedActionLabel}>
-        {label}
-      </Text>
-    </Pressable>
-  );
+export function AIFailedCard({ mealLabel, reasonText, onRetry, onSearchInstead, onQuickAdd, onDismiss }: AIFailedCardProps) {
+  return <View style={styles.failed}>
+    <View style={styles.failedHead}><DoopIcon name="sparkle" size={17} color={colors.lavender} /><Text style={styles.failedLabel}>{mealLabel ? `${mealLabel} · ` : ''}Draft not ready</Text>{onDismiss && <Pressable accessibilityRole="button" accessibilityLabel="Dismiss AI notice" onPress={onDismiss} style={styles.iconButton}><DoopIcon name="close" size={14} color={colors.muted} /></Pressable>}</View>
+    <Text style={styles.reason}>{reasonText}</Text>
+    <View style={ui.wrap}>{onRetry && <Button label="Retry" quiet onPress={onRetry} />}<Button label="Search instead" quiet onPress={onSearchInstead} /><Button label="Quick add" quiet onPress={onQuickAdd} /></View>
+  </View>;
 }
-
-/**
- * Quiet failure notice. Nothing was logged and nothing was lost, so the card
- * states the reason once and offers the three exits that still work offline:
- * retry, search the catalog, or type the numbers in by hand.
- */
-export function AIFailedCard({
-  mealLabel,
-  reasonText,
-  onRetry,
-  onSearchInstead,
-  onQuickAdd,
-  onDismiss,
-}: AIFailedCardProps) {
-  return (
-    <View style={styles.failedCard}>
-      <View style={styles.failedHead}>
-        <Text style={styles.failedTitle}>Today · AI failed</Text>
-        <View style={styles.failedHeadRight}>
-          {mealLabel != null ? (
-            <Text numberOfLines={1} style={styles.failedMeal}>
-              {mealLabel}
-            </Text>
-          ) : null}
-          {onDismiss != null ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Dismiss AI notice"
-              hitSlop={4}
-              onPress={onDismiss}
-              style={({ pressed }) => [styles.failedDismiss, pressed && styles.pressed]}
-            >
-              <Text style={styles.failedDismissGlyph}>×</Text>
-            </Pressable>
-          ) : null}
-        </View>
-      </View>
-
-      <Text style={styles.failedReason}>{reasonText}</Text>
-
-      <View style={styles.failedActions}>
-        {onRetry != null ? <FailedAction label="Retry" onPress={onRetry} /> : null}
-        <FailedAction label="Search instead" onPress={onSearchInstead} />
-        <FailedAction label="Quick add" onPress={onQuickAdd} />
-      </View>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  sparkleRow: {
-    minHeight: MIN_TOUCH_TARGET,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.s10,
-    paddingHorizontal: spacing.s12,
-    paddingVertical: spacing.s10,
-    borderRadius: radius.r12,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: colors.lavender,
-    backgroundColor: colors.surface,
-  },
-  sparkleGlyph: {
-    color: colors.lavender,
-    fontSize: fontSize.t14,
-    fontWeight: fontWeight.semibold,
-  },
-  sparkleSummary: {
-    flex: 1,
-    minWidth: 0,
-    color: colors.ink,
-    fontSize: fontSize.t13,
-    fontWeight: fontWeight.semibold,
-  },
-  sparkleChevron: {
-    color: colors.lavender,
-    fontSize: fontSize.t16,
-    fontWeight: fontWeight.bold,
-  },
-  itemCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.s4,
-    paddingLeft: spacing.s12,
-    paddingRight: spacing.s4,
-    paddingVertical: spacing.s10,
-    borderRadius: radius.r12,
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    backgroundColor: colors.raised,
-  },
-  itemMain: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: MIN_TOUCH_TARGET,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.s12,
-  },
-  detail: {
-    flex: 1,
-    minWidth: 0,
-    gap: spacing.s6,
-  },
-  nameRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'flex-start',
-    gap: spacing.s6,
-  },
-  name: {
-    flexShrink: 1,
-    color: colors.ink,
-    fontSize: fontSize.t14,
-    fontWeight: fontWeight.semibold,
-  },
-  macros: {
-    color: colors.muted,
-    fontSize: fontSize.t11,
-    fontWeight: fontWeight.medium,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  portionRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: spacing.s8,
-  },
-  portionStated: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.s6,
-    minHeight: 22,
-  },
-  statedDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.mint,
-  },
-  statedRule: {
-    borderBottomWidth: 1,
-    borderBottomColor: colors.mint,
-    paddingBottom: 1,
-  },
-  portionStatedText: {
-    color: colors.ink,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.medium,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  portionEstimated: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.s6,
-    minHeight: 22,
-    paddingHorizontal: spacing.s10,
-    paddingVertical: spacing.s2,
-    borderRadius: radius.full,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: colors.lavender,
-  },
-  portionEstimatedText: {
-    flexShrink: 1,
-    color: colors.lavender,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.medium,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  portionRange: {
-    flexShrink: 1,
-    color: colors.muted,
-    fontSize: fontSize.t11,
-    fontWeight: fontWeight.medium,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  fiberUnknown: {
-    color: colors.muted,
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.medium,
-  },
-  energyBox: {
-    alignItems: 'flex-end',
-    paddingTop: spacing.s2,
-  },
-  energyValue: {
-    color: colors.ink,
-    fontSize: fontSize.t16,
-    fontWeight: fontWeight.bold,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  energyApprox: {
-    color: colors.muted,
-    fontSize: fontSize.t13,
-    fontWeight: fontWeight.semibold,
-  },
-  removeButton: {
-    minWidth: MIN_TOUCH_TARGET,
-    minHeight: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radius.full,
-  },
-  removeGlyph: {
-    color: colors.muted,
-    fontSize: fontSize.t18,
-    fontWeight: fontWeight.semibold,
-  },
-  askRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: spacing.s8,
-  },
-  askLabel: {
-    color: colors.muted,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.semibold,
-  },
-  askOptions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: spacing.s6,
-    flexShrink: 1,
-  },
-  askChip: {
-    minHeight: MIN_TOUCH_TARGET,
-    minWidth: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.s12,
-    borderRadius: radius.full,
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    backgroundColor: colors.raised,
-  },
-  askChipSelected: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
-  },
-  askChipLabel: {
-    color: colors.muted,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.medium,
-  },
-  askChipLabelSelected: {
-    color: colors.onAccent,
-    fontWeight: fontWeight.bold,
-  },
-  panel: {
-    gap: spacing.s12,
-    padding: spacing.s12,
-    borderRadius: radius.r16,
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    backgroundColor: colors.surface,
-  },
-  panelHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.s8,
-  },
-  panelTitle: {
-    color: colors.muted,
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.bold,
-    letterSpacing: 1,
-  },
-  panelMeal: {
-    color: colors.muted,
-    fontSize: fontSize.t11,
-    fontWeight: fontWeight.medium,
-  },
-  panelSummary: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    gap: spacing.s8,
-  },
-  panelEnergy: {
-    flexShrink: 1,
-    color: colors.ink,
-    fontSize: fontSize.t20,
-    fontWeight: fontWeight.extrabold,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  panelCount: {
-    color: colors.muted,
-    fontSize: fontSize.t11,
-    fontWeight: fontWeight.medium,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  panelItems: {
-    gap: spacing.s8,
-  },
-  panelNote: {
-    color: colors.muted,
-    fontSize: fontSize.t11,
-    fontWeight: fontWeight.medium,
-  },
-  disclosure: {
-    color: colors.muted,
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.medium,
-  },
-  primaryButton: {
-    minHeight: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.s16,
-    paddingVertical: spacing.s10,
-    borderRadius: radius.r12,
-    backgroundColor: colors.accent,
-  },
-  primaryButtonDisabled: {
-    opacity: 0.45,
-  },
-  primaryLabel: {
-    color: colors.onAccent,
-    fontSize: fontSize.t14,
-    fontWeight: fontWeight.bold,
-  },
-  quietButton: {
-    minHeight: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.s12,
-    borderRadius: radius.r12,
-  },
-  quietLabel: {
-    color: colors.muted,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.medium,
-  },
-  failedCard: {
-    gap: spacing.s10,
-    padding: spacing.s12,
-    borderRadius: radius.r16,
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    backgroundColor: colors.surface,
-  },
-  failedHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.s8,
-  },
-  failedTitle: {
-    color: colors.muted,
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.bold,
-    letterSpacing: 1,
-  },
-  failedHeadRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.s4,
-    flexShrink: 1,
-  },
-  failedMeal: {
-    flexShrink: 1,
-    color: colors.muted,
-    fontSize: fontSize.t11,
-    fontWeight: fontWeight.medium,
-  },
-  failedDismiss: {
-    minWidth: MIN_TOUCH_TARGET,
-    minHeight: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radius.full,
-  },
-  failedDismissGlyph: {
-    color: colors.muted,
-    fontSize: fontSize.t18,
-    fontWeight: fontWeight.semibold,
-  },
-  failedReason: {
-    color: colors.ink,
-    fontSize: fontSize.t13,
-    fontWeight: fontWeight.medium,
-  },
-  failedActions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: spacing.s6,
-  },
-  failedAction: {
-    minHeight: MIN_TOUCH_TARGET,
-    minWidth: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.s12,
-    borderRadius: radius.full,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.raised,
-  },
-  failedActionLabel: {
-    color: colors.ink,
-    fontSize: fontSize.t12,
-    fontWeight: fontWeight.semibold,
-  },
+  sparkleRow: { height: 44, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(187,154,247,0.58)', backgroundColor: 'rgba(187,154,247,0.09)' },
+  sparkleSummary: { ...fontFace('semibold'), flex: 1, color: colors.ink, fontSize: 13 },
+  sparkleEnd: { ...fontFace('bold'), color: colors.lavender, fontSize: 11 },
+  item: { borderBottomWidth: 1, borderBottomColor: colors.border, borderStyle: 'dashed' },
+  itemRow: { minHeight: 56, flexDirection: 'row', alignItems: 'center', gap: 2 },
+  itemCopy: { flex: 1, minWidth: 0, gap: 3, paddingVertical: 8 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  name: { ...fontFace('semibold'), flexShrink: 1, color: colors.ink, fontSize: 14 },
+  badge: { maxWidth: 104, borderWidth: 1, borderColor: colors.hairline, borderRadius: 999, paddingHorizontal: 6, paddingVertical: 1 },
+  badgeText: { ...fontFace('bold'), color: colors.muted, fontSize: 9, letterSpacing: 0.36 },
+  portionRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.mint },
+  estimateDot: { backgroundColor: 'transparent', borderWidth: 1, borderStyle: 'dashed', borderColor: colors.lavender },
+  portion: { ...fontFace('medium'), flexShrink: 1, color: colors.muted, fontSize: 11 },
+  itemEnergy: { ...fontFace('semibold'), fontVariant: [...tabularNums.fontVariant], color: colors.muted, fontSize: 13, paddingLeft: 8 },
+  iconButton: { width: 36, height: 40, justifyContent: 'center', alignItems: 'center' },
+  editBlock: { gap: 8, paddingVertical: 8 },
+  askRow: { minHeight: 44, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 2 },
+  askLabel: { ...fontFace('semibold'), color: colors.muted, fontSize: 11, marginRight: 4 },
+  askOptions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 2, flexShrink: 1 },
+  chipTouch: { minHeight: 40, justifyContent: 'center' },
+  chip: { height: 28, paddingHorizontal: 11, borderRadius: 14, borderWidth: 1, borderColor: colors.hairline, justifyContent: 'center' },
+  chipSelected: { borderColor: colors.lavender, backgroundColor: 'rgba(187,154,247,0.14)' },
+  chipLabel: { ...fontFace('semibold'), fontSize: 11, color: colors.muted },
+  panelHead: { height: 72, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  node: { width: 40, height: 40, borderRadius: radius.r20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.well, justifyContent: 'center', alignItems: 'center', marginRight: 6 },
+  mealName: { ...fontFace('semibold'), fontSize: 16, color: colors.ink, flex: 1, minWidth: 0 },
+  loggedEnergy: { ...fontFace('bold'), fontVariant: [...tabularNums.fontVariant], fontSize: 24, color: colors.ink, letterSpacing: -0.48 },
+  draftEnergy: { ...fontFace('bold'), fontVariant: [...tabularNums.fontVariant], fontSize: 13, color: colors.lavender },
+  confirm: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.accent, justifyContent: 'center', alignItems: 'center' },
+  panel: { borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, borderRadius: 12, marginTop: 4, marginBottom: 10, paddingHorizontal: 0, overflow: 'hidden' },
+  disclosureRow: { flexDirection: 'row', alignItems: 'center', minHeight: 40, borderBottomWidth: 1, borderBottomColor: colors.border, borderStyle: 'dashed' },
+  disclosure: { ...fontFace('medium'), color: colors.muted, fontSize: 11, flex: 1 },
+  photoRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.border, borderStyle: 'dashed' },
+  photo: { width: 48, height: 48, borderRadius: 12, borderWidth: 1, borderColor: colors.border },
+  fiberNote: { ...fontFace('medium'), color: colors.muted, fontSize: 11, paddingVertical: 8 },
+  discard: { minHeight: 32, justifyContent: 'center', alignItems: 'flex-end', paddingHorizontal: 10 },
+  discardLabel: { ...fontFace('medium'), fontSize: 10, color: colors.muted },
+  failed: { gap: 8, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, borderRadius: 12, padding: 12, marginVertical: 8 },
+  failedHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  failedLabel: { ...fontFace('semibold'), color: colors.ink, fontSize: 13, flex: 1 },
+  reason: { ...fontFace('medium'), color: colors.muted, fontSize: 12 },
+  disabled: { opacity: 0.45 },
   pressed: { opacity: 0.7 },
 });

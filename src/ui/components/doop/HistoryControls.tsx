@@ -1,17 +1,458 @@
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import type { ComponentRef, ReactNode } from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
+import Animated, {
+  Easing,
+  Extrapolation,
+  interpolate,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
+import type { DiaryEntrySnapshot, Quantity } from '../../../domain';
+import { calculateNutrition, resolveQuantityToBasis } from '../../../domain';
+import { availableUnits } from '../../../app/controller';
 import {
   colors,
+  fontFace,
   fontSize,
   fontWeight,
-  macroColors,
   MIN_TOUCH_TARGET,
   radius,
   spacing,
   tabularNums,
 } from '../../tokens';
 import { InlineKeypad } from './InlineKeypad';
+import { RevealPanel } from './Motion';
+import { DoopIcon } from '../DoopIcons';
+import { energyValue, number } from '../primitives';
+
+export interface PopoverAnchor { x: number; y: number; width: number; height: number }
+
+export function measurePopoverAnchor(node: ComponentRef<typeof View> | null, onMeasure: (anchor: PopoverAnchor) => void) {
+  node?.measureInWindow((x, y, width, height) => onMeasure({ x, y, width, height }));
+}
+
+/** Window-measured anchor keeps menus attached to their control even inside a scrolled pane, with crisp open/close motion. */
+export function AnchoredPopover({ anchor, onClose, children, width = 214, label, surface = false, preferAbove = false }: {
+  anchor: PopoverAnchor | null;
+  onClose: () => void;
+  children: ReactNode;
+  width?: number;
+  label: string;
+  surface?: boolean;
+  preferAbove?: boolean;
+}) {
+  const window = useWindowDimensions();
+  const reducedMotion = useReducedMotion();
+  const [contentHeight, setContentHeight] = useState(0);
+  const [mounted, setMounted] = useState(Boolean(anchor));
+  const [savedAnchor, setSavedAnchor] = useState<PopoverAnchor | null>(anchor);
+  const progress = useSharedValue(anchor ? 1 : 0);
+
+  if (anchor && !mounted) {
+    setMounted(true);
+  } else if (!anchor && mounted && reducedMotion) {
+    setMounted(false);
+  }
+  if (anchor && anchor !== savedAnchor) {
+    setSavedAnchor(anchor);
+  }
+
+  useEffect(() => {
+    if (anchor) {
+      if (reducedMotion) {
+        progress.set(1);
+      } else {
+        progress.set(withSpring(1, { damping: 23, stiffness: 350, mass: 0.76 }));
+      }
+      return;
+    }
+
+    if (!mounted) return;
+    if (reducedMotion) {
+      progress.set(0);
+      return;
+    }
+    progress.set(
+      withTiming(
+        0,
+        { duration: 140, easing: Easing.out(Easing.cubic) },
+        finished => {
+          if (finished) scheduleOnRN(setMounted, false);
+        },
+      ),
+    );
+  }, [anchor, mounted, progress, reducedMotion]);
+
+  const activeAnchor = anchor ?? savedAnchor;
+  const actualWidth = Math.min(width, window.width - 24);
+  const left = activeAnchor ? Math.max(12, Math.min(activeAnchor.x + activeAnchor.width / 2 - actualWidth / 2, window.width - actualWidth - 12)) : 12;
+  const maxHeight = Math.max(100, window.height - 40);
+  const height = Math.min(contentHeight + 2, maxHeight);
+  const below = activeAnchor ? activeAnchor.y + activeAnchor.height + 10 : 80;
+  const above = activeAnchor ? activeAnchor.y - height - 10 : 80;
+  const fitsBelow = below + height <= window.height - 20;
+  const fitsAbove = above >= 20;
+  const placeBelow = preferAbove ? !fitsAbove && fitsBelow : fitsBelow || !fitsAbove;
+  const top = placeBelow ? Math.min(below, window.height - height - 20) : Math.max(20, above);
+  const caretX = activeAnchor ? Math.max(8, Math.min(actualWidth - 18, activeAnchor.x + activeAnchor.width / 2 - left - 5)) : 12;
+  const slideOffset = placeBelow ? -8 : 8;
+
+  const scrimStyle = useAnimatedStyle(() => ({
+    opacity: progress.value,
+  }));
+
+  const cardStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 0.75, 1], [0, 0.96, 1], Extrapolation.CLAMP),
+    transform: [
+      { translateY: interpolate(progress.value, [0, 1], [slideOffset, 0], Extrapolation.CLAMP) },
+      { scale: interpolate(progress.value, [0, 1], [0.94, 1], Extrapolation.CLAMP) },
+    ],
+  }));
+
+  if (!mounted || !activeAnchor) return null;
+
+  return <Modal transparent visible animationType="none" statusBarTranslucent onRequestClose={onClose}>
+    <View style={{ flex: 1 }} pointerEvents={anchor ? 'auto' : 'none'}>
+      <Animated.View style={[StyleSheet.absoluteFill, surface ? styles.popoverScrim : undefined, scrimStyle]}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Dismiss ${label}`} onPress={onClose} style={StyleSheet.absoluteFill} />
+      </Animated.View>
+      <Animated.View accessibilityViewIsModal accessibilityLabel={label} onAccessibilityEscape={onClose} style={[{ position: 'absolute', left, top, width: actualWidth, maxHeight, minHeight: anchor ? undefined : Math.min(contentHeight, maxHeight), borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: surface ? colors.surface : colors.raised, boxShadow: '0 18px 36px rgba(0,0,0,0.45)' }, cardStyle]}>
+        <View pointerEvents="none" style={{ position: 'absolute', left: caretX, ...(placeBelow ? { top: -5 } : { bottom: -5 }), width: 10, height: 10, backgroundColor: surface ? colors.surface : colors.raised, borderLeftWidth: placeBelow ? 1 : 0, borderTopWidth: placeBelow ? 1 : 0, borderRightWidth: placeBelow ? 0 : 1, borderBottomWidth: placeBelow ? 0 : 1, borderColor: colors.border, transform: [{ rotate: '45deg' }] }} />
+        <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} onContentSizeChange={(_, h) => { if (h > 0) setContentHeight(h); }} style={{ maxHeight }}>
+          {children}
+        </ScrollView>
+      </Animated.View>
+    </View>
+  </Modal>;
+}
+
+export interface EntryEditPopoverProps {
+  entry: DiaryEntrySnapshot;
+  date?: string | undefined;
+  today?: string | undefined;
+  dateLabel?: string | undefined;
+  meals: string[];
+  energyUnit: 'kcal' | 'kJ';
+  busy?: boolean | undefined;
+  onUpdateQuantity: (quantity: Quantity) => void;
+  onMoveMeal: (meal: string) => void;
+  onMoveToday?: (() => void) | undefined;
+  onPickDate?: (() => void) | undefined;
+  onRemove: () => void;
+}
+
+function roundQty(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function availableUnitsForEntry(entry: DiaryEntrySnapshot): string[] {
+  const validUnits = availableUnits(entry.food);
+  return [...new Set([entry.quantity.unit, ...validUnits])].filter(unit => {
+    try {
+      resolveQuantityToBasis(entry.food, { amount: 1, unit });
+      return true;
+    } catch {
+      return unit === entry.quantity.unit;
+    }
+  });
+}
+
+/** Doop LibV2EditPopover: live −/+/amount/unit stepper, inline keypad, 2×2 meal chips, Move to row, and Remove. */
+export function EntryEditPopover({
+  entry,
+  date,
+  today,
+  dateLabel,
+  meals,
+  energyUnit,
+  busy = false,
+  onUpdateQuantity,
+  onMoveMeal,
+  onMoveToday,
+  onPickDate,
+  onRemove,
+}: EntryEditPopoverProps) {
+  const [keypadOpen, setKeypadOpen] = useState(false);
+  const [unitMenuOpen, setUnitMenuOpen] = useState(false);
+  const syncKey = `${entry.id}:${entry.quantity.amount}:${entry.quantity.unit}`;
+  const [lastSyncKey, setLastSyncKey] = useState(syncKey);
+  const [draftAmount, setDraftAmount] = useState(() => String(roundQty(entry.quantity.amount)));
+  const [draftUnit, setDraftUnit] = useState(entry.quantity.unit);
+  const [draftEdited, setDraftEdited] = useState(false);
+
+  if (syncKey !== lastSyncKey) {
+    setLastSyncKey(syncKey);
+    setDraftAmount(String(roundQty(entry.quantity.amount)));
+    setDraftUnit(entry.quantity.unit);
+    setDraftEdited(false);
+  }
+
+  const units = availableUnitsForEntry(entry);
+  const canSwitchUnit = units.length > 1;
+  const parsedDraft = Number(draftAmount);
+  const validDraft = Number.isFinite(parsedDraft) && parsedDraft > 0;
+  const effectiveAmount = draftEdited ? (validDraft ? parsedDraft : entry.quantity.amount) : entry.quantity.amount;
+  const previewQty: Quantity = {
+    amount: effectiveAmount,
+    unit: draftUnit,
+  };
+
+  let basisValid = !draftEdited || validDraft;
+  let previewKcal = entry.nutrients.kcal;
+  try {
+    resolveQuantityToBasis(entry.food, previewQty);
+    const calculated = calculateNutrition(entry.food, previewQty);
+    if (calculated.kcal != null) previewKcal = calculated.kcal;
+  } catch {
+    basisValid = false;
+    if (entry.quantity.amount > 0 && (!draftEdited || validDraft) && draftUnit === entry.quantity.unit) {
+      previewKcal = (entry.nutrients.kcal ?? 0) * (effectiveAmount / entry.quantity.amount);
+      basisValid = true;
+    }
+  }
+
+  const commitDraft = () => {
+    if (!basisValid) return;
+    if (!draftEdited && draftUnit === entry.quantity.unit) return;
+    if (!validDraft) return;
+    if (parsedDraft !== entry.quantity.amount || draftUnit !== entry.quantity.unit) {
+      onUpdateQuantity({ amount: parsedDraft, unit: draftUnit });
+    }
+    setDraftEdited(false);
+  };
+
+  const cancelDraft = () => {
+    setDraftAmount(String(roundQty(entry.quantity.amount)));
+    setDraftUnit(entry.quantity.unit);
+    setDraftEdited(false);
+    setKeypadOpen(false);
+  };
+
+  const stepAmount = (dir: -1 | 1) => {
+    if (busy) return;
+    const isMassOrVol = draftUnit === 'g' || draftUnit === 'ml';
+    const base = effectiveAmount;
+    const delta = isMassOrVol ? 10 * dir : (base < 2 || !Number.isInteger(base) ? 0.5 : 1) * dir;
+    const min = isMassOrVol ? 5 : 0.25;
+    const next = roundQty(Math.max(min, base + delta));
+    setDraftAmount(String(next));
+    setDraftEdited(false);
+    onUpdateQuantity({ amount: next, unit: draftUnit });
+  };
+
+  const selectUnit = (nextUnit: string) => {
+    setUnitMenuOpen(false);
+    if (nextUnit === draftUnit) return;
+    const nextAmount = nextUnit === 'g' || nextUnit === 'ml'
+      ? (draftUnit === 'g' || draftUnit === 'ml' ? (validDraft ? parsedDraft : 100) : 100)
+      : (draftUnit === 'g' || draftUnit === 'ml' ? 1 : (validDraft ? parsedDraft : 1));
+    setDraftUnit(nextUnit);
+    setDraftAmount(String(nextAmount));
+    setDraftEdited(false);
+    onUpdateQuantity({ amount: nextAmount, unit: nextUnit });
+  };
+
+  const isToday = date === today;
+
+  return <View style={styles.editRoot}>
+    <View style={styles.editStepRow}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="One less"
+        disabled={busy || keypadOpen}
+        onPress={() => stepAmount(-1)}
+        style={({ pressed }) => [styles.editStepBtn, (busy || keypadOpen) && { opacity: 0.45 }, pressed && styles.pressed]}
+      >
+        <DoopIcon name="minus" size={14} color={colors.ink} />
+      </Pressable>
+
+      <View style={styles.editAmtWrap}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Type an amount"
+          accessibilityState={{ expanded: keypadOpen }}
+          onPress={() => {
+            setUnitMenuOpen(false);
+            if (!keypadOpen) {
+              setKeypadOpen(true);
+            }
+          }}
+          style={({ pressed }) => [styles.editNumBtn, pressed && styles.pressed]}
+        >
+          <Text numberOfLines={1} style={[styles.editNumText, keypadOpen && styles.editNumTextActive]}>
+            {draftAmount || '0'}
+          </Text>
+          {keypadOpen ? <View style={styles.editCaret} /> : null}
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={canSwitchUnit ? `Change unit, ${draftUnit}` : draftUnit}
+          disabled={!canSwitchUnit || keypadOpen}
+          onPress={() => {
+            if (!canSwitchUnit || keypadOpen) return;
+            setUnitMenuOpen(open => !open);
+          }}
+          style={({ pressed }) => [styles.editUnitBtn, keypadOpen && { opacity: 0.45 }, canSwitchUnit && pressed && styles.pressed]}
+        >
+          <View style={canSwitchUnit ? styles.editUnitUnderline : undefined}>
+            <Text numberOfLines={1} style={styles.editUnitText}>{draftUnit}</Text>
+          </View>
+        </Pressable>
+      </View>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="One more"
+        disabled={busy || keypadOpen}
+        onPress={() => stepAmount(1)}
+        style={({ pressed }) => [styles.editStepBtn, (busy || keypadOpen) && { opacity: 0.45 }, pressed && styles.pressed]}
+      >
+        <DoopIcon name="plus" size={14} color={colors.ink} />
+      </Pressable>
+
+      <View style={styles.editKcalWrap}>
+        <Text numberOfLines={1} style={styles.editKcalNum}>{number(energyValue(previewKcal, energyUnit))}</Text>
+        <Text style={styles.editKcalUnit}>{energyUnit}</Text>
+      </View>
+    </View>
+
+    <RevealPanel visible={unitMenuOpen} direction="down">
+      <View style={styles.editUnitList}>
+        {units.map(unitOption => {
+          const active = unitOption === draftUnit;
+          return <Pressable
+            key={unitOption}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+            onPress={() => selectUnit(unitOption)}
+            style={({ pressed }) => [styles.editUnitItem, active && styles.editUnitItemActive, pressed && styles.pressed]}
+          >
+            <Text style={[styles.editUnitItemText, active && styles.editUnitItemTextActive]}>{unitOption}</Text>
+            {active ? <DoopIcon name="check" size={14} color={colors.accent} /> : null}
+          </Pressable>;
+        })}
+      </View>
+    </RevealPanel>
+
+    <RevealPanel visible={keypadOpen} direction="down">
+      <View style={styles.editKeypadWrap}>
+        <View style={styles.editKeypadActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Cancel amount edit"
+            onPress={cancelDraft}
+            style={({ pressed }) => [styles.editKeypadCancel, pressed && styles.pressed]}
+          >
+            <Text style={styles.editKeypadCancelText}>Cancel</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Apply amount"
+            accessibilityState={{ disabled: busy || !basisValid }}
+            disabled={busy || !basisValid}
+            onPress={() => {
+              commitDraft();
+              setKeypadOpen(false);
+            }}
+            style={({ pressed }) => [
+              styles.editKeypadApply,
+              (busy || !basisValid) && { opacity: 0.4 },
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={styles.editKeypadApplyText}>Apply</Text>
+          </Pressable>
+        </View>
+        <InlineKeypad
+          bare
+          showReadout={false}
+          value={draftAmount}
+          onChange={next => {
+            setDraftEdited(true);
+            setDraftAmount(next);
+          }}
+          maxDecimals={draftUnit === 'g' || draftUnit === 'ml' ? 1 : 2}
+          allowEmpty
+        />
+      </View>
+    </RevealPanel>
+
+    <View style={styles.editMealsGrid}>
+      {meals.map(meal => {
+        const selectedMeal = entry.meal === meal;
+        return <Pressable
+          key={meal}
+          accessibilityRole="button"
+          accessibilityLabel={`Move to ${meal}`}
+          accessibilityState={{ selected: selectedMeal, disabled: busy || keypadOpen }}
+          disabled={busy || keypadOpen}
+          onPress={() => onMoveMeal(meal)}
+          style={({ pressed }) => [
+            styles.editMealChip,
+            selectedMeal && styles.editMealChipActive,
+            keypadOpen && { opacity: 0.45 },
+            pressed && styles.pressed,
+          ]}
+        >
+          <Text numberOfLines={1} style={[styles.editMealChipText, selectedMeal && styles.editMealChipTextActive]}>{meal}</Text>
+        </Pressable>;
+      })}
+    </View>
+
+    {(onMoveToday || onPickDate) ? (
+      <View style={styles.editDayRow}>
+        <Text style={styles.editDayLabel}>Move to</Text>
+        {onMoveToday ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Move to Today"
+            accessibilityState={{ selected: isToday, disabled: busy || isToday || keypadOpen }}
+            disabled={busy || isToday || keypadOpen}
+            onPress={onMoveToday}
+            style={({ pressed }) => [
+              styles.editTodayChip,
+              isToday && styles.editTodayChipActive,
+              keypadOpen && { opacity: 0.45 },
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={[styles.editTodayText, isToday && styles.editTodayTextActive]}>Today</Text>
+          </Pressable>
+        ) : null}
+        {onPickDate ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Pick a date, currently ${dateLabel ?? ''}`}
+            accessibilityState={{ disabled: busy || keypadOpen }}
+            disabled={busy || keypadOpen}
+            onPress={onPickDate}
+            style={({ pressed }) => [styles.editDateChip, keypadOpen && { opacity: 0.45 }, pressed && styles.pressed]}
+          >
+            <Text numberOfLines={1} style={styles.editDateText}>{dateLabel ?? ''}</Text>
+            <DoopIcon name="chevronDown" size={12} color={colors.muted} />
+          </Pressable>
+        ) : null}
+      </View>
+    ) : null}
+
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Remove ${entry.food.name}`}
+      disabled={busy}
+      onPress={onRemove}
+      style={({ pressed }) => [styles.editRemoveBtn, pressed && styles.pressed]}
+    >
+      <Text style={styles.editRemoveText}>Remove</Text>
+    </Pressable>
+  </View>;
+}
 
 type SelectActionTone = 'default' | 'danger' | 'primary';
 
@@ -72,14 +513,14 @@ export function MultiSelectBar({
 }: MultiSelectBarProps) {
   return (
     <View style={[styles.selectBar, style]}>
-      <Text accessibilityLiveRegion="polite" style={styles.selectCount}>
+      <Text accessibilityLiveRegion="polite" style={[styles.selectCount, fontFace('bold')]}>
         {`${count} selected`}
       </Text>
       <View style={styles.selectActions}>
         <SelectAction label="Copy to Today" onPress={onCopyToToday} />
         <SelectAction label="Move" onPress={onMove} />
         <SelectAction label="Delete" onPress={onDelete} tone="danger" />
-        <SelectAction label="Done" onPress={onDone} tone="primary" />
+        <Pressable accessibilityRole="button" accessibilityLabel="Done selecting" onPress={onDone} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}><DoopIcon name="close" size={16} color={colors.muted} /></Pressable>
       </View>
     </View>
   );
@@ -155,207 +596,33 @@ export function ActionSheetPopover({
   );
 }
 
-interface QuickAddValues {
-  kcal: string;
-  proteinG: string;
-  carbsG: string;
-  fatG: string;
-}
-
-type MacroField = 'proteinG' | 'carbsG' | 'fatG';
-type QuickAddField = 'kcal' | MacroField;
-
-const EMPTY_VALUES: QuickAddValues = { kcal: '', proteinG: '', carbsG: '', fatG: '' };
-
-const MACRO_META: Record<MacroField, { letter: string; name: string; color: string }> = {
-  proteinG: { letter: 'P', name: 'Protein', color: macroColors.protein },
-  carbsG: { letter: 'C', name: 'Carbs', color: macroColors.carbs },
-  fatG: { letter: 'F', name: 'Fat', color: macroColors.fat },
-};
-
-function parseEntry(raw: string): number | undefined {
-  const trimmed = raw.trim();
-  if (trimmed === '') return undefined;
-  const value = Number(trimmed);
-  return Number.isFinite(value) ? value : undefined;
-}
-
-/** Keep a half-typed decimal visible while grouping the integer part. */
-function formatEntry(raw: string): string {
-  if (raw === '') return '—';
-  const dot = raw.indexOf('.');
-  const whole = dot < 0 ? raw : raw.slice(0, dot);
-  const fraction = dot < 0 ? '' : raw.slice(dot + 1);
-  const grouped = (whole === '' ? '0' : whole).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return dot < 0 ? grouped : `${grouped}.${fraction}`;
-}
-
-const KCAL_TO_KJ = 4.184;
-
-export interface QuickAddEntry {
-  kcal: number;
-  proteinG?: number | undefined;
-  carbsG?: number | undefined;
-  fatG?: number | undefined;
-}
-
-export interface QuickAddPanelProps {
-  mealLabel: string;
-  onAdd: (entry: QuickAddEntry) => void;
-  energyUnit?: 'kcal' | 'kJ' | undefined;
-  disabled?: boolean | undefined;
-  style?: StyleProp<ViewStyle> | undefined;
-}
-
-/** Compact inline quick add: energy first, macros optional, keypad for any field. */
-export function QuickAddPanel({ mealLabel, onAdd, energyUnit = 'kcal', disabled, style }: QuickAddPanelProps) {
-  const [values, setValues] = useState<QuickAddValues>(EMPTY_VALUES);
-  const [activeField, setActiveField] = useState<QuickAddField>('kcal');
-
-  const energyInput = parseEntry(values.kcal);
-  const canAdd = disabled !== true && energyInput != null && energyInput > 0;
-
-  const setActiveValue = (next: string) => {
-    setValues(current => {
-      if (activeField === 'kcal') return { ...current, kcal: next };
-      if (activeField === 'proteinG') return { ...current, proteinG: next };
-      if (activeField === 'carbsG') return { ...current, carbsG: next };
-      return { ...current, fatG: next };
-    });
-  };
-
-  const handleAdd = () => {
-    if (!canAdd || energyInput == null || energyInput <= 0) return;
-    const canonicalKcal = energyUnit === 'kJ' ? Math.round((energyInput / KCAL_TO_KJ) * 10) / 10 : energyInput;
-    const entry: QuickAddEntry = { kcal: canonicalKcal };
-    const protein = parseEntry(values.proteinG);
-    const carbs = parseEntry(values.carbsG);
-    const fat = parseEntry(values.fatG);
-    if (protein != null) entry.proteinG = protein;
-    if (carbs != null) entry.carbsG = carbs;
-    if (fat != null) entry.fatG = fat;
-    onAdd(entry);
-  };
-
-  return (
-    <View style={[styles.quickCard, style]}>
-      <View style={styles.quickHead}>
-        <Text style={styles.cardTitle}>QUICK ADD</Text>
-        <Text style={styles.quickMeal}>{mealLabel}</Text>
-      </View>
-
-      <View style={styles.quickFields}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            values.kcal === ''
-              ? 'Energy, empty'
-              : `Energy, ${formatEntry(values.kcal)} ${energyUnit === 'kJ' ? 'kilojoules' : 'kilocalories'}`
-          }
-          accessibilityState={{ selected: activeField === 'kcal' }}
-          onPress={() => setActiveField('kcal')}
-          style={({ pressed }) => [
-            styles.kcalField,
-            activeField === 'kcal' && styles.quickFieldActive,
-            pressed && styles.pressed,
-          ]}
-        >
-          <Text
-            numberOfLines={1}
-            adjustsFontSizeToFit
-            style={[styles.kcalValue, values.kcal === '' && styles.emptyValue]}
-          >
-            {formatEntry(values.kcal)}
-          </Text>
-          <Text style={styles.kcalUnit}>{energyUnit}</Text>
-        </Pressable>
-
-        {(['proteinG', 'carbsG', 'fatG'] as const).map(field => {
-          const meta = MACRO_META[field];
-          const empty = values[field] === '';
-          return (
-            <Pressable
-              key={field}
-              accessibilityRole="button"
-              accessibilityLabel={
-                empty ? `${meta.name}, empty` : `${meta.name}, ${formatEntry(values[field])} grams`
-              }
-              accessibilityState={{ selected: activeField === field }}
-              onPress={() => setActiveField(field)}
-              style={({ pressed }) => [
-                styles.macroField,
-                activeField === field && styles.quickFieldActive,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={[styles.macroLetter, { color: meta.color }]}>{meta.letter}</Text>
-              <View style={styles.macroValueRow}>
-                <Text
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  style={[styles.macroValue, { color: empty ? colors.muted : meta.color }]}
-                >
-                  {formatEntry(values[field])}
-                </Text>
-                <Text style={styles.macroUnit}>g</Text>
-              </View>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      <InlineKeypad
-        bare
-        showReadout={false}
-        value={values[activeField]}
-        onChange={setActiveValue}
-        maxDecimals={activeField === 'kcal' ? 0 : 1}
-      />
-
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Add to ${mealLabel}`}
-        accessibilityState={{ disabled: !canAdd }}
-        disabled={!canAdd}
-        onPress={handleAdd}
-        style={({ pressed }) => [
-          styles.addButton,
-          !canAdd && styles.addButtonDisabled,
-          pressed && styles.pressed,
-        ]}
-      >
-        <Text style={styles.addButtonLabel}>{`Add to ${mealLabel}`}</Text>
-      </Pressable>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   selectBar: {
     alignSelf: 'stretch',
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: spacing.s6,
-    padding: spacing.s6,
+    gap: 2,
+    paddingHorizontal: 4,
+    height: 52,
     backgroundColor: colors.raised,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: radius.r24,
+    borderRadius: radius.full,
   },
   selectCount: {
-    paddingHorizontal: spacing.s10,
+    paddingHorizontal: 4,
     color: colors.ink,
-    fontSize: fontSize.t12,
+    fontSize: fontSize.t11,
     fontWeight: fontWeight.semibold,
     fontVariant: [...tabularNums.fontVariant],
   },
   selectActions: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
     alignItems: 'center',
-    gap: spacing.s4,
+    gap: 2,
     flexShrink: 1,
   },
   selectAction: {
@@ -363,14 +630,15 @@ const styles = StyleSheet.create({
     minWidth: MIN_TOUCH_TARGET,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: spacing.s12,
+    paddingHorizontal: 6,
     borderRadius: radius.full,
   },
   selectActionPrimary: { backgroundColor: colors.accent },
-  selectActionDanger: { borderWidth: 1, borderColor: colors.danger },
+  selectActionDanger: {},
   selectActionLabel: {
+    ...fontFace('semibold'),
     color: colors.ink,
-    fontSize: fontSize.t12,
+    fontSize: fontSize.t11,
     fontWeight: fontWeight.medium,
   },
   selectActionLabelPrimary: {
@@ -433,105 +701,257 @@ const styles = StyleSheet.create({
     fontWeight: fontWeight.medium,
   },
   sheetGlyphSelected: { color: colors.accent, fontWeight: fontWeight.bold },
-  quickCard: {
-    backgroundColor: colors.surface,
+  popoverScrim: {
+    backgroundColor: 'rgba(10,11,18,0.28)',
+  },
+  editRoot: {
+    padding: 8,
+    gap: 6,
+  },
+  editStepRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 2,
+  },
+  editStepBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.ground,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editAmtWrap: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  editNumBtn: {
+    minWidth: 32,
+    height: 44,
+    paddingHorizontal: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  editNumText: {
+    ...fontFace('bold'),
+    ...tabularNums,
+    fontSize: 17,
+    color: colors.ink,
+  },
+  editNumTextActive: {
+    fontSize: 24,
+    letterSpacing: -0.4,
+    color: colors.accent,
+  },
+  editCaret: {
+    width: 2,
+    height: 22,
+    borderRadius: 1,
+    backgroundColor: colors.accent,
+  },
+  editUnitBtn: {
+    height: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  editUnitUnderline: {
+    borderBottomWidth: 1,
+    borderStyle: 'dotted',
+    borderBottomColor: colors.muted,
+    paddingBottom: 1,
+  },
+  editUnitText: {
+    ...fontFace('semibold'),
+    fontSize: 13,
+    color: colors.muted,
+  },
+  editKcalWrap: {
+    minWidth: 56,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'flex-end',
+    gap: 2,
+  },
+  editKcalNum: {
+    ...fontFace('bold'),
+    ...tabularNums,
+    fontSize: 16,
+    color: colors.ink,
+    letterSpacing: -0.2,
+  },
+  editKcalUnit: {
+    ...fontFace('semibold'),
+    fontSize: 10,
+    color: colors.muted,
+  },
+  editUnitList: {
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.hairline,
-    borderRadius: radius.r16,
-    padding: spacing.s12,
-    gap: spacing.s10,
+    backgroundColor: colors.ground,
+    padding: 4,
+    gap: 2,
   },
-  quickHead: {
+  editUnitItem: {
+    minHeight: 38,
+    paddingHorizontal: 10,
+    borderRadius: 8,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: spacing.s8,
   },
-  cardTitle: {
-    color: colors.muted,
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.bold,
-    letterSpacing: 1,
+  editUnitItemActive: {
+    backgroundColor: 'rgba(122,162,247,0.14)',
   },
-  quickMeal: {
-    color: colors.muted,
-    fontSize: fontSize.t11,
-    fontWeight: fontWeight.medium,
-  },
-  quickFields: {
-    flexDirection: 'row',
-    gap: spacing.s6,
-  },
-  kcalField: {
-    flex: 1.6,
-    minHeight: 64,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.s2,
-    paddingHorizontal: spacing.s4,
-    borderRadius: radius.r12,
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    backgroundColor: colors.raised,
-  },
-  macroField: {
-    flex: 1,
-    minHeight: 64,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.s2,
-    paddingHorizontal: spacing.s4,
-    borderRadius: radius.r12,
-    borderWidth: 1,
-    borderColor: colors.hairline,
-    backgroundColor: colors.raised,
-  },
-  quickFieldActive: { borderColor: colors.accent },
-  kcalValue: {
+  editUnitItemText: {
+    ...fontFace('semibold'),
+    fontSize: 13,
     color: colors.ink,
-    fontSize: fontSize.t24,
-    fontWeight: fontWeight.extrabold,
-    fontVariant: [...tabularNums.fontVariant],
   },
-  emptyValue: { color: colors.muted },
-  kcalUnit: {
-    color: colors.muted,
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.medium,
+  editUnitItemTextActive: {
+    color: colors.accent,
   },
-  macroLetter: {
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.bold,
+  editKeypadWrap: {
+    paddingTop: 4,
+    paddingBottom: 2,
+    gap: 6,
   },
-  macroValueRow: {
+  editKeypadActions: {
     flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: spacing.s2,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 6,
   },
-  macroValue: {
-    fontSize: fontSize.t16,
-    fontWeight: fontWeight.bold,
-    fontVariant: [...tabularNums.fontVariant],
-  },
-  macroUnit: {
-    color: colors.muted,
-    fontSize: fontSize.t10,
-    fontWeight: fontWeight.medium,
-  },
-  addButton: {
-    minHeight: MIN_TOUCH_TARGET,
+  editKeypadCancel: {
+    minHeight: 34,
+    paddingHorizontal: 10,
+    borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: spacing.s16,
-    paddingVertical: spacing.s10,
-    borderRadius: radius.r12,
-    backgroundColor: colors.accent,
   },
-  addButtonDisabled: { opacity: 0.4 },
-  addButtonLabel: {
+  editKeypadCancelText: {
+    ...fontFace('semibold'),
+    fontSize: fontSize.t12,
+    color: colors.muted,
+  },
+  editKeypadApply: {
+    minHeight: 34,
+    paddingHorizontal: 14,
+    borderRadius: radius.full,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editKeypadApplyText: {
+    ...fontFace('bold'),
+    fontSize: fontSize.t12,
     color: colors.onAccent,
-    fontSize: fontSize.t14,
-    fontWeight: fontWeight.bold,
+  },
+  editMealsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  editMealChip: {
+    width: '48.8%',
+    minHeight: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    backgroundColor: colors.ground,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  editMealChipActive: {
+    borderColor: colors.accent,
+    backgroundColor: 'rgba(122,162,247,0.16)',
+  },
+  editMealChipText: {
+    ...fontFace('semibold'),
+    fontSize: 12,
+    color: colors.ink,
+  },
+  editMealChipTextActive: {
+    ...fontFace('bold'),
+    color: colors.accent,
+  },
+  editDayRow: {
+    height: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  editDayLabel: {
+    ...fontFace('semibold'),
+    fontSize: 11,
+    color: colors.muted,
+  },
+  editTodayChip: {
+    height: 40,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    backgroundColor: colors.ground,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editTodayChipActive: {
+    borderColor: colors.accent,
+    backgroundColor: 'rgba(122,162,247,0.16)',
+  },
+  editTodayText: {
+    ...fontFace('semibold'),
+    fontSize: 11,
+    color: colors.ink,
+  },
+  editTodayTextActive: {
+    ...fontFace('bold'),
+    color: colors.accent,
+  },
+  editDateChip: {
+    flex: 1,
+    minWidth: 0,
+    height: 40,
+    paddingLeft: 12,
+    paddingRight: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.ground,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 4,
+  },
+  editDateText: {
+    ...fontFace('semibold'),
+    ...tabularNums,
+    fontSize: 11,
+    color: colors.ink,
+    flexShrink: 1,
+  },
+  editRemoveBtn: {
+    height: 44,
+    borderTopWidth: 1,
+    borderTopColor: colors.hairline,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editRemoveText: {
+    ...fontFace('semibold'),
+    fontSize: 13,
+    color: colors.danger,
   },
   pressed: { opacity: 0.7 },
 });
