@@ -2,6 +2,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
 import { Keyboard, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import Animated, { Extrapolation, interpolate, useAnimatedStyle, useReducedMotion, useSharedValue, withSpring } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAction, useAppRuntime, useAsyncResource, usePreferences } from '../src/app/AppRuntimeContext';
 import { availableUnits, localDate, MEALS, mealsForDay, parseRouteDate } from '../src/app/controller';
 import { calculateNutrition, diaryEntrySnapshotSchema, foodRecordSchema, generateId, resolveQuantityToBasis } from '../src/domain';
@@ -9,11 +10,30 @@ import type { DiaryEntrySnapshot, FoodRecord, FoodUnit, NutrientProfile, Quantit
 import { foodKey } from '../src/storage';
 import { UndoToast } from '../src/ui/components/Diary';
 import { DoopIcon, inferFoodGlyph } from '../src/ui/components/DoopIcons';
-import { GLOBAL_UNITS, kindOf, labelOf, PIN_KEY, UnitMenu, usualQuantity, withUnits } from '../src/ui/components/FoodSearch';
-import { CUSTOM_FOOD_BASIS_OPTIONS, customFoodNutrientFields, parseCustomFoodNutrients, SegmentedSwitch, useScrollNodeIntoView, type CustomFoodBasis } from '../src/ui/components/capture';
+import { GLOBAL_UNITS, InlineCustomUnitForm, kindOf, labelOf, PIN_KEY, usualQuantity, withUnits } from '../src/ui/components/FoodSearch';
+import { buildPortionCandidates, mergeSelectedPortion, supportedBaseUnits } from '../src/ui/components/customUnitMath';
+import { CUSTOM_FOOD_BASIS_OPTIONS, SegmentedSwitch, useScrollAboveKeyboard, useScrollNodeIntoView, type CustomFoodBasis } from '../src/ui/components/capture';
 import { LearnedPortionChips, MacroProportionBar, MealDestinationPills, NumericEditor, RevealPanel } from '../src/ui/components/doop';
-import { BackHeader, Button, energy, energyValue, ErrorMessage, goBackOrReplace, Muted, number, Page, SectionRule } from '../src/ui/components/primitives';
-import { colors, fontFace, radius, SCREEN_GUTTER, spacing, tabularNums } from '../src/ui/tokens';
+import {
+  applyInlineFoodDraft,
+  buildLivePreviewFood,
+  createInlineFoodDraft,
+  formatEditedFieldsSummary,
+  getReadOnlyEditHint,
+  INITIAL_INLINE_EDIT_STATE,
+  NUTRIENT_ROWS,
+  tapEditableTarget,
+  updateInlineFoodDraft,
+  type EditableFoodField,
+  type EditableTarget,
+  type InlineEditModeState,
+  type InlineFoodDraft,
+  type NutrientRowDescriptor,
+} from '../src/ui/components/foodInlineEditMath';
+import { BackHeader, energy, energyValue, ErrorMessage, goBackOrReplace, Muted, number, Page, SectionRule } from '../src/ui/components/primitives';
+import { macroShare } from '../src/ui/format';
+import { hapticLight, hapticSelection, hapticSuccess, hapticWarning } from '../src/ui/haptics';
+import { colors, fontFace, fontSize, radius, SCREEN_GUTTER, spacing, tabularNums } from '../src/ui/tokens';
 
 function paramString(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value)?.trim() ?? '';
@@ -22,27 +42,15 @@ function paramString(value: string | string[] | undefined): string {
 function basisLabel(food: FoodRecord): string {
   if (food.basis === 'per_100g') return 'per 100 g';
   if (food.basis === 'per_100ml') return 'per 100 ml';
-  if (food.serving_g != null) return `per serving (${number(food.serving_g, 0)} g)`;
-  if (food.serving_ml != null) return `per serving (${number(food.serving_ml, 0)} ml)`;
-  return 'per serving';
+  const unitText = kindOf(food) === 'recipe' ? 'whole recipe' : 'serving';
+  if (food.serving_g != null) return `per ${unitText} (${number(food.serving_g, 0)} g)`;
+  if (food.serving_ml != null) return `per ${unitText} (${number(food.serving_ml, 0)} ml)`;
+  return `per ${unitText}`;
 }
 
 function prepLabel(prep: FoodRecord['prep_state']): string | null {
   if (prep === 'unknown') return null;
   return prep[0]!.toUpperCase() + prep.slice(1);
-}
-
-function macroShare(proteinG: number, carbsG: number, fatG: number) {
-  const p = Math.max(0, proteinG) * 4;
-  const c = Math.max(0, carbsG) * 4;
-  const f = Math.max(0, fatG) * 9;
-  const total = p + c + f;
-  if (total <= 0) return { protein: 0, carbs: 0, fat: 0 };
-  return {
-    protein: Math.round((p / total) * 100),
-    carbs: Math.round((c / total) * 100),
-    fat: Math.round((f / total) * 100),
-  };
 }
 
 function formatShareText(
@@ -51,7 +59,7 @@ function formatShareText(
   nutrients: NutrientProfile | undefined,
   energyUnit: 'kcal' | 'kJ',
 ): string {
-  const lines = [`${food.name}${food.brand ? ` (${food.brand})` : ''}`, `Portion: ${labelOf(portion)}`];
+  const lines = [`${food.name}${food.brand ? ` (${food.brand})` : ''}`, `Portion: ${labelOf(portion, food)}`];
   if (!nutrients) return lines.join('\n');
   lines.push(`Energy: ${energy(nutrients.kcal, energyUnit)}`);
   lines.push(`Protein: ${number(nutrients.protein_g, 1)} g · Carbs: ${number(nutrients.carbs_g, 1)} g · Fat: ${number(nutrients.fat_g, 1)} g`);
@@ -70,243 +78,152 @@ function formatShareText(
   return lines.join('\n');
 }
 
+function InlineCommitTick({ onPress, disabled }: { onPress: () => void; disabled?: boolean }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Save changes"
+      disabled={disabled}
+      onPress={onPress}
+      hitSlop={6}
+      style={({ pressed }) => [styles.inlineTickBtn, pressed && styles.pressed]}
+    >
+      <DoopIcon name="check" size={14} color={colors.accent} strokeWidth={2.4} />
+    </Pressable>
+  );
+}
+
 function NutrientRow({
-  label,
+  row,
   value,
   unit,
-  sub = false,
-  bold = false,
+  editable,
+  armed,
+  active,
+  editMode,
+  dirty,
+  draftValue,
+  busy,
+  onTap,
+  onChangeDraft,
+  onCommit,
+  onEnsureVisible,
 }: {
-  label: string;
+  row: NutrientRowDescriptor;
   value: number | null | undefined;
   unit: string;
-  sub?: boolean;
-  bold?: boolean;
+  editable: boolean;
+  armed: boolean;
+  active: boolean;
+  editMode: boolean;
+  dirty: boolean;
+  draftValue?: string | undefined;
+  busy: boolean;
+  onTap?: (() => void) | undefined;
+  onChangeDraft?: ((next: string) => void) | undefined;
+  onCommit?: (() => void) | undefined;
+  onEnsureVisible?: ((node: ComponentRef<typeof View> | null) => void) | undefined;
 }) {
+  const rowRef = useRef<ComponentRef<typeof View> | null>(null);
+  const inputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
   const known = value != null && Number.isFinite(value);
-  return (
-    <View style={[styles.nutRow, sub && styles.nutRowSub]}>
-      <Text style={[styles.nutLabel, bold && styles.nutLabelBold, sub && styles.nutLabelSub]}>{label}</Text>
-      <Text style={[styles.nutValue, !known && styles.nutUnknown, bold && styles.nutValueBold]}>
-        {known ? `${number(value, unit === 'mg' ? 0 : 1)} ${unit}` : '—'}
-      </Text>
-    </View>
-  );
-}
+  const formatted = known ? `${number(value, row.digits)} ${unit}` : '—';
 
-function CustomFoodEditor({
-  food,
-  energyUnit,
-  busy,
-  onSave,
-  onCancel,
-}: {
-  food: FoodRecord;
-  energyUnit: 'kcal' | 'kJ';
-  busy: boolean;
-  onSave: (updated: FoodRecord) => void;
-  onCancel: () => void;
-}) {
-  const [name, setName] = useState(food.name);
-  const [brand, setBrand] = useState(food.brand ?? '');
-  const [basis, setBasis] = useState<CustomFoodBasis>(food.basis);
-  const initialEnergy = energyValue(food.nutrients.kcal, energyUnit);
-  const [fields, setFields] = useState({
-    kcal: initialEnergy == null ? '' : String(Math.round(initialEnergy * 10) / 10),
-    proteinG: String(food.nutrients.protein_g),
-    carbsG: String(food.nutrients.carbs_g),
-    fatG: String(food.nutrients.fat_g),
-    fiberG: food.nutrients.fiber_g == null ? '' : String(food.nutrients.fiber_g),
-    sugarG: food.nutrients.sugar_g == null ? '' : String(food.nutrients.sugar_g),
-  });
-  const [error, setError] = useState<string | null>(null);
-  const nutrientFields = customFoodNutrientFields(energyUnit, true);
-
-  const submit = () => {
-    try {
-      setError(null);
-      if (!name.trim()) throw new Error('Enter a food name before saving.');
-      const parsed = parseCustomFoodNutrients(fields, energyUnit);
-      const updated = foodRecordSchema.parse({
-        ...food,
-        name: name.trim(),
-        brand: brand.trim() || null,
-        basis,
-        nutrients: {
-          ...food.nutrients,
-          kcal: parsed.kcal,
-          protein_g: parsed.protein_g,
-          carbs_g: parsed.carbs_g,
-          fat_g: parsed.fat_g,
-          fiber_g: parsed.fiber_g,
-          sugar_g: parsed.sugar_g ?? null,
-        },
-      });
-      onSave(updated);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    }
-  };
-
-  return (
-    <View style={styles.editForm}>
-      <View style={styles.editField}>
-        <Text style={styles.editLabel}>NAME</Text>
-        <TextInput
-          accessibilityLabel="Food name"
-          value={name}
-          onChangeText={setName}
-          placeholder="Food name"
-          placeholderTextColor={colors.muted}
-          style={styles.editInput}
-        />
-      </View>
-      <View style={styles.editField}>
-        <Text style={styles.editLabel}>BRAND (OPTIONAL)</Text>
-        <TextInput
-          accessibilityLabel="Brand"
-          value={brand}
-          onChangeText={setBrand}
-          placeholder="e.g. Homemade"
-          placeholderTextColor={colors.muted}
-          style={styles.editInput}
-        />
-      </View>
-      <SegmentedSwitch options={CUSTOM_FOOD_BASIS_OPTIONS} value={basis} disabled={busy} onChange={value => setBasis(value as CustomFoodBasis)} />
-      <View style={styles.editGrid}>
-        {nutrientFields.map(field => (
-          <View key={field.key} style={styles.editCell}>
-            <Text style={styles.editLabel}>{field.label.toUpperCase()}</Text>
-            <View style={styles.editCellVal}>
-              <TextInput
-                accessibilityLabel={`${field.label} (${field.unit})`}
-                placeholder={field.required ? '—' : 'unknown'}
-                placeholderTextColor={colors.muted}
-                value={fields[field.key]}
-                keyboardType="decimal-pad"
-                onChangeText={value => setFields(old => ({ ...old, [field.key]: value }))}
-                style={styles.editCellInput}
-              />
-              <Text style={styles.editUnit}>{field.unit}</Text>
-            </View>
-          </View>
-        ))}
-      </View>
-      <ErrorMessage message={error} />
-      <View style={styles.editButtons}>
-        <Button label="Cancel" quiet disabled={busy} onPress={onCancel} />
-        <Button label={busy ? 'Saving…' : 'Save changes'} primary disabled={busy} onPress={submit} />
-      </View>
-    </View>
-  );
-}
-
-const UNIT_SCOPE_OPTIONS = [
-  { value: 'food', label: 'This food' },
-  { value: 'all', label: 'All foods' },
-];
-
-function CustomUnitForm({
-  food,
-  energyUnit,
-  busy,
-  onCancel,
-  onSave,
-}: {
-  food: FoodRecord;
-  energyUnit: 'kcal' | 'kJ';
-  busy: boolean;
-  onCancel: () => void;
-  onSave: (unit: FoodUnit, scope: 'food' | 'all', updatedFood: FoodRecord) => void;
-}) {
-  const [name, setName] = useState('');
-  const [weight, setWeight] = useState('');
-  const [scope, setScope] = useState<'food' | 'all'>('food');
-  const [error, setError] = useState<string | null>(null);
-  const measureUnit = food.basis === 'per_100ml' ? 'ml' : 'g';
-
-  const previewEnergy = useMemo(() => {
-    const label = name.trim();
-    const numeric = Number(weight);
-    if (!label || !Number.isFinite(numeric) || numeric <= 0) return null;
-    try {
-      const unit: FoodUnit = { label, grams: measureUnit === 'ml' ? null : numeric, ml: measureUnit === 'ml' ? numeric : null };
-      const updated = { ...food, units: [...food.units.filter(item => item.label !== label), unit] };
-      return calculateNutrition(updated, { amount: 1, unit: label }).kcal;
-    } catch {
-      return null;
-    }
-  }, [food, measureUnit, name, weight]);
-
-  const submit = () => {
-    try {
-      setError(null);
-      const label = name.trim();
-      const numeric = Number(weight);
-      if (!label || !Number.isFinite(numeric) || numeric <= 0) throw new Error('Enter a unit name and a positive weight.');
-      if (['g', 'oz', 'ml', 'l', 'serving'].includes(label.toLowerCase())) throw new Error('Choose a unit name such as bowl, katori, or scoop.');
-      const unit: FoodUnit = { label, grams: measureUnit === 'ml' ? null : numeric, ml: measureUnit === 'ml' ? numeric : null };
-      const updated = { ...food, units: [...food.units.filter(item => item.label !== label), unit] };
-      resolveQuantityToBasis(updated, { amount: 1, unit: label });
-      Keyboard.dismiss();
-      onSave(unit, scope, updated);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    }
-  };
-
-  return (
-    <RevealPanel visible direction="down" style={styles.unitForm}>
-      <View style={styles.unitFormRow}>
-        <View style={[styles.editField, { flex: 1.3 }]}>
-          <Text style={styles.editLabel}>UNIT NAME</Text>
-          <TextInput
-            autoFocus
-            accessibilityLabel="Custom unit name"
-            placeholder="e.g. bowl, katori"
-            placeholderTextColor={colors.muted}
-            value={name}
-            onChangeText={setName}
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={styles.editInput}
-          />
-        </View>
-        <View style={[styles.editField, { flex: 1 }]}>
-          <Text style={styles.editLabel}>{`WEIGHT (${measureUnit.toUpperCase()})`}</Text>
-          <View style={styles.editCellVal}>
-            <TextInput
-              accessibilityLabel="Custom unit weight"
-              placeholder="250"
-              placeholderTextColor={colors.muted}
-              value={weight}
-              onChangeText={setWeight}
-              keyboardType="decimal-pad"
-              onSubmitEditing={submit}
-              returnKeyType="done"
-              style={[styles.editInput, styles.unitWeightInput]}
-            />
-            <Text style={styles.unitSuffix}>{measureUnit}</Text>
-          </View>
-        </View>
-      </View>
-      {previewEnergy != null ? (
-        <Text style={styles.unitPreview}>
-          1 {name.trim()} = {number(Number(weight), 0)} {measureUnit} · {energy(previewEnergy, energyUnit)}
-        </Text>
-      ) : null}
-      <SegmentedSwitch
-        options={UNIT_SCOPE_OPTIONS}
-        value={scope}
+  if (editMode) {
+    return (
+      <Pressable
         disabled={busy}
-        onChange={value => setScope(value as 'food' | 'all')}
-      />
-      <ErrorMessage message={error} />
-      <View style={styles.editButtons}>
-        <Button label="Cancel" quiet disabled={busy} onPress={() => { Keyboard.dismiss(); onCancel(); }} />
-        <Button label={busy ? 'Saving…' : 'Save unit'} primary disabled={busy} onPress={submit} />
+        onPress={() => inputRef.current?.focus()}
+        accessibilityRole="button"
+        accessibilityLabel={`Edit ${row.label} (${unit})`}
+      >
+        <View ref={rowRef} collapsable={false} style={[styles.nutRow, row.sub && styles.nutRowSub, active && styles.nutRowActive]}>
+          <Text style={[styles.nutLabel, row.bold && styles.nutLabelBold, row.sub && styles.nutLabelSub]}>{row.label}</Text>
+          <View style={styles.nutEditWrap}>
+            {!active ? (
+              <DoopIcon
+                name="edit"
+                size={11}
+                color={dirty ? colors.accent : colors.muted}
+                strokeWidth={1.5}
+              />
+            ) : null}
+            <TextInput
+              ref={inputRef}
+              accessibilityLabel={`${row.label} (${unit})`}
+              autoFocus={active}
+              selectTextOnFocus
+              value={draftValue ?? ''}
+              onChangeText={onChangeDraft}
+              onFocus={() => {
+                onTap?.();
+                onEnsureVisible?.(rowRef.current);
+              }}
+              onSubmitEditing={onCommit}
+              returnKeyType="done"
+              submitBehavior="blurAndSubmit"
+              keyboardType="decimal-pad"
+              placeholder={row.required ? '0' : '—'}
+              placeholderTextColor={colors.muted}
+              editable={!busy}
+              style={[
+                styles.nutInlineInput,
+                !active && styles.nutInlineInputIdle,
+                row.bold && styles.nutValueBold,
+                dirty && styles.nutValueDirty,
+              ]}
+            />
+            <Text style={styles.nutInlineUnit}>{unit}</Text>
+            {active && onCommit ? <InlineCommitTick onPress={onCommit} disabled={busy} /> : null}
+          </View>
+        </View>
+      </Pressable>
+    );
+  }
+
+  const content = (
+    <View style={[styles.nutRow, row.sub && styles.nutRowSub, armed && styles.nutRowArmed]}>
+      <Text style={[styles.nutLabel, row.bold && styles.nutLabelBold, row.sub && styles.nutLabelSub]}>{row.label}</Text>
+      <View style={styles.nutValueWrap}>
+        {armed ? (
+          <DoopIcon
+            name="edit"
+            size={13}
+            color={colors.accent}
+            strokeWidth={1.8}
+          />
+        ) : null}
+        <Text
+          style={[
+            styles.nutValue,
+            !known && styles.nutUnknown,
+            row.bold && styles.nutValueBold,
+          ]}
+        >
+          {formatted}
+        </Text>
       </View>
-    </RevealPanel>
+    </View>
+  );
+
+  if (!onTap) return content;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={
+        editable
+          ? armed
+            ? `Edit ${row.label}, currently ${formatted}. Tap again to edit.`
+            : `${row.label} ${formatted}`
+          : `${row.label} ${formatted}, read-only`
+      }
+      disabled={busy}
+      onPress={onTap}
+      style={({ pressed }) => [pressed && styles.pressed]}
+    >
+      {content}
+    </Pressable>
   );
 }
 
@@ -332,35 +249,76 @@ function FoodDetail({
   targetDate: string;
 }) {
   const { controller } = useAppRuntime();
+  const insets = useSafeAreaInsets();
   const preferences = usePreferences();
   const energyUnit = preferences.value?.energyUnit ?? 'kcal';
   const meals = mealsForDay(preferences.value?.mealSections ?? [...MEALS], data.entries, [targetMeal]);
-  const [updatedFood, setUpdatedFood] = useState<FoodRecord | null>(null);
-  const food = updatedFood ?? data.food;
+  const [foodOverride, setFoodOverride] = useState<{ base: FoodRecord; food: FoodRecord } | null>(null);
+  const food = foodOverride?.base === data.food ? foodOverride.food : data.food;
   const kind = kindOf(food);
   const isCustomFood = !food.source_pack_id && kind === 'food';
   const isDatabaseFood = Boolean(food.source_pack_id);
+  const canEditName = !isDatabaseFood;
+  const canEditNutrition = isCustomFood;
   const [selected, setSelected] = useState<Quantity>(initialQuantity);
-  const [typed, setTyped] = useState<string | null>(null);
-  const [unitMenu, setUnitMenu] = useState(false);
+  const [typedState, setTypedState] = useState<{ unit: string; value: string } | null>(null);
+  const [addingInlineUnit, setAddingInlineUnit] = useState(false);
   const [addingUnit, setAddingUnit] = useState(false);
-  const [editing, setEditing] = useState(false);
+  const canAddCustomUnit = useMemo(() => supportedBaseUnits(food).length > 0, [food]);
+  const [editState, setEditState] = useState<InlineEditModeState>(INITIAL_INLINE_EDIT_STATE);
+  const [editDraft, setEditDraft] = useState<InlineFoodDraft | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [readOnlyHintTick, setReadOnlyHintTick] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [statusNote, setStatusNote] = useState<string | null>(null);
+  const readOnlyHint = useMemo(() => getReadOnlyEditHint(kind, isDatabaseFood), [isDatabaseFood, kind]);
+  useEffect(() => {
+    if (readOnlyHintTick === 0) return;
+    const timer = setTimeout(() => setReadOnlyHintTick(0), 4500);
+    return () => clearTimeout(timer);
+  }, [readOnlyHintTick]);
   const action = useAction();
   const scrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
   const scrollOffsetRef = useRef(0);
+  const ensureVisible = useScrollAboveKeyboard(scrollRef, scrollOffsetRef);
   const personalUnitsRef = useRef<ComponentRef<typeof View> | null>(null);
+  const brandRowRef = useRef<ComponentRef<typeof View> | null>(null);
+  const nameInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const heroKcalInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const brandInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
   const getPersonalUnitsNode = useCallback(() => personalUnitsRef.current, []);
   useScrollNodeIntoView(scrollRef, scrollOffsetRef, getPersonalUnitsNode, addingUnit ? 'personal-units' : null);
 
-  const current = useMemo(() => (typed == null ? selected : { amount: Number(typed), unit: selected.unit }), [selected, typed]);
+  const isEditMode = canEditName && editState.mode === 'edit' && editDraft !== null;
+  const isNutritionEditMode = canEditNutrition && isEditMode;
+  const armedTarget = canEditName && editState.mode === 'normal' ? editState.armedTarget : null;
+  const activeTarget = isEditMode ? editState.activeTarget : null;
+
+  const validUnits = useMemo(() => availableUnits(food), [food]);
+  const activeSelected = useMemo(
+    () => (validUnits.includes(selected.unit) ? selected : usualQuantity(food)),
+    [food, selected, validUnits],
+  );
+  const typed = typedState && validUnits.includes(typedState.unit) ? typedState.value : null;
+  const hasTyped = typed != null && typed.trim() !== '';
+  const current = useMemo(
+    () => (hasTyped ? { amount: Number(typed), unit: activeSelected.unit } : activeSelected),
+    [activeSelected, hasTyped, typed],
+  );
   const valid = Number.isFinite(current.amount) && current.amount > 0;
+  const basisFactor = useMemo(() => {
+    if (!valid) return 1;
+    try {
+      const resolved = resolveQuantityToBasis(food, current);
+      return resolved.factor > 0 ? resolved.factor : 1;
+    } catch {
+      return 1;
+    }
+  }, [current, food, valid]);
   const preview = useAsyncResource(
     useCallback(async () => (valid ? controller.preview(food, current) : null), [controller, food, current, valid]),
     `${foodKey(food)}:${current.amount}:${current.unit}`,
   );
-  const nutrients = useMemo(() => {
+  const baseNutrients = useMemo(() => {
     if (preview.value?.nutrients) return preview.value.nutrients;
     if (!valid) return undefined;
     try {
@@ -370,11 +328,26 @@ function FoodDetail({
     }
   }, [current, food, preview.value, valid]);
 
+  const displayedFood = useMemo(
+    () => (isEditMode && editDraft ? buildLivePreviewFood(food, editDraft, basisFactor, energyUnit) : food),
+    [basisFactor, editDraft, energyUnit, food, isEditMode],
+  );
+  const nutrients = useMemo(() => {
+    if (!isEditMode) return baseNutrients;
+    if (!valid) return displayedFood.nutrients;
+    try {
+      return calculateNutrition(displayedFood, current);
+    } catch {
+      return displayedFood.nutrients;
+    }
+  }, [baseNutrients, current, displayedFood, isEditMode, valid]);
+
   const resolvedMetric = useMemo(() => {
     if (!valid) return null;
     try {
       const resolved = resolveQuantityToBasis(food, current);
       if (resolved.unit === current.unit && Math.abs(resolved.amount - current.amount) < 0.01) return null;
+      if (resolved.unit === 'serving') return labelOf(resolved, food);
       return `${number(resolved.amount, 0)} ${resolved.unit}`;
     } catch {
       return null;
@@ -384,16 +357,141 @@ function FoodDetail({
   const shares = macroShare(nutrients?.protein_g ?? 0, nutrients?.carbs_g ?? 0, nutrients?.fat_g ?? 0);
   const loggedMeals = data.entries.map(entry => entry.meal);
 
+  const disarm = () => {
+    if (editState.mode === 'normal' && editState.armedTarget !== null) {
+      setEditState(INITIAL_INLINE_EDIT_STATE);
+    }
+  };
+  const exitEditMode = () => {
+    Keyboard.dismiss();
+    setEditState(INITIAL_INLINE_EDIT_STATE);
+    setEditDraft(null);
+    setEditError(null);
+  };
+  const openRecipeEditor = () => {
+    setReadOnlyHintTick(0);
+    router.push({ pathname: '/recipes/[id]', params: { id: food.id.slice(7), meal: targetMeal, date: targetDate } });
+  };
+  const saveAsCustomCopy = () => void action.run(async () => {
+    setReadOnlyHintTick(0);
+    const copy = await controller.saveCustomFood({
+      ...food,
+      id: generateId(),
+      provenance_kind: 'user',
+      source_pack_id: null,
+      source_id: null,
+      source_version: null,
+    });
+    hapticSuccess();
+    router.replace({
+      pathname: '/food',
+      params: { id: copy.id, meal: targetMeal, date: targetDate, amount: String(current.amount), unit: current.unit },
+    });
+  });
+  const onTapReadOnly = () => {
+    if (!readOnlyHint || action.busy) return;
+    hapticSelection();
+    setReadOnlyHintTick(tick => tick + 1);
+  };
+  const onTapEditable = (target: EditableTarget) => {
+    const targetEditable = target === 'name' ? canEditName : canEditNutrition;
+    if (!targetEditable) {
+      onTapReadOnly();
+      return;
+    }
+    if (action.busy) return;
+    const { next, transition } = tapEditableTarget(editState, target);
+    if (transition === 'noop') return;
+    setEditError(null);
+    if (transition === 'armed') {
+      hapticSelection();
+      setEditState(next);
+      return;
+    }
+    if (transition === 'enter-edit') {
+      hapticLight();
+      setReadOnlyHintTick(0);
+      setAddingInlineUnit(false);
+      setAddingUnit(false);
+      setTypedState(null);
+      setConfirmDelete(false);
+      setEditDraft(createInlineFoodDraft(food, baseNutrients, energyUnit));
+      setEditState(next);
+      return;
+    }
+    hapticSelection();
+    setEditState(next);
+  };
+  const onDraftChange = (field: EditableFoodField, value: string) => {
+    setEditError(null);
+    setEditDraft(old => (old ? updateInlineFoodDraft(old, field, value) : old));
+  };
+  const commitEdit = () => {
+    if (!isEditMode || !editDraft || action.busy) return;
+    try {
+      setEditError(null);
+      if (!canEditNutrition) {
+        const trimmed = editDraft.name.trim();
+        if (!trimmed) throw new Error(`Enter a ${kind === 'recipe' ? 'recipe' : 'meal'} name before saving.`);
+        if (trimmed === food.name) {
+          hapticSelection();
+          exitEditMode();
+          return;
+        }
+        Keyboard.dismiss();
+        void action.run(async () => {
+          if (kind === 'recipe') await controller.renameRecipe(food.id.slice(7), trimmed);
+          else await controller.renameSavedMeal(food.id.slice(5), trimmed);
+          hapticSuccess();
+          setFoodOverride({ base: data.food, food: { ...food, name: trimmed } });
+          setEditState(INITIAL_INLINE_EDIT_STATE);
+          setEditDraft(null);
+          setEditError(null);
+        });
+        return;
+      }
+      const result = applyInlineFoodDraft(food, editDraft, basisFactor, energyUnit);
+      if (!result.changed) {
+        hapticSelection();
+        exitEditMode();
+        return;
+      }
+      Keyboard.dismiss();
+      const undoLabel = formatEditedFieldsSummary(result.changedFields);
+      void action.run(async () => {
+        const saved = await controller.saveCustomFood(result.updated, { undoLabel });
+        hapticSuccess();
+        setFoodOverride({ base: data.food, food: saved });
+        setEditState(INITIAL_INLINE_EDIT_STATE);
+        setEditDraft(null);
+        setEditError(null);
+      });
+    } catch (reason) {
+      hapticWarning();
+      setEditError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+
   const selectPortion = (next: Quantity) => {
-    setTyped(null);
+    disarm();
+    setAddingInlineUnit(false);
+    setTypedState(null);
     setSelected(next);
   };
-  const selectUnit = (unit: string) => void action.run(async () => {
-    const mapping = food.units.find(item => item.label === unit);
-    if (mapping) await controller.savePersonalUnit(food, mapping);
-    setSelected({ amount: typed == null ? 1 : Number(typed) || 1, unit });
-  });
+  const selectUnit = (unit: string) => {
+    disarm();
+    setAddingInlineUnit(false);
+    if (typed != null) setTypedState({ unit, value: typed });
+    const nextAmount = hasTyped ? (Number(typed) || 1) : (unit === 'g' || unit === 'ml' ? 100 : 1);
+    setSelected({ amount: nextAmount, unit });
+  };
+  const displayedPortions = useMemo(() => {
+    const validSet = new Set(validUnits);
+    const filtered = data.portions.filter(portion => validSet.has(portion.unit));
+    return mergeSelectedPortion(filtered, food, activeSelected);
+  }, [activeSelected, data.portions, food, validUnits]);
   const toggleMeal = (destination: string) => void action.run(async () => {
+    disarm();
     const logged = data.entries.filter(entry => entry.meal === destination);
     if (logged.length) {
       await controller.deleteEntries(logged.map(entry => entry.id));
@@ -401,7 +499,7 @@ function FoodDetail({
     }
     if (!valid) throw new Error('Enter an amount greater than zero.');
     await controller.confirm({ food, quantity: current, meal: destination, date: targetDate, idempotencyKey: generateId() });
-    setTyped(null);
+    setTypedState(null);
   });
 
   const reducedMotion = useReducedMotion();
@@ -423,48 +521,278 @@ function FoodDetail({
 
   const subtitleParts = [
     data.sourceName,
-    food.brand,
-    food.category,
-    prepLabel(food.prep_state),
+    displayedFood.brand,
+    displayedFood.category,
+    prepLabel(displayedFood.prep_state),
   ].filter((part, index, list): part is string => Boolean(part) && list.findIndex(item => item?.toLowerCase() === part?.toLowerCase()) === index);
+
+  const nameDirty = Boolean(editDraft?.dirtyFields.has('name'));
+  const brandDirty = Boolean(editDraft?.dirtyFields.has('brand'));
+  const basisDirty = Boolean(editDraft?.dirtyFields.has('basis'));
+  const kcalDirty = Boolean(editDraft?.dirtyFields.has('kcal'));
+
+  const showReadOnlyHint = Boolean(readOnlyHint && readOnlyHintTick > 0 && !controller.undoAction);
 
   return (
     <Page
       scrollRef={scrollRef}
       onScroll={event => { scrollOffsetRef.current = event.nativeEvent.contentOffset.y; }}
-      overlay={<View pointerEvents="box-none" style={styles.toast}><UndoToast /></View>}
+      overlay={
+        <View pointerEvents="box-none" style={[styles.toast, { bottom: Math.max(insets.bottom, 12) + 8 }]}>
+          <UndoToast />
+          <RevealPanel visible={showReadOnlyHint} direction="up">
+            {showReadOnlyHint && readOnlyHint ? (
+              <View accessibilityLiveRegion="polite" style={styles.readOnlyPill}>
+                <DoopIcon name="lock" size={14} color={colors.muted} />
+                <Text numberOfLines={1} style={styles.readOnlyText}>{readOnlyHint.message}</Text>
+                {readOnlyHint.actionLabel ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={readOnlyHint.actionLabel}
+                    disabled={action.busy}
+                    onPress={() => {
+                      hapticLight();
+                      if (readOnlyHint.actionKind === 'copy-custom') saveAsCustomCopy();
+                      else if (readOnlyHint.actionKind === 'edit-recipe') openRecipeEditor();
+                    }}
+                    style={({ pressed }) => [styles.readOnlyAction, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.readOnlyActionText}>{readOnlyHint.actionLabel}</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Dismiss hint"
+                  onPress={() => setReadOnlyHintTick(0)}
+                  style={styles.readOnlyClose}
+                >
+                  <DoopIcon name="close" size={14} color={colors.muted} />
+                </Pressable>
+              </View>
+            ) : null}
+          </RevealPanel>
+        </View>
+      }
     >
       <Animated.View style={[styles.pageMotion, enterStyle]}>
       <BackHeader
-        title={food.name}
-        onBack={() => goBackOrReplace('/(tabs)/library')}
+        title={displayedFood.name}
+        backIcon={isEditMode ? 'close' : 'back'}
+        backLabel={isEditMode ? 'Discard edits' : 'Back'}
+        onBack={() => {
+          if (isEditMode) {
+            hapticSelection();
+            exitEditMode();
+            return;
+          }
+          goBackOrReplace('/(tabs)/library');
+        }}
+        titleContent={
+          canEditName ? (
+            isEditMode && editDraft ? (
+              <Pressable
+                disabled={action.busy}
+                onPress={() => nameInputRef.current?.focus()}
+                style={styles.headerNameEditWrap}
+              >
+                <TextInput
+                  ref={nameInputRef}
+                  accessibilityLabel={kind === 'recipe' ? 'Recipe name' : kind === 'meal' ? 'Meal name' : 'Food name'}
+                  autoFocus={activeTarget === 'name'}
+                  selectTextOnFocus
+                  value={editDraft.name}
+                  onChangeText={value => onDraftChange('name', value)}
+                  onFocus={() => onTapEditable('name')}
+                  onSubmitEditing={commitEdit}
+                  returnKeyType="done"
+                  submitBehavior="blurAndSubmit"
+                  placeholder={kind === 'recipe' ? 'Recipe name' : kind === 'meal' ? 'Meal name' : 'Food name'}
+                  placeholderTextColor={colors.muted}
+                  editable={!action.busy}
+                  style={[
+                    styles.headerNameInput,
+                    activeTarget !== 'name' && styles.headerNameInputIdle,
+                    nameDirty && styles.nutValueDirty,
+                  ]}
+                />
+                {activeTarget !== 'name' ? (
+                  <DoopIcon
+                    name="edit"
+                    size={12}
+                    color={nameDirty ? colors.accent : colors.muted}
+                    strokeWidth={1.5}
+                  />
+                ) : null}
+              </Pressable>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  armedTarget === 'name'
+                    ? `Edit ${displayedFood.name}. Tap again to edit.`
+                    : displayedFood.name
+                }
+                disabled={action.busy}
+                onPress={() => onTapEditable('name')}
+                style={({ pressed }) => [
+                  styles.headerTitleTap,
+                  armedTarget === 'name' && styles.headerTitleArmed,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text
+                  accessibilityRole="header"
+                  numberOfLines={1}
+                  style={styles.headerTitleText}
+                >
+                  {displayedFood.name}
+                </Text>
+                {armedTarget === 'name' ? (
+                  <DoopIcon
+                    name="edit"
+                    size={14}
+                    color={colors.accent}
+                    strokeWidth={1.85}
+                  />
+                ) : null}
+              </Pressable>
+            )
+          ) : (
+            <Pressable
+              accessibilityRole="header"
+              accessibilityLabel={displayedFood.name}
+              disabled={action.busy}
+              onPress={onTapReadOnly}
+              style={({ pressed }) => [styles.headerTitleTap, pressed && styles.pressed]}
+            >
+              <Text numberOfLines={1} style={styles.headerTitleText}>{displayedFood.name}</Text>
+            </Pressable>
+          )
+        }
         right={
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={data.pinned ? 'Unpin food' : 'Pin food'}
-            accessibilityState={{ selected: data.pinned }}
-            disabled={action.busy}
-            onPress={() => void action.run(() => controller.toggleFoodPin(food, !data.pinned))}
-            style={styles.iconHit}
-          >
-            <DoopIcon name="pin" size={18} color={data.pinned ? colors.accent : colors.muted} />
-          </Pressable>
+          isEditMode ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Save changes"
+              disabled={action.busy}
+              onPress={commitEdit}
+              style={({ pressed }) => [styles.iconHit, pressed && styles.pressed]}
+            >
+              <View style={styles.headerTickPill}>
+                <DoopIcon name="check" size={17} color={colors.accent} strokeWidth={2.4} />
+              </View>
+            </Pressable>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={data.pinned ? 'Unpin food' : 'Pin food'}
+              accessibilityState={{ selected: data.pinned }}
+              disabled={action.busy}
+              onPress={() => {
+                disarm();
+                hapticLight();
+                void action.run(() => controller.toggleFoodPin(food, !data.pinned));
+              }}
+              style={styles.iconHit}
+            >
+              <DoopIcon name="pin" size={18} color={data.pinned ? colors.accent : colors.muted} />
+            </Pressable>
+          )
         }
       />
 
+      <ErrorMessage message={editError} />
+
       <View style={styles.subtitleRow}>
-        <DoopIcon name={inferFoodGlyph(food.name, kind)} size={18} color={colors.muted} />
+        <DoopIcon name={inferFoodGlyph(displayedFood.name, kind)} size={18} color={colors.muted} />
         <Text numberOfLines={2} style={styles.subtitleText}>{subtitleParts.join(' · ')}</Text>
       </View>
 
       <View style={styles.hero}>
         <View style={styles.heroTop}>
-          <View style={styles.heroEnergyRow}>
-            <Text style={styles.heroEnergyValue}>{number(energyValue(nutrients?.kcal, energyUnit))}</Text>
-            <Text style={styles.heroEnergyUnit}>{energyUnit}</Text>
-          </View>
+          {isCustomFood && isEditMode && editDraft ? (
+            <Pressable
+              disabled={action.busy}
+              onPress={() => heroKcalInputRef.current?.focus()}
+              style={styles.heroEnergyEditRow}
+            >
+              <TextInput
+                ref={heroKcalInputRef}
+                accessibilityLabel={`Energy (${energyUnit})`}
+                autoFocus={activeTarget === 'hero_kcal'}
+                selectTextOnFocus
+                value={editDraft.nutrients.kcal}
+                onChangeText={value => onDraftChange('kcal', value)}
+                onFocus={() => onTapEditable('hero_kcal')}
+                onSubmitEditing={commitEdit}
+                returnKeyType="done"
+                submitBehavior="blurAndSubmit"
+                keyboardType="decimal-pad"
+                placeholder="0"
+                placeholderTextColor={colors.muted}
+                editable={!action.busy}
+                style={[
+                  styles.heroEnergyInput,
+                  activeTarget !== 'hero_kcal' && styles.heroEnergyInputIdle,
+                  kcalDirty && styles.nutValueDirty,
+                ]}
+              />
+              <Text style={styles.heroEnergyUnit}>{energyUnit}</Text>
+              {activeTarget === 'hero_kcal' ? (
+                <InlineCommitTick onPress={commitEdit} disabled={action.busy} />
+              ) : (
+                <DoopIcon
+                  name="edit"
+                  size={13}
+                  color={kcalDirty ? colors.accent : colors.muted}
+                  strokeWidth={1.5}
+                />
+              )}
+            </Pressable>
+          ) : isCustomFood ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                armedTarget === 'hero_kcal'
+                  ? `Edit energy ${number(energyValue(nutrients?.kcal, energyUnit))} ${energyUnit}. Tap again to edit.`
+                  : `Energy ${number(energyValue(nutrients?.kcal, energyUnit))} ${energyUnit}`
+              }
+              disabled={action.busy}
+              onPress={() => onTapEditable('hero_kcal')}
+              style={({ pressed }) => [
+                styles.heroEnergyRow,
+                styles.heroEnergyTap,
+                armedTarget === 'hero_kcal' && styles.heroEnergyArmed,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={styles.heroEnergyValue}>
+                {number(energyValue(nutrients?.kcal, energyUnit))}
+              </Text>
+              <Text style={styles.heroEnergyUnit}>{energyUnit}</Text>
+              {armedTarget === 'hero_kcal' ? (
+                <DoopIcon
+                  name="edit"
+                  size={15}
+                  color={colors.accent}
+                  strokeWidth={1.85}
+                />
+              ) : null}
+            </Pressable>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Energy ${number(energyValue(nutrients?.kcal, energyUnit))} ${energyUnit}, read-only`}
+              disabled={action.busy}
+              onPress={onTapReadOnly}
+              style={({ pressed }) => [styles.heroEnergyRow, styles.heroEnergyTap, pressed && styles.pressed]}
+            >
+              <Text style={styles.heroEnergyValue}>{number(energyValue(nutrients?.kcal, energyUnit))}</Text>
+              <Text style={styles.heroEnergyUnit}>{energyUnit}</Text>
+            </Pressable>
+          )}
           <View style={styles.heroPortion}>
-            <Text style={styles.heroPortionMain}>{labelOf(valid ? current : selected)}</Text>
+            <Text style={styles.heroPortionMain}>{labelOf(valid ? current : activeSelected, displayedFood)}</Text>
             {resolvedMetric ? <Text style={styles.heroPortionSub}>{resolvedMetric}</Text> : null}
           </View>
         </View>
@@ -500,64 +828,68 @@ function FoodDetail({
         </View>
       </View>
 
-      <View style={[styles.sectionBlock, unitMenu && { zIndex: 20 }]}>
-        <SectionRule label="Portion" meta={resolvedMetric ?? basisLabel(food)} />
+      <View style={[styles.sectionBlock, isEditMode && styles.sectionDimmed]} pointerEvents={isEditMode ? 'none' : 'auto'}>
+        <SectionRule label="Portion" meta={resolvedMetric ?? basisLabel(displayedFood)} />
         <LearnedPortionChips
           variant="calm"
-          portions={data.portions.map(portion => ({
-            label: labelOf(portion),
+          portions={displayedPortions.map(portion => ({
+            label: labelOf(portion, food),
             energyLabel: energy(portion.kcal, energyUnit),
-            selected: typed == null && current.amount === portion.amount && current.unit === portion.unit,
+            selected: !hasTyped && current.amount === portion.amount && current.unit === portion.unit,
           }))}
           onSelect={index => {
-            const portion = data.portions[index];
+            const portion = displayedPortions[index];
             if (portion) selectPortion({ amount: portion.amount, unit: portion.unit });
           }}
           moreExpanded={typed != null}
-          onMore={() => setTyped(old => (old == null ? '' : null))}
+          onMore={() => {
+            disarm();
+            setAddingInlineUnit(false);
+            setTypedState(old => (old && validUnits.includes(old.unit) ? null : { unit: activeSelected.unit, value: '' }));
+          }}
         />
         {typed != null && (
           <NumericEditor
             value={typed}
-            onChange={setTyped}
-            units={availableUnits(food)}
-            selectedUnit={selected.unit}
+            placeholder={number(activeSelected.amount, 2)}
+            onChange={value => setTypedState({ unit: activeSelected.unit, value })}
+            units={validUnits}
+            selectedUnit={activeSelected.unit}
             onSelectUnit={selectUnit}
-            onAddUnit={() => setUnitMenu(true)}
+            onAddUnit={canAddCustomUnit ? () => setAddingInlineUnit(open => !open) : undefined}
+            addUnitActive={addingInlineUnit}
+            unitEditor={
+              <InlineCustomUnitForm
+                food={food}
+                onEnsureVisible={ensureVisible}
+                onCancel={() => setAddingInlineUnit(false)}
+                onSaved={(updated, unit) => {
+                  setFoodOverride({ base: data.food, food: updated });
+                  setAddingInlineUnit(false);
+                  setTypedState(null);
+                  setSelected({ amount: 1, unit });
+                }}
+              />
+            }
             maxDecimals={2}
             allowEmpty
-            confirmDisabled={!valid || action.busy}
+            confirmDisabled={!hasTyped || !valid || action.busy}
             confirmLabel="Apply custom portion"
             cancelLabel="Close custom portion"
             onConfirm={() => {
               if (!valid) return;
               selectPortion(current);
             }}
-            onCancel={() => setTyped(null)}
+            onCancel={() => {
+              setAddingInlineUnit(false);
+              setTypedState(null);
+            }}
             style={{ marginTop: 6 }}
           />
         )}
-        {unitMenu && (
-          <View style={styles.unitMenuWrap}>
-            <UnitMenu
-              food={food}
-              selected={selected.unit}
-              onClose={() => setUnitMenu(false)}
-              onSelect={unit => {
-                setTyped(null);
-                setSelected({ amount: 1, unit });
-              }}
-              onSaved={(updated, unit) => {
-                setUpdatedFood(updated);
-                setTyped(null);
-                setSelected({ amount: 1, unit });
-              }}
-            />
-          </View>
-        )}
       </View>
 
-      <View style={styles.sectionBlock}>
+      <View style={[styles.sectionBlock, isEditMode && styles.sectionDimmed]} pointerEvents={isEditMode ? 'none' : 'auto'}>
         <SectionRule label="Log to meal" meta={loggedMeals.length ? `Logged · ${loggedMeals.join(', ')}` : targetDate} />
         <MealDestinationPills
           variant="calm"
@@ -565,33 +897,160 @@ function FoodDetail({
           selectedMeals={loggedMeals}
           suggestedMeal={targetMeal}
           mode="toggle"
-          disabled={!valid || action.busy || preview.loading || typed != null}
+          disabled={!valid || action.busy || preview.loading || addingInlineUnit || isEditMode}
           onPress={toggleMeal}
         />
       </View>
 
       <View style={styles.sectionBlock}>
-        <SectionRule label="Nutrition" meta={labelOf(valid ? current : selected)} />
-        <View style={styles.nutCard}>
-          <NutrientRow label="Energy" value={energyValue(nutrients?.kcal, energyUnit)} unit={energyUnit} bold />
-          <View style={styles.nutRule} />
-          <NutrientRow label="Protein" value={nutrients?.protein_g} unit="g" bold />
-          <NutrientRow label="Carbohydrates" value={nutrients?.carbs_g} unit="g" bold />
-          <NutrientRow label="Fiber" value={nutrients?.fiber_g} unit="g" sub />
-          <NutrientRow label="Sugar" value={nutrients?.sugar_g} unit="g" sub />
-          <NutrientRow label="Fat" value={nutrients?.fat_g} unit="g" bold />
-          <NutrientRow label="Saturated fat" value={nutrients?.sat_fat_g} unit="g" sub />
-          <View style={styles.nutRule} />
-          <NutrientRow label="Sodium" value={nutrients?.sodium_mg} unit="mg" />
-          <NutrientRow label="Potassium" value={nutrients?.potassium_mg} unit="mg" />
-          <NutrientRow label="Calcium" value={nutrients?.calcium_mg} unit="mg" />
-          <NutrientRow label="Iron" value={nutrients?.iron_mg} unit="mg" />
+        <SectionRule label="Nutrition" meta={labelOf(valid ? current : activeSelected, displayedFood)} />
+        <View style={[styles.nutCard, isNutritionEditMode && styles.nutCardEdit]}>
+          {NUTRIENT_ROWS.map(row => {
+            const rawValue = row.key === 'kcal' ? energyValue(nutrients?.kcal, energyUnit) : nutrients?.[row.key];
+            return (
+              <View key={row.key}>
+                <NutrientRow
+                  row={row}
+                  value={rawValue}
+                  unit={row.unit(energyUnit)}
+                  editable={canEditNutrition}
+                  armed={armedTarget === row.key}
+                  active={activeTarget === row.key}
+                  editMode={isNutritionEditMode}
+                  dirty={Boolean(editDraft?.dirtyFields.has(row.key))}
+                  draftValue={editDraft?.nutrients[row.key]}
+                  busy={action.busy}
+                  onTap={() => onTapEditable(row.key)}
+                  onChangeDraft={value => onDraftChange(row.key, value)}
+                  onCommit={commitEdit}
+                  onEnsureVisible={ensureVisible}
+                />
+                {row.ruleAfter ? <View style={styles.nutRule} /> : null}
+              </View>
+            );
+          })}
         </View>
         <View style={styles.metaGrid}>
-          <Text style={styles.metaLine}>Reference basis: {basisLabel(food)}</Text>
-          {food.brand ? <Text style={styles.metaLine}>Brand: {food.brand}</Text> : null}
-          {food.category ? <Text style={styles.metaLine}>Category: {food.category}</Text> : null}
-          {prepLabel(food.prep_state) ? <Text style={styles.metaLine}>Preparation: {prepLabel(food.prep_state)}</Text> : null}
+          {isCustomFood ? (
+            activeTarget === 'basis' && editDraft ? (
+              <View style={styles.metaEditBlock}>
+                <View style={styles.metaEditHeader}>
+                  <Text style={styles.metaLine}>Reference basis</Text>
+                  <InlineCommitTick onPress={commitEdit} disabled={action.busy} />
+                </View>
+                <SegmentedSwitch
+                  options={CUSTOM_FOOD_BASIS_OPTIONS}
+                  value={editDraft.basis}
+                  disabled={action.busy}
+                  onChange={value => {
+                    hapticSelection();
+                    onDraftChange('basis', value as CustomFoodBasis);
+                  }}
+                />
+              </View>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  armedTarget === 'basis'
+                    ? `Edit reference basis ${basisLabel(displayedFood)}. Tap again to edit.`
+                    : `Reference basis: ${basisLabel(displayedFood)}`
+                }
+                disabled={action.busy}
+                onPress={() => onTapEditable('basis')}
+                style={({ pressed }) => [styles.metaTapRow, armedTarget === 'basis' && styles.metaRowArmed, pressed && styles.pressed]}
+              >
+                <Text style={styles.metaLine}>
+                  Reference basis:{' '}
+                  <Text style={[basisDirty && styles.nutValueDirty, isEditMode && styles.editableValueDotted]}>
+                    {basisLabel(displayedFood)}
+                  </Text>
+                </Text>
+                {(armedTarget === 'basis' || isEditMode) ? (
+                  <DoopIcon
+                    name="edit"
+                    size={armedTarget === 'basis' ? 12 : 11}
+                    color={armedTarget === 'basis' || basisDirty ? colors.accent : colors.muted}
+                  />
+                ) : null}
+              </Pressable>
+            )
+          ) : (
+            <Text style={styles.metaLine}>Reference basis: {basisLabel(displayedFood)}</Text>
+          )}
+
+          {isCustomFood && (displayedFood.brand || isEditMode || armedTarget === 'brand') ? (
+            isEditMode && editDraft ? (
+              <Pressable
+                disabled={action.busy}
+                onPress={() => brandInputRef.current?.focus()}
+              >
+                <View ref={brandRowRef} collapsable={false} style={styles.metaInlineEditRow}>
+                  <Text style={styles.metaLine}>Brand:</Text>
+                  <TextInput
+                    ref={brandInputRef}
+                    accessibilityLabel="Brand"
+                    autoFocus={activeTarget === 'brand'}
+                    selectTextOnFocus
+                    value={editDraft.brand}
+                    onChangeText={value => onDraftChange('brand', value)}
+                    onFocus={() => {
+                      onTapEditable('brand');
+                      ensureVisible(brandRowRef.current);
+                    }}
+                    onSubmitEditing={commitEdit}
+                    returnKeyType="done"
+                    submitBehavior="blurAndSubmit"
+                    placeholder="Add brand"
+                    placeholderTextColor={colors.muted}
+                    editable={!action.busy}
+                    style={[
+                      styles.metaInlineInput,
+                      activeTarget !== 'brand' && styles.metaInlineInputIdle,
+                      brandDirty && styles.nutValueDirty,
+                    ]}
+                  />
+                  {activeTarget === 'brand' ? (
+                    <InlineCommitTick onPress={commitEdit} disabled={action.busy} />
+                  ) : (
+                    <DoopIcon
+                      name="edit"
+                      size={11}
+                      color={brandDirty ? colors.accent : colors.muted}
+                    />
+                  )}
+                </View>
+              </Pressable>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  armedTarget === 'brand'
+                    ? `Edit brand ${displayedFood.brand ?? 'none'}. Tap again to edit.`
+                    : `Brand: ${displayedFood.brand ?? 'Add brand'}`
+                }
+                disabled={action.busy}
+                onPress={() => onTapEditable('brand')}
+                style={({ pressed }) => [styles.metaTapRow, armedTarget === 'brand' && styles.metaRowArmed, pressed && styles.pressed]}
+              >
+                <Text style={styles.metaLine}>
+                  Brand: {displayedFood.brand || 'Add brand'}
+                </Text>
+                {armedTarget === 'brand' ? (
+                  <DoopIcon
+                    name="edit"
+                    size={12}
+                    color={colors.accent}
+                  />
+                ) : null}
+              </Pressable>
+            )
+          ) : displayedFood.brand ? (
+            <Text style={styles.metaLine}>Brand: {displayedFood.brand}</Text>
+          ) : null}
+
+          {displayedFood.category ? <Text style={styles.metaLine}>Category: {displayedFood.category}</Text> : null}
+          {prepLabel(displayedFood.prep_state) ? <Text style={styles.metaLine}>Preparation: {prepLabel(displayedFood.prep_state)}</Text> : null}
           <Text style={styles.metaLine}>Source: {data.sourceName}</Text>
         </View>
       </View>
@@ -611,7 +1070,7 @@ function FoodDetail({
                 <View key={`${part.food.id}-${index}`} style={styles.partRow}>
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Text numberOfLines={1} style={styles.partName}>{part.food.name}</Text>
-                    <Text style={styles.partQty}>{labelOf(part.quantity)}</Text>
+                    <Text style={styles.partQty}>{labelOf(part.quantity, part.food)}</Text>
                   </View>
                   <Text style={styles.partKcal}>{energy(partKcal, energyUnit)}</Text>
                 </View>
@@ -633,7 +1092,12 @@ function FoodDetail({
                 accessibilityRole="button"
                 accessibilityLabel={`Remove unit ${unit.label}`}
                 disabled={action.busy}
-                onPress={() => void action.run(() => controller.deletePersonalUnit(food, unit.label))}
+                onPress={() => void action.run(async () => {
+                  hapticWarning();
+                  setFoodOverride(null);
+                  if (selected.unit === unit.label) setTypedState(null);
+                  await controller.deletePersonalUnit(food, unit.label);
+                })}
                 hitSlop={8}
                 style={styles.savedUnitRemove}
               >
@@ -641,37 +1105,38 @@ function FoodDetail({
               </Pressable>
             </View>
           ))}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={addingUnit ? 'Close custom unit form' : 'Add custom unit'}
-            accessibilityState={{ expanded: addingUnit }}
-            disabled={action.busy}
-            onPress={() => {
-              if (addingUnit) Keyboard.dismiss();
-              setAddingUnit(open => !open);
-            }}
-            style={[styles.addUnitButton, addingUnit && styles.addUnitButtonActive]}
-          >
-            <DoopIcon name={addingUnit ? 'close' : 'plus'} size={14} color={colors.accent} />
-            <Text style={styles.addUnitText}>{addingUnit ? 'Close' : 'Add custom unit'}</Text>
-          </Pressable>
+          {canAddCustomUnit ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={addingUnit ? 'Close custom unit form' : 'Add custom unit'}
+              accessibilityState={{ expanded: addingUnit }}
+              disabled={action.busy}
+              onPress={() => {
+                if (addingUnit) Keyboard.dismiss();
+                setAddingUnit(open => !open);
+              }}
+              style={[styles.addUnitButton, addingUnit && styles.addUnitButtonActive]}
+            >
+              <DoopIcon name={addingUnit ? 'close' : 'plus'} size={14} color={colors.accent} />
+              <Text style={styles.addUnitText}>{addingUnit ? 'Close' : 'Add custom unit'}</Text>
+            </Pressable>
+          ) : null}
         </View>
-        {addingUnit && (
-          <CustomUnitForm
-            food={food}
-            energyUnit={energyUnit}
-            busy={action.busy}
-            onCancel={() => setAddingUnit(false)}
-            onSave={(unit, scope, updated) => void action.run(async () => {
-              await controller.savePersonalUnit(food, unit);
-              if (scope === 'all') await controller.deps.library.upsertUserFoodUnit(GLOBAL_UNITS, unit);
-              controller.refresh();
-              setUpdatedFood(updated);
-              setTyped(null);
-              setSelected({ amount: 1, unit: unit.label });
-              setAddingUnit(false);
-            })}
-          />
+        {addingUnit && canAddCustomUnit && (
+          <RevealPanel visible direction="down" style={styles.unitForm}>
+            <InlineCustomUnitForm
+              food={food}
+              showScope
+              onEnsureVisible={ensureVisible}
+              onCancel={() => setAddingUnit(false)}
+              onSaved={(updated, unit) => {
+                setFoodOverride({ base: data.food, food: updated });
+                setTypedState(null);
+                setSelected({ amount: 1, unit });
+                setAddingUnit(false);
+              }}
+            />
+          </RevealPanel>
         )}
       </View>
 
@@ -681,7 +1146,7 @@ function FoodDetail({
           <Pressable
             accessibilityRole="button"
             disabled={action.busy}
-            onPress={() => void action.run(() => controller.toggleFoodPin(food, !data.pinned))}
+            onPress={() => { hapticLight(); void action.run(() => controller.toggleFoodPin(food, !data.pinned)); }}
             style={({ pressed }) => [styles.actionRow, pressed && styles.pressed]}
           >
             <DoopIcon name="pin" size={17} color={data.pinned ? colors.accent : colors.muted} />
@@ -701,7 +1166,7 @@ function FoodDetail({
           {kind === 'recipe' && (
             <Pressable
               accessibilityRole="link"
-              onPress={() => router.push({ pathname: '/recipes/[id]', params: { id: food.id.slice(7), meal: targetMeal, date: targetDate } })}
+              onPress={openRecipeEditor}
               style={({ pressed }) => [styles.actionRow, pressed && styles.pressed]}
             >
               <DoopIcon name="recipe" size={17} color={colors.accent} />
@@ -710,36 +1175,11 @@ function FoodDetail({
             </Pressable>
           )}
 
-          {isCustomFood && (
-            <Pressable
-              accessibilityRole="button"
-              disabled={action.busy}
-              onPress={() => setEditing(open => !open)}
-              style={({ pressed }) => [styles.actionRow, pressed && styles.pressed]}
-            >
-              <DoopIcon name="info" size={17} color={colors.accent} />
-              <Text style={[styles.actionText, { color: colors.accent }]}>{editing ? 'Close editor' : 'Edit custom food'}</Text>
-            </Pressable>
-          )}
-
           {isDatabaseFood && (
             <Pressable
               accessibilityRole="button"
               disabled={action.busy}
-              onPress={() => void action.run(async () => {
-                const copy = await controller.saveCustomFood({
-                  ...food,
-                  id: generateId(),
-                  provenance_kind: 'user',
-                  source_pack_id: null,
-                  source_id: null,
-                  source_version: null,
-                });
-                router.replace({
-                  pathname: '/food',
-                  params: { id: copy.id, meal: targetMeal, date: targetDate, amount: String(current.amount), unit: current.unit },
-                });
-              })}
+              onPress={saveAsCustomCopy}
               style={({ pressed }) => [styles.actionRow, pressed && styles.pressed]}
             >
               <DoopIcon name="plus" size={17} color={colors.accent} />
@@ -753,9 +1193,11 @@ function FoodDetail({
               disabled={action.busy}
               onPress={() => {
                 if (!confirmDelete) {
+                  hapticWarning();
                   setConfirmDelete(true);
                   return;
                 }
+                hapticWarning();
                 void action.run(async () => {
                   if (kind === 'meal') await controller.deleteSavedMeal(food.id.slice(5));
                   else await controller.deleteCustomFood(food.id);
@@ -771,21 +1213,6 @@ function FoodDetail({
             </Pressable>
           )}
         </View>
-        {statusNote ? <Muted>{statusNote}</Muted> : null}
-        {editing && isCustomFood && (
-          <CustomFoodEditor
-            food={food}
-            energyUnit={energyUnit}
-            busy={action.busy}
-            onCancel={() => setEditing(false)}
-            onSave={updated => void action.run(async () => {
-              const saved = await controller.saveCustomFood(updated);
-              setUpdatedFood(saved);
-              setEditing(false);
-              setStatusNote('Custom food updated. Earlier diary entries keep their original values.');
-            })}
-          />
-        )}
       </View>
 
       <ErrorMessage message={action.error ?? preview.error} />
@@ -820,10 +1247,12 @@ export default function FoodDetailScreen() {
       void revision;
       if (!id) return null;
       let baseFood = await controller.deps.catalog.getById(packId, id);
+      let fromFallback = false;
       if (!baseFood) {
         const pinnedFoodsRow = await controller.deps.userDb.getFirstAsync<{ value_json: string }>('SELECT value_json FROM preferences WHERE key=?', 'libraryPinnedFoods');
         const pinnedFoods: FoodRecord[] = pinnedFoodsRow ? (JSON.parse(pinnedFoodsRow.value_json) as unknown[]).map(item => foodRecordSchema.parse(item)) : [];
         baseFood = pinnedFoods.find(item => item.id === id && (item.source_pack_id ?? null) === packId) ?? null;
+        if (baseFood) fromFallback = true;
       }
       if (!baseFood) {
         const recent = await controller.deps.userDb.getAllAsync<{ snapshot_json: string }>(
@@ -833,6 +1262,7 @@ export default function FoodDetailScreen() {
           const entry = diaryEntrySnapshotSchema.parse(JSON.parse(row.snapshot_json));
           if (entry.food.id === id && (entry.food.source_pack_id ?? null) === packId) {
             baseFood = entry.food;
+            fromFallback = true;
             break;
           }
         }
@@ -851,27 +1281,22 @@ export default function FoodDetailScreen() {
         baseFood.source_pack_id ? controller.listPacks() : Promise.resolve([]),
       ]);
 
-      const food = withUnits(withUnits(baseFood, personalUnits), globalUnits);
+      const withPersonal = fromFallback
+        ? { ...baseFood, units: [...new Map([...baseFood.units, ...personalUnits].map(item => [item.label, item])).values()] }
+        : baseFood;
+      const food = withUnits(withPersonal, globalUnits);
       const pinIds: string[] = pinsRow ? JSON.parse(pinsRow.value_json) : [];
       const pinned = savedMeal?.pinned ?? pinIds.includes(key);
       const entries = dayData.day?.entries.filter(entry => foodKey(entry.food) === key) ?? [];
-      const basePortion = usualQuantity(food);
-      const alternative = food.units.find(unit => unit.label !== basePortion.unit && availableUnits(food).includes(unit.label));
-      const candidates: Quantity[] = [
-        ...learned.filter(item => availableUnits(food).includes(item.unit)).map(item => ({ amount: item.amount, unit: item.unit })),
-        basePortion,
-        ...(alternative ? [{ amount: 1, unit: alternative.label }] : []),
-        { ...basePortion, amount: basePortion.amount / 2 },
-        { ...basePortion, amount: basePortion.amount * 2 },
-      ];
-      const unique = candidates
-        .filter((item, index) => candidates.findIndex(other => other.unit === item.unit && other.amount === item.amount) === index)
-        .slice(0, 3);
+      const unique = buildPortionCandidates(food, usualQuantity(food), availableUnits(food), learned);
       const portions = await Promise.all(
-        unique.map(async portion => ({
-          ...portion,
-          kcal: (await controller.preview(food, portion))?.nutrients?.kcal,
-        })),
+        unique.map(async portion => {
+          const result = await controller.preview(food, portion).catch(() => null);
+          return {
+            ...portion,
+            kcal: result?.nutrients?.kcal,
+          };
+        }),
       );
       const kind = kindOf(food);
       const packMeta = food.source_pack_id ? packs.find(item => item.pack_id === food.source_pack_id) : undefined;
@@ -926,9 +1351,86 @@ const styles = StyleSheet.create({
   subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.s8, marginTop: -spacing.s8 },
   subtitleText: { flex: 1, ...fontFace('medium'), fontSize: 13, color: colors.muted, lineHeight: 18 },
   iconHit: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  headerTickPill: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.full,
+    backgroundColor: 'rgba(122,162,247,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(122,162,247,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitleTap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    maxWidth: '100%',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.r8,
+  },
+  headerTitleArmed: {
+    backgroundColor: 'rgba(122,162,247,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(122,162,247,0.38)',
+  },
+  headerTitleText: {
+    ...fontFace('bold'),
+    fontSize: fontSize.t20,
+    color: colors.ink,
+    letterSpacing: -0.3,
+    flexShrink: 1,
+    textAlign: 'center',
+  },
+  headerNameEditWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    width: '100%',
+  },
+  headerNameInput: {
+    ...fontFace('bold'),
+    fontSize: fontSize.t20,
+    color: colors.ink,
+    letterSpacing: -0.3,
+    textAlign: 'center',
+    flex: 1,
+    minWidth: 0,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderBottomWidth: 1.5,
+    borderBottomColor: colors.accent,
+  },
+  headerNameInputIdle: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
   hero: { paddingTop: spacing.s4, paddingBottom: spacing.s4 },
   heroTop: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: spacing.s12 },
   heroEnergyRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
+  heroEnergyTap: { paddingHorizontal: 6, paddingVertical: 2, marginLeft: -6, borderRadius: radius.r8, alignItems: 'center' },
+  heroEnergyArmed: { backgroundColor: 'rgba(122,162,247,0.12)', borderWidth: 1, borderColor: 'rgba(122,162,247,0.38)' },
+  heroEnergyEditRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
+  heroEnergyInput: {
+    ...fontFace('bold'),
+    ...tabularNums,
+    fontSize: 34,
+    lineHeight: 40,
+    color: colors.ink,
+    letterSpacing: -0.6,
+    minWidth: 72,
+    paddingHorizontal: 4,
+    paddingVertical: 0,
+    borderBottomWidth: 1.5,
+    borderBottomColor: colors.accent,
+  },
+  heroEnergyInputIdle: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
   heroEnergyValue: { ...fontFace('bold'), ...tabularNums, fontSize: 36, lineHeight: 40, color: colors.ink, letterSpacing: -0.6 },
   heroEnergyUnit: { ...fontFace('semibold'), fontSize: 15, color: colors.muted },
   heroPortion: { alignItems: 'flex-end', flexShrink: 1 },
@@ -944,19 +1446,73 @@ const styles = StyleSheet.create({
   macroColVal: { ...fontFace('semibold'), ...tabularNums, fontSize: 15, color: colors.ink },
   macroColPct: { ...fontFace('medium'), fontSize: 12, color: colors.muted },
   sectionBlock: { gap: spacing.s10 },
-  unitMenuWrap: { marginTop: spacing.s6, zIndex: 30 },
+  sectionDimmed: { opacity: 0.45 },
   nutCard: { backgroundColor: colors.surface, borderRadius: radius.r16, paddingHorizontal: spacing.s16, paddingVertical: spacing.s8, borderWidth: 1, borderColor: colors.hairline },
-  nutRow: { minHeight: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.s12 },
-  nutRowSub: { minHeight: 34, paddingLeft: spacing.s16 },
+  nutCardEdit: { borderColor: 'rgba(122,162,247,0.32)' },
+  nutRow: { minHeight: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.s12, borderRadius: radius.r8, paddingHorizontal: 6, marginHorizontal: -6 },
+  nutRowSub: { minHeight: 34, paddingLeft: spacing.s16 + 6 },
+  nutRowArmed: { backgroundColor: 'rgba(122,162,247,0.10)' },
+  nutRowActive: { backgroundColor: 'rgba(122,162,247,0.12)', paddingVertical: 4 },
   nutLabel: { ...fontFace('medium'), fontSize: 14, color: colors.ink },
   nutLabelBold: { ...fontFace('semibold') },
   nutLabelSub: { fontSize: 13, color: colors.muted },
+  nutValueWrap: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   nutValue: { ...fontFace('medium'), ...tabularNums, fontSize: 14, color: colors.ink },
   nutValueBold: { ...fontFace('semibold') },
+  nutValueDirty: { color: colors.accent },
+  editableValueDotted: { textDecorationLine: 'underline', textDecorationStyle: 'dotted', textDecorationColor: colors.border },
   nutUnknown: { color: colors.muted },
+  nutEditWrap: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  nutInlineInput: {
+    ...fontFace('semibold'),
+    ...tabularNums,
+    fontSize: 14,
+    color: colors.ink,
+    textAlign: 'right',
+    minWidth: 52,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderBottomWidth: 1.5,
+    borderBottomColor: colors.accent,
+  },
+  nutInlineInputIdle: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  nutInlineUnit: { ...fontFace('medium'), fontSize: 12, color: colors.muted },
+  inlineTickBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: radius.full,
+    backgroundColor: 'rgba(122,162,247,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(122,162,247,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   nutRule: { height: 1, backgroundColor: colors.hairline, marginVertical: spacing.s4 },
   metaGrid: { gap: 4, paddingHorizontal: 2 },
   metaLine: { ...fontFace('medium'), fontSize: 12, color: colors.muted, lineHeight: 17 },
+  metaTapRow: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', paddingHorizontal: 6, paddingVertical: 3, marginLeft: -6, borderRadius: radius.r8 },
+  metaRowArmed: { backgroundColor: 'rgba(122,162,247,0.12)' },
+  metaInlineEditRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 2 },
+  metaInlineInput: {
+    ...fontFace('medium'),
+    fontSize: 13,
+    color: colors.ink,
+    flex: 1,
+    minWidth: 100,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderBottomWidth: 1.5,
+    borderBottomColor: colors.accent,
+  },
+  metaInlineInputIdle: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  metaEditBlock: { gap: spacing.s8, paddingVertical: spacing.s4 },
+  metaEditHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   partRow: { minHeight: 54, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.s12, paddingVertical: spacing.s8, borderBottomWidth: 1, borderBottomColor: colors.hairline },
   partName: { ...fontFace('semibold'), fontSize: 15, color: colors.ink },
   partQty: { ...fontFace('medium'), ...tabularNums, fontSize: 13, color: colors.muted, marginTop: 2 },
@@ -970,22 +1526,48 @@ const styles = StyleSheet.create({
   addUnitButtonActive: { borderStyle: 'solid', borderColor: colors.accent, backgroundColor: 'rgba(122,162,247,0.12)' },
   addUnitText: { ...fontFace('semibold'), fontSize: 13, color: colors.accent },
   unitForm: { paddingTop: spacing.s8, paddingBottom: spacing.s8, borderTopWidth: 1, borderTopColor: colors.hairline, gap: spacing.s12 },
-  unitFormRow: { flexDirection: 'row', gap: spacing.s16 },
-  unitWeightInput: { flex: 1, minWidth: 0, ...tabularNums },
-  unitSuffix: { ...fontFace('semibold'), fontSize: 13, color: colors.muted },
-  unitPreview: { ...fontFace('medium'), ...tabularNums, fontSize: 13, color: colors.muted },
   actionRow: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: spacing.s12, borderBottomWidth: 1, borderBottomColor: colors.hairline },
   actionText: { flex: 1, ...fontFace('semibold'), fontSize: 15, color: colors.ink },
   pressed: { opacity: 0.7 },
-  editForm: { paddingTop: spacing.s8, paddingBottom: spacing.s12, borderTopWidth: 1, borderTopColor: colors.hairline, gap: spacing.s12 },
-  editField: { borderBottomWidth: 1, borderBottomColor: colors.hairline, paddingVertical: 4, gap: 3 },
-  editLabel: { ...fontFace('semibold'), fontSize: 10, letterSpacing: 0.7, color: colors.muted },
-  editInput: { ...fontFace('semibold'), fontSize: 15, color: colors.ink, paddingVertical: 4 },
-  editGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  editCell: { width: '31.2%', minHeight: 54, borderRadius: radius.r12, borderWidth: 1, borderColor: colors.hairline, backgroundColor: colors.surface, paddingHorizontal: 10, paddingVertical: 7, justifyContent: 'space-between' },
-  editCellVal: { flexDirection: 'row', alignItems: 'baseline', gap: 3 },
-  editCellInput: { ...fontFace('bold'), ...tabularNums, fontSize: 15, color: colors.ink, padding: 0, flex: 1, minWidth: 0 },
-  editUnit: { ...fontFace('semibold'), fontSize: 10, color: colors.muted },
-  editButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.s8, marginTop: spacing.s4 },
+  readOnlyPill: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingLeft: 12,
+    paddingRight: 4,
+    borderRadius: radius.r12,
+    backgroundColor: colors.raised,
+    borderWidth: 1,
+    borderColor: colors.border,
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  readOnlyText: {
+    flex: 1,
+    ...fontFace('medium'),
+    fontSize: 13,
+    color: colors.ink,
+  },
+  readOnlyAction: {
+    minHeight: 36,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  readOnlyActionText: {
+    ...fontFace('semibold'),
+    fontSize: 13,
+    color: colors.accent,
+  },
+  readOnlyClose: {
+    width: 32,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   toast: { position: 'absolute', left: SCREEN_GUTTER, right: SCREEN_GUTTER, bottom: 8 },
 });

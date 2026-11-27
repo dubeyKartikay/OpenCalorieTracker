@@ -135,8 +135,12 @@ public final class OctSpeechModule: Module {
       }
     }
 
-    AsyncFunction("stopListeningAsync") { (promise: Promise) in
+    AsyncFunction("stopListeningAsync") { (targetSessionId: Int?, promise: Promise) in
       DispatchQueue.main.async {
+        if let target = targetSessionId, target > 0, self.activeSessionId != target {
+          promise.resolve(nil)
+          return
+        }
         self.isListening = false
         self.audioEngine.stop()
         self.audioEngine.inputNode.removeTap(onBus: 0)
@@ -145,8 +149,12 @@ public final class OctSpeechModule: Module {
       }
     }
 
-    AsyncFunction("cancelListeningAsync") { (promise: Promise) in
+    AsyncFunction("cancelListeningAsync") { (targetSessionId: Int?, promise: Promise) in
       DispatchQueue.main.async {
+        if let target = targetSessionId, target > 0, self.activeSessionId != target {
+          promise.resolve(nil)
+          return
+        }
         self.teardown(emitEnded: true)
         promise.resolve(nil)
       }

@@ -1,20 +1,27 @@
 import type { ComponentRef } from 'react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useActiveDraft, useAIStatus, useAppRuntime, useAsyncResource, useCatalogSearch, usePreferences } from '../../src/app/AppRuntimeContext';
 import { looksLikeMultiFoodCapture } from '../../src/ai';
 import { localDate, MEALS, mealsForDay, parseRouteDate } from '../../src/app/controller';
-import { diaryEntrySnapshotSchema, foodRecordSchema } from '../../src/domain';
+import { diaryEntrySnapshotSchema, foodRecordSchema, type DiaryEntrySnapshot, type FoodUnit, type Quantity } from '../../src/domain';
 import { foodKey } from '../../src/storage';
 import type { SearchCandidate } from '../../src/catalog';
 import { UndoToast } from '../../src/ui/components/Diary';
-import { FoodRow, NewCustomFood } from '../../src/ui/components/FoodSearch';
+import { FoodRow, GLOBAL_UNITS, NewCustomFood, PIN_KEY, type LibrarySharedContext } from '../../src/ui/components/FoodSearch';
 import { DoopIcon, mealDaypartGlyph } from '../../src/ui/components/DoopIcons';
-import { SparklePromptRow, useVoiceDictation, VoiceDock, VoiceMicRing } from '../../src/ui/components/capture';
-import { ErrorMessage, Muted, NoticePill, useTimedNotice } from '../../src/ui/components/primitives';
+import { SparklePromptRow, useScrollAboveKeyboard, useVoiceDictation, VoiceDock, VoiceMicRing } from '../../src/ui/components/capture';
+import { ErrorMessage, Muted, NoticePill, useKeyboardHeight, useTimedNotice } from '../../src/ui/components/primitives';
+import { hapticSelection } from '../../src/ui/haptics';
 import { colors, fontFace, radius, SCREEN_GUTTER, useLayoutClass } from '../../src/ui/tokens';
+
+const DEFAULT_MEALS: string[] = [...MEALS];
+const EMPTY_UNITS: FoodUnit[] = [];
+const EMPTY_ENTRIES_MAP = new Map<string, DiaryEntrySnapshot[]>();
+const EMPTY_STRING_SET = new Set<string>();
+const EMPTY_LEARNED_MAP = new Map<string, Quantity[]>();
 
 function SectionLabel({ label }: { label: string }) {
   return (
@@ -31,7 +38,7 @@ export default function Library() {
   const preferences = usePreferences();
   const ai = useAIStatus();
   const activeDraft = useActiveDraft();
-  const meals = preferences.value?.mealSections ?? [...MEALS];
+  const meals = useMemo(() => preferences.value?.mealSections ?? DEFAULT_MEALS, [preferences.value?.mealSections]);
   const energyUnit = preferences.value?.energyUnit ?? 'kcal';
   const requestedMeal = params.meal?.trim();
   const meal = requestedMeal || meals[0] || 'Breakfast';
@@ -50,12 +57,55 @@ export default function Library() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [notice, setNotice] = useTimedNotice();
   const input = useRef<ComponentRef<typeof TextInput>>(null);
+  const scrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
+  const scrollOffsetRef = useRef(0);
+  const keyboardHeight = useKeyboardHeight();
+  const ensureVisible = useScrollAboveKeyboard(scrollRef, scrollOffsetRef);
   const voiceSession = useVoiceDictation({
     onText: setQuery,
     onError: message => setNotice(message),
   });
+  const cancelVoice = voiceSession.cancel;
+  useFocusEffect(useCallback(() => () => cancelVoice(), [cancelVoice]));
   const { isExpanded } = useLayoutClass();
   const search = useCatalogSearch(query);
+  const shared = useAsyncResource(useCallback(async () => {
+    void revision;
+    const [globalUnits, dayData, pinnedRow, savedMeals, learnedRows] = await Promise.all([
+      controller.deps.library.listUserFoodUnits(GLOBAL_UNITS),
+      controller.day(targetDate),
+      controller.deps.userDb.getFirstAsync<{ value_json: string }>('SELECT value_json FROM preferences WHERE key=?', PIN_KEY),
+      controller.listSavedMeals(),
+      controller.deps.library.listAllLearnedPortions(),
+    ]);
+    const entriesByFoodKey = new Map<string, DiaryEntrySnapshot[]>();
+    for (const entry of dayData.day?.entries ?? []) {
+      const k = foodKey(entry.food);
+      const list = entriesByFoodKey.get(k);
+      if (list) list.push(entry);
+      else entriesByFoodKey.set(k, [entry]);
+    }
+    const learnedByFoodKey = new Map<string, Quantity[]>();
+    for (const item of learnedRows) {
+      const list = learnedByFoodKey.get(item.food_key);
+      const qty = { amount: item.amount, unit: item.unit };
+      if (list) list.push(qty);
+      else learnedByFoodKey.set(item.food_key, [qty]);
+    }
+    const pinIds = new Set<string>(pinnedRow ? JSON.parse(pinnedRow.value_json) : []);
+    const savedMealPins = new Set<string>(savedMeals.filter(item => item.pinned).map(item => 'meal:' + item.id));
+    return { globalUnits, entriesByFoodKey, pinIds, savedMealPins, learnedByFoodKey };
+  }, [controller, revision, targetDate]), `library-shared:${targetDate}`);
+  const sharedContext = useMemo<LibrarySharedContext>(() => ({
+    ready: Boolean(shared.value),
+    globalUnits: shared.value?.globalUnits ?? EMPTY_UNITS,
+    entriesByFoodKey: shared.value?.entriesByFoodKey ?? EMPTY_ENTRIES_MAP,
+    pinIds: shared.value?.pinIds ?? EMPTY_STRING_SET,
+    savedMealPins: shared.value?.savedMealPins ?? EMPTY_STRING_SET,
+    learnedByFoodKey: shared.value?.learnedByFoodKey ?? EMPTY_LEARNED_MAP,
+    energyUnit,
+    meals,
+  }), [energyUnit, meals, shared.value]);
   const resting = useAsyncResource(useCallback(async () => {
     void revision;
     const [foods, recipes, saved, recent, pinnedRow, pinnedFoodsRow] = await Promise.all([
@@ -67,13 +117,21 @@ export default function Library() {
     const diaryEntries = recent.map(row => diaryEntrySnapshotSchema.parse(JSON.parse(row.snapshot_json)));
     const pinnedIds = new Set<string>(pinnedRow ? JSON.parse(pinnedRow.value_json) : []);
     const pinnedFoods = pinnedFoodsRow ? (JSON.parse(pinnedFoodsRow.value_json) as unknown[]).map(food => foodRecordSchema.parse(food)) : [];
-    const records = await Promise.all([
-      ...pinnedFoods.map(item => controller.deps.catalog.getById(item.source_pack_id, item.id).then(food => food ?? item)),
-      ...saved.map(item => controller.deps.catalog.getById(null, 'meal:' + item.id)),
-      ...recipes.map(item => controller.deps.catalog.getById(null, 'recipe:' + item.id)),
-      ...foods.map(item => controller.deps.catalog.getById(null, item.id)),
-      ...diaryEntries.map(item => controller.deps.catalog.getById(item.food.source_pack_id, item.food.id).then(food => food ?? item.food)),
-    ]);
+    const requests = new Map<string, { packId: string | null; id: string; fallback?: typeof pinnedFoods[number] }>();
+    const addRequest = (packId: string | null, id: string, fallback?: typeof pinnedFoods[number]) => {
+      const k = `${packId ?? 'user'}:${id}`;
+      if (!requests.has(k)) requests.set(k, { packId, id, ...(fallback ? { fallback } : {}) });
+    };
+    for (const item of pinnedFoods) addRequest(item.source_pack_id, item.id, item);
+    for (const item of saved) addRequest(null, 'meal:' + item.id);
+    for (const item of recipes) addRequest(null, 'recipe:' + item.id);
+    for (const item of foods) addRequest(null, item.id);
+    for (const item of diaryEntries) addRequest(item.food.source_pack_id, item.food.id, item.food);
+    const records = await Promise.all(
+      [...requests.values()].map(req =>
+        controller.deps.catalog.getById(req.packId, req.id).then(food => food ?? req.fallback ?? null),
+      ),
+    );
     const unique = new Map<string, SearchCandidate>();
     for (const food of records) if (food) unique.set(foodKey(food), { food, bucket: food.source_pack_id ? 'database' : 'yours', sourceLabel: food.source_pack_id ?? 'Yours', packPriority: 0, matchTier: 0, prepStateMatch: true, withinPackRank: unique.size, matchedAlias: null });
     const savedPins = new Set(saved.filter(item => item.pinned).map(item => 'meal:' + item.id));
@@ -92,10 +150,21 @@ export default function Library() {
   const likelyItems = (resting.value?.rest ?? []).filter(matchesFilter);
   const totalResting = (resting.value?.pinned.length ?? 0) + (resting.value?.rest.length ?? 0);
   const typing = query.trim().length > 0;
-  const renderRow = (candidate: SearchCandidate) => <FoodRow key={foodKey(candidate.food)} candidate={candidate} meal={meal} date={targetDate} searchResult={typing}
-    expanded={expanded === foodKey(candidate.food)} onToggle={() => { Keyboard.dismiss(); setExpanded(old => old === foodKey(candidate.food) ? null : foodKey(candidate.food)); }} />;
+  const renderRow = (candidate: SearchCandidate) => <FoodRow key={foodKey(candidate.food)} candidate={candidate} meal={meal} date={targetDate} searchResult={typing} shared={sharedContext}
+    expanded={expanded === foodKey(candidate.food)} onEnsureVisible={ensureVisible} onToggle={() => { Keyboard.dismiss(); setExpanded(old => old === foodKey(candidate.food) ? null : foodKey(candidate.food)); }} />;
   return <SafeAreaView edges={['top', 'left', 'right']} style={styles.screen}>
-    <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={[styles.content, { maxWidth: isExpanded ? 760 : 540 }]}>
+    <ScrollView
+      ref={scrollRef}
+      scrollEventThrottle={16}
+      onScroll={event => { scrollOffsetRef.current = event.nativeEvent.contentOffset.y; }}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={[
+        styles.content,
+        { maxWidth: isExpanded ? 760 : 540 },
+        keyboardHeight > 0 && { paddingBottom: 36 + keyboardHeight },
+      ]}
+    >
       <View style={styles.searchRow}>
         <View style={[styles.search, (typing || focused || voiceSession.active) && styles.searchActive]}>
           <DoopIcon name="search" size={18} color={colors.muted} />
@@ -113,14 +182,14 @@ export default function Library() {
       <View style={styles.filtersRow}>
         <View style={styles.filters}>{['All', 'Meals', 'Foods', 'Recipes'].map(value => {
           const active = filter === value;
-          return <Pressable key={value} accessibilityRole="button" accessibilityState={{ selected: active }} onPress={() => setFilter(value)} style={styles.filterHit}>
+          return <Pressable key={value} accessibilityRole="button" accessibilityState={{ selected: active }} onPress={() => { if (!active) hapticSelection(); setFilter(value); }} style={styles.filterHit}>
             <View style={[styles.filterTab, active && styles.filterTabActive]}><Text style={[styles.filterText, active && styles.filterTextActive]}>{value}</Text></View>
           </Pressable>;
         })}</View>
-        <Pressable accessibilityRole="button" accessibilityLabel={'Destination ' + meal} accessibilityState={{ expanded: chooser }} onPress={() => setChooser(value => !value)} style={styles.mealControl}>
+        <Pressable accessibilityRole="button" accessibilityLabel={'Destination ' + meal} accessibilityState={{ expanded: chooser }} onPress={() => { hapticSelection(); setChooser(value => !value); }} style={styles.mealControl}>
           <DoopIcon name={mealDaypartGlyph(meal)} size={18} color={colors.muted} strokeWidth={1.5} /><Text numberOfLines={1} style={styles.mealName}>{meal}</Text><DoopIcon name="chevronDown" size={14} color={colors.muted} />
         </Pressable>
-        {chooser && <View style={styles.chooser}>{chooserMeals.map(value => <Pressable key={value} accessibilityRole="button" accessibilityState={{ selected: meal === value }} onPress={() => { router.setParams({ meal: value }); setChooser(false); }} style={[styles.mealOption, meal === value && styles.chooserActive]}><Text style={[styles.optionText, meal === value && styles.accent]}>{value}</Text>{meal === value && <DoopIcon name="check" size={12} color={colors.accent} />}</Pressable>)}</View>}
+        {chooser && <View style={styles.chooser}>{chooserMeals.map(value => <Pressable key={value} accessibilityRole="button" accessibilityState={{ selected: meal === value }} onPress={() => { hapticSelection(); router.setParams({ meal: value }); setChooser(false); }} style={[styles.mealOption, meal === value && styles.chooserActive]}><Text style={[styles.optionText, meal === value && styles.accent]}>{value}</Text>{meal === value && <DoopIcon name="check" size={12} color={colors.accent} />}</Pressable>)}</View>}
       </View>
       {filter === 'Recipes' && <Pressable accessibilityRole="link" onPress={() => router.push({ pathname: '/recipes', params: { meal, date: targetDate } })} style={styles.recipeLink}><Text style={styles.linkText}>+ New recipe</Text></Pressable>}
       {looksLikeMultiFoodCapture(query) && <SparklePromptRow summary="Break down with AI" busy={activeDraft.busy} disabled={ai.loading || !ai.value} onPress={() => {
@@ -129,7 +198,7 @@ export default function Library() {
         if (targetDate !== todayIso) router.push({ pathname: '/(tabs)/history', params: { date: targetDate } });
         else router.push('/(tabs)');
       }} />}
-      <ErrorMessage message={search.error ?? resting.error ?? preferences.error ?? ai.error ?? activeDraft.error} />
+      <ErrorMessage message={search.error ?? resting.error ?? shared.error ?? preferences.error ?? ai.error ?? activeDraft.error} />
       {typing ? <>
         {!!yours.length && <><SectionLabel label="Your items" />{yours.map(renderRow)}</>}
         {!!database.length && <><SectionLabel label="Food database" />{database.map(renderRow)}</>}
@@ -139,7 +208,7 @@ export default function Library() {
         {!!pinnedItems.length && <><SectionLabel label="Pinned" />{pinnedItems.map(renderRow)}</>}
         {!!likelyItems.length && <><SectionLabel label="Likely now" />{likelyItems.map(renderRow)}</>}
         {!resting.loading && totalResting === 0 && <Muted style={styles.emptyNote}>Your saved foods and meals will appear here. Search to find food.</Muted>}
-        <View style={styles.create}><NewCustomFood key={energyUnit} /></View>
+        <View style={styles.create}><NewCustomFood key={energyUnit} onEnsureVisible={ensureVisible} /></View>
       </>}
     </ScrollView>
     <View pointerEvents="box-none" style={styles.toast}><UndoToast /></View>

@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, type RefObject } from 'react';
 import { router, useFocusEffect } from 'expo-router';
-import { Image, Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Dimensions, Image, Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { useAction, useActiveDraft, useAIStatus, useAppRuntime, useCatalogSearch, usePreferences } from '../../../app/AppRuntimeContext';
 import { defaultQuantity } from '../../../app/controller';
 import { calculateNutrition, generateId, type FoodRecord } from '../../../domain';
 import type { SearchCandidate } from '../../../catalog';
 import { paginateList } from '../../format';
+import { hapticSelection, hapticSuccess } from '../../haptics';
 import { colors, fontFace, macroColors, radius, tabularNums } from '../../tokens';
+import { formatQuantityLabel } from '../customUnitMath';
+import { computeScrollTargetAboveKeyboard } from '../keyboardScrollMath';
 import { InlineKeypad } from '../doop/InlineKeypad';
 import { RevealPanel } from '../doop/Motion';
 import { DoopIcon, inferFoodGlyph } from '../DoopIcons';
@@ -144,24 +147,29 @@ export function useMealInlineComposer({
     router.push({ pathname: '/barcode', params: { meal, date, mode: 'barcode', returnTo: returnTab } });
   };
 
+  const cancelVoice = voiceSession.cancel;
   useFocusEffect(useCallback(() => {
     const pending = consumePendingMealPhoto(returnTab);
-    if (!pending) return;
-    if (pending.date && pending.date !== date) {
-      onTargetDateChange?.(pending.date);
-    }
-    setFieldMeal(current => {
-      if (current !== pending.meal) {
-        setDescription('');
-        setQuickOpen(false);
-        setQuick(emptyQuick());
-        setSelected('protein');
+    if (pending) {
+      if (pending.date && pending.date !== date) {
+        onTargetDateChange?.(pending.date);
       }
-      return pending.meal;
-    });
-    setPhoto(pending.photo);
-    onNotice?.('');
-  }, [date, onNotice, onTargetDateChange, returnTab]));
+      setFieldMeal(current => {
+        if (current !== pending.meal) {
+          setDescription('');
+          setQuickOpen(false);
+          setQuick(emptyQuick());
+          setSelected('protein');
+        }
+        return pending.meal;
+      });
+      setPhoto(pending.photo);
+      onNotice?.('');
+    }
+    return () => {
+      cancelVoice();
+    };
+  }, [cancelVoice, date, onNotice, onTargetDateChange, returnTab]));
 
   const voice = (meal: string) => {
     if (voiceSession.active && fieldMeal === meal) {
@@ -187,6 +195,7 @@ export function useMealInlineComposer({
 
   const logFood = (food: FoodRecord, meal: string) => void action.run(async () => {
     await controller.confirm({ food, quantity: defaultQuantity(food), meal, date, idempotencyKey: generateId() });
+    hapticSuccess();
     closeField();
     onLogged?.(meal);
   });
@@ -205,6 +214,7 @@ export function useMealInlineComposer({
         date,
         idempotencyKey: generateId(),
       });
+      hapticSuccess();
       closeField();
       onLogged?.(destination);
     });
@@ -214,6 +224,7 @@ export function useMealInlineComposer({
     if (!photo) return;
     void action.run(async () => {
       await controller.saveOfflinePhotoDraft({ meal, note: description, imageDataUrl: photo.imageDataUrl, date });
+      hapticSuccess();
       closeField();
       onNotice?.('Photo draft saved on this device.');
     });
@@ -301,12 +312,86 @@ export function useScrollNodeIntoView(
       }, delayMs);
     };
     scheduleScroll(140);
-    const sub = Keyboard.addListener('keyboardDidShow', () => scheduleScroll(40));
+    const sub = Keyboard.addListener('keyboardDidShow', () => scheduleScroll(90));
     return () => {
       if (pendingTimer !== null) clearTimeout(pendingTimer);
       sub.remove();
     };
   }, [activeKey, getNode, scrollOffsetRef, scrollRef]);
+}
+
+/**
+ * Returns a callback that keeps any focused form/input node cleanly above the
+ * active soft keyboard (and re-adjusts automatically whenever the keyboard
+ * opens or resizes).
+ */
+export function useScrollAboveKeyboard(
+  scrollRef: RefObject<ComponentRef<typeof ScrollView> | null>,
+  scrollOffsetRef: RefObject<number>,
+) {
+  const activeNodeRef = useRef<ComponentRef<typeof View> | null>(null);
+  const keyboardHeightRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const measureAndScroll = useCallback((explicitKeyboardHeight?: number) => {
+    const scrollNode = scrollRef.current;
+    const targetNode = activeNodeRef.current;
+    if (!scrollNode || !targetNode) return;
+    const kbHeight = explicitKeyboardHeight ?? keyboardHeightRef.current;
+    const windowHeight = Dimensions.get('window').height;
+    scrollNode.measureInWindow((_sx, scrollY, _sw, scrollH) => {
+      targetNode.measureInWindow((_nx, nodeY, _nw, nodeH) => {
+        const nextY = computeScrollTargetAboveKeyboard({
+          currentScrollY: scrollOffsetRef.current ?? 0,
+          scrollViewTop: scrollY,
+          scrollViewHeight: scrollH,
+          nodeTop: nodeY,
+          nodeHeight: nodeH,
+          windowHeight,
+          keyboardHeight: kbHeight,
+        });
+        if (nextY !== null) {
+          scrollNode.scrollTo({ y: nextY, animated: true });
+        }
+      });
+    });
+  }, [scrollOffsetRef, scrollRef]);
+
+  const scheduleMeasure = useCallback((delayMs: number, explicitKeyboardHeight?: number) => {
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      measureAndScroll(explicitKeyboardHeight);
+    }, delayMs);
+  }, [measureAndScroll]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, event => {
+      const h = event.endCoordinates?.height ?? 0;
+      keyboardHeightRef.current = h;
+      // Wait for React to commit the increased ScrollView paddingBottom before measuring & scrolling.
+      scheduleMeasure(90, h);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      keyboardHeightRef.current = 0;
+      activeNodeRef.current = null;
+    });
+    return () => {
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [scheduleMeasure]);
+
+  return useCallback((node: ComponentRef<typeof View> | null) => {
+    activeNodeRef.current = node;
+    if (node) {
+      scheduleMeasure(keyboardHeightRef.current > 0 ? 70 : 180);
+    }
+  }, [scheduleMeasure]);
 }
 
 /** Shared scroll-to-active-meal effect used by Today and History when opening the inline composer. */
@@ -443,7 +528,7 @@ export function LocalFoodSearchPager({
                 {pageItems.map(candidate => {
                   const portion = defaultQuantity(candidate.food);
                   const nutrients = calculateNutrition(candidate.food, portion);
-                  const portionText = portion.amount === 1 && /^\d/.test(portion.unit) ? portion.unit : `${number(portion.amount, 2)} ${portion.unit}`;
+                  const portionText = formatQuantityLabel(portion, candidate.food);
                   return (
                     <View key={`${candidate.food.source_pack_id ?? 'yours'}:${candidate.food.id}`} style={styles.result}>
                       <DoopIcon name={inferFoodGlyph(candidate.food.name)} size={18} color={colors.muted} />
@@ -622,14 +707,14 @@ export function MealComposerField({ composer, meal }: { composer: MealInlineComp
           <Text style={styles.quickLabel}>Quick add</Text>
           <View style={{ transform: [{ rotate: '180deg' }] }}><DoopIcon name="chevronDown" size={12} color={colors.muted} /></View>
         </Pressable>
-        <Pressable accessibilityRole="button" accessibilityLabel={`Edit energy in ${unit}`} onPress={() => setSelected('kcal')} style={styles.quickEnergyButton}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Edit energy in ${unit}`} onPress={() => { hapticSelection(); setSelected('kcal'); }} style={styles.quickEnergyButton}>
           <Text style={styles.quickEnergy}>{quick.kcal || '—'}<Text style={styles.quickUnit}> {unit}</Text></Text>
         </Pressable>
         <Pressable accessibilityRole="button" accessibilityLabel={`Log quick add to ${meal}`} disabled={blocked || !quick.kcal || !Number.isFinite(Number(quick.kcal)) || Number(quick.kcal) <= 0} onPress={logQuick} style={styles.quickAdd}><DoopIcon name="plus" size={17} color={colors.muted} /></Pressable>
       </View>
       <View style={styles.macroCells}>{([
         ['P', 'protein', macroColors.protein], ['C', 'carbs', macroColors.carbs], ['F', 'fat', macroColors.fat],
-      ] as const).map(([label, key, color], index) => <Pressable key={key} accessibilityRole="button" accessibilityLabel={`Edit ${key}, ${quick[key] || 'unknown'} grams`} accessibilityState={{ selected: selected === key }} onPress={() => setSelected(key)} style={[styles.macroCell, index > 0 && styles.macroCellDivider, selected === key && styles.macroCellActive]}>
+      ] as const).map(([label, key, color], index) => <Pressable key={key} accessibilityRole="button" accessibilityLabel={`Edit ${key}, ${quick[key] || 'unknown'} grams`} accessibilityState={{ selected: selected === key }} onPress={() => { hapticSelection(); setSelected(key); }} style={[styles.macroCell, index > 0 && styles.macroCellDivider, selected === key && styles.macroCellActive]}>
         <Text style={[styles.macroKey, { color }]}>{label}</Text>
         <Text style={styles.macroValue}>{quick[key] || '—'}<Text style={styles.macroUnit}> g</Text></Text>
       </Pressable>)}</View>

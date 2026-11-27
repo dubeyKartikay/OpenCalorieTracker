@@ -15,7 +15,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import * as Haptics from 'expo-haptics';
+import { hapticLight, hapticMedium, hapticSelection } from '../src/ui/haptics';
 import Svg, { Path } from 'react-native-svg';
 import { DoopIcon } from '../src/ui/components/DoopIcons';
 import type { UndoAction } from '../src/app/controller';
@@ -155,7 +155,7 @@ export default function Barcode() {
 
   const switchCameraMode = (next: 'photo' | 'barcode') => {
     if (next === cameraMode) return;
-    void Haptics.selectionAsync().catch(() => {});
+    hapticSelection();
     setCameraMode(next);
     setNotice('');
     if (next === 'photo') {
@@ -186,7 +186,7 @@ export default function Barcode() {
   const triggerShutter = () => {
     if (capturing || action.busy) return;
     setNotice('');
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    hapticMedium();
     if (!reducedMotion) {
       flashOpacity.set(withSequence(withTiming(0.55, { duration: 55 }), withTiming(0, { duration: 190, easing: Easing.out(Easing.quad) })));
     }
@@ -390,7 +390,7 @@ export default function Barcode() {
       torchEnabled={torch}
       onBarcodeScanned={event => {
         const { rawCode, symbology: detected } = event.nativeEvent;
-        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        hapticLight();
         setTorch(false); setCode(rawCode); setSymbology(detected); resolve(rawCode, detected);
       }}
       onPhotoCaptured={event => handlePhotoCaptured(event.nativeEvent)}

@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { hapticLight, hapticSelection, hapticSuccess, hapticWarning } from '../../haptics';
 import { colors, fontFace, radius, tabularNums } from '../../tokens';
 import { DoopIcon, mealDaypartGlyph } from '../DoopIcons';
 import { Button, Input, Muted, ui } from '../primitives';
@@ -11,7 +12,7 @@ export interface SparklePromptRowProps {
   disabled?: boolean | undefined;
 }
 export function SparklePromptRow({ summary, onPress, busy, disabled }: SparklePromptRowProps) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={summary} accessibilityState={{ disabled: !!disabled || !!busy, busy: !!busy }} disabled={disabled || busy} onPress={onPress} style={({ pressed }) => [styles.sparkleRow, pressed && styles.pressed]}>
+  return <Pressable accessibilityRole="button" accessibilityLabel={summary} accessibilityState={{ disabled: !!disabled || !!busy, busy: !!busy }} disabled={disabled || busy} onPress={() => { hapticLight(); onPress(); }} style={({ pressed }) => [styles.sparkleRow, pressed && styles.pressed]}>
     <DoopIcon name="sparkle" size={17} color={colors.lavender} /><Text numberOfLines={1} style={styles.sparkleSummary}>{summary}</Text><Text style={styles.sparkleEnd}>{busy ? '…' : '↵'}</Text>
   </Pressable>;
 }
@@ -44,7 +45,7 @@ export function DraftItemCard({ name, sourceLabel, isEstimatedSource, portionTex
         <View style={styles.portionRow}><View style={[styles.dot, estimated && styles.estimateDot]} /><Text numberOfLines={1} style={styles.portion}>{estimated && estimateRangeText ? estimateRangeText : portionText}</Text></View>
       </Pressable>
       <Text style={styles.itemEnergy}>{estimated && !/^[≈~]/.test(energyText) ? '≈' : ''}{energyText}</Text>
-      {onRemove && <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${name}`} onPress={onRemove} style={styles.iconButton}><DoopIcon name="close" size={14} color={colors.muted} /></Pressable>}
+      {onRemove && <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${name}`} onPress={() => { hapticWarning(); onRemove(); }} style={styles.iconButton}><DoopIcon name="close" size={14} color={colors.muted} /></Pressable>}
     </View>
     {editing && onChangeAmount && <View style={styles.editBlock}>
       <Input label={`Amount${currentUnit ? ` (${currentUnit})` : ''}`} value={amount} keyboardType="decimal-pad" onChangeText={next => { setAmount(next); const value = Number(next.trim().replace(',', '.')); if (next.trim() && Number.isFinite(value) && value > 0) onChangeAmount(value); }} />
@@ -57,7 +58,7 @@ export interface DraftAskOption { id: string; label: string; selected?: boolean 
 export interface DraftAskChipsProps { questionId: string; label: string; options: DraftAskOption[]; onSelect: (questionId: string, optionId: string) => void }
 export function DraftAskChips({ questionId, label, options, onSelect }: DraftAskChipsProps) {
   return <View style={styles.askRow} accessibilityRole="radiogroup" accessibilityLabel={label}><Text style={styles.askLabel}>{label.replace(/:$/, '')}:</Text>
-    <View style={styles.askOptions}>{options.map(option => <Pressable key={option.id} accessibilityRole="radio" accessibilityLabel={option.label} accessibilityState={{ checked: !!option.selected }} onPress={() => onSelect(questionId, option.id)} style={styles.chipTouch}>
+    <View style={styles.askOptions}>{options.map(option => <Pressable key={option.id} accessibilityRole="radio" accessibilityLabel={option.label} accessibilityState={{ checked: !!option.selected }} onPress={() => { hapticSelection(); onSelect(questionId, option.id); }} style={styles.chipTouch}>
       <View style={[styles.chip, option.selected && styles.chipSelected]}><Text style={[styles.chipLabel, option.selected && { color: colors.lavender }]}>{option.label}</Text></View>
     </Pressable>)}</View>
   </View>;
@@ -85,7 +86,7 @@ export function MealDraftPanel({ mealLabel, draftEnergyText, loggedEnergyText = 
       <Text numberOfLines={1} style={styles.mealName}>{mealLabel}</Text>
       <Text style={styles.loggedEnergy}>{loggedEnergyText}</Text><Text accessibilityLabel={`Draft total ${draftEnergyText}`} style={styles.draftEnergy}>+{draftEnergyText}</Text>
       {onSaveAsMeal && <Pressable accessibilityRole="button" accessibilityLabel="Save this set as a meal" disabled={confirming} onPress={() => setNaming(value => !value)} style={styles.iconButton}><DoopIcon name="pin" size={17} color={naming ? colors.lavender : colors.muted} /></Pressable>}
-      <Pressable accessibilityRole="button" accessibilityLabel={`Confirm to ${mealLabel}`} accessibilityState={{ disabled: !!confirming || itemCount === 0, busy: !!confirming }} disabled={confirming || itemCount === 0} onPress={onConfirmAll} style={[styles.confirm, (confirming || itemCount === 0) && styles.disabled]}><DoopIcon name="check" size={20} color={colors.onAccent} /></Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel={`Confirm to ${mealLabel}`} accessibilityState={{ disabled: !!confirming || itemCount === 0, busy: !!confirming }} disabled={confirming || itemCount === 0} onPress={() => { hapticSuccess(); onConfirmAll(); }} style={[styles.confirm, (confirming || itemCount === 0) && styles.disabled]}><DoopIcon name="check" size={20} color={colors.onAccent} /></Pressable>
     </View>
     <View style={styles.panel}>
       {disclosure && <View style={styles.disclosureRow}><Text style={styles.disclosure}>Estimates can be wrong. Not medical advice.</Text><Pressable accessibilityRole="button" accessibilityLabel="Dismiss estimate notice" onPress={() => setDisclosure(false)} style={styles.iconButton}><DoopIcon name="close" size={12} color={colors.muted} /></Pressable></View>}
@@ -93,7 +94,7 @@ export function MealDraftPanel({ mealLabel, draftEnergyText, loggedEnergyText = 
       {children}
       {fiberNote && <Text style={styles.fiberNote}>{fiberNote}</Text>}
       {naming && onSaveAsMeal && <View style={styles.editBlock}><Input label="Saved meal name" value={mealName} onChangeText={setMealName} editable={!confirming} placeholder="My usual lunch" /><Button label="Save reviewed meal" quiet disabled={confirming || !mealName.trim() || !itemCount} onPress={() => onSaveAsMeal(mealName.trim())} /></View>}
-      <Pressable accessibilityRole="button" accessibilityLabel="Discard drafts" disabled={confirming} onPress={onDismissAll} style={styles.discard}><Text style={styles.discardLabel}>Discard drafts</Text></Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel="Discard drafts" disabled={confirming} onPress={() => { hapticWarning(); onDismissAll(); }} style={styles.discard}><Text style={styles.discardLabel}>Discard drafts</Text></Pressable>
     </View>
   </View>;
 }

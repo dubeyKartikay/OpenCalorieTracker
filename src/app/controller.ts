@@ -215,7 +215,7 @@ export class AppController {
   search(query: string) { return this.deps.catalog.search(query); }
   async preview(food: FoodRecord, quantity: Quantity) {
     if (!food.source_pack_id && /^(recipe:|meal:)/.test(food.id)) {
-      return this.deps.catalog.userLibrary.getNutritionForQuantity(food.id, quantity);
+      return this.deps.catalog.userLibrary.getNutritionForQuantity(food.id, quantity, food.units);
     }
     return sumNutrients([calculateNutrition(food, quantity)]);
   }
@@ -257,10 +257,20 @@ export class AppController {
     return entry;
   }
   async confirm(input: { food: FoodRecord; quantity: Quantity; meal: string; date?: string; idempotencyKey: string }) {
-    const preview = await this.preview(input.food, input.quantity);
+    const isComposite = !input.food.source_pack_id && /^(recipe:|meal:)/.test(input.food.id);
+    let resolvedFood = input.food;
+    let preview: NutrientAggregate | null;
+    if (isComposite) {
+      const resolved = await this.deps.catalog.userLibrary.resolveForQuantity(input.food.id, input.quantity, input.food.units);
+      if (!resolved) throw new Error('This portion has no nutrition');
+      resolvedFood = resolved.food;
+      preview = resolved.aggregate;
+    } else {
+      preview = await this.preview(input.food, input.quantity);
+    }
     if (!preview) throw new Error('This portion has no nutrition');
-    const candidate = this.snapshot(input, preview);
-    const savedMealId = !input.food.source_pack_id && input.food.id.startsWith('meal:') ? input.food.id.slice(5) : null;
+    const candidate = this.snapshot({ ...input, food: resolvedFood }, preview);
+    const savedMealId = !resolvedFood.source_pack_id && resolvedFood.id.startsWith('meal:') ? resolvedFood.id.slice(5) : null;
     if (savedMealId) {
       const confirmed = await this.deps.userDb.withTransactionAsync(tx => this.confirmEntryInTx(tx, candidate, savedMealId));
       return this.added(confirmed);
@@ -389,9 +399,9 @@ export class AppController {
       if (!saved) throw new Error('Saved meal not found');
       const adapter = new UserLibraryAdapter(tx); const id = `meal:${savedMealId}`;
       const quantity = { amount: 1, unit: 'serving' };
-      const food = await adapter.getById(id); const preview = await adapter.getNutritionForQuantity(id, quantity);
-      if (!food || !preview) throw new Error('Saved meal not found');
-      const candidate = this.snapshot({ food, quantity, meal, ...(date === undefined ? {} : { date }), idempotencyKey }, preview);
+      const resolved = await adapter.resolveForQuantity(id, quantity);
+      if (!resolved) throw new Error('Saved meal not found');
+      const candidate = this.snapshot({ food: resolved.food, quantity, meal, ...(date === undefined ? {} : { date }), idempotencyKey }, resolved.aggregate);
       return this.confirmEntryInTx(tx, candidate, savedMealId);
     });
     return this.added(entry);
@@ -430,6 +440,42 @@ export class AppController {
   async saveRecipe(input: { id?: string; name: string; ingredients: RecipeIngredient[]; cooked_weight_g: number | null; servings_count: number | null; notes?: string | null }) {
     const recipe = await this.deps.library.upsertRecipe({ ...input, id: input.id ?? generateId(), version: 1, notes: input.notes ?? null });
     this.refresh(); return recipe;
+  }
+  async renameRecipe(id: string, name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error('Enter a recipe name before saving.');
+    const previous = await this.deps.library.getRecipe(id);
+    if (!previous) throw new Error('Recipe not found');
+    if (previous.name === trimmed) return previous;
+    const updated = await this.deps.library.upsertRecipe({ ...previous, name: trimmed });
+    this.setUndoAction({
+      label: 'Edited Name',
+      kind: 'update',
+      run: async () => {
+        const current = await this.deps.library.getRecipe(id);
+        if (current) await this.deps.library.upsertRecipe({ ...current, name: previous.name });
+      },
+    });
+    this.refresh();
+    return updated;
+  }
+  async renameSavedMeal(id: string, name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error('Enter a meal name before saving.');
+    const previous = await this.deps.library.getSavedMeal(id);
+    if (!previous) throw new Error('Saved meal not found');
+    if (previous.name === trimmed) return previous;
+    const updated = await this.deps.library.upsertSavedMeal({ ...previous, name: trimmed });
+    this.setUndoAction({
+      label: 'Edited Name',
+      kind: 'update',
+      run: async () => {
+        const current = await this.deps.library.getSavedMeal(id);
+        if (current) await this.deps.library.upsertSavedMeal({ ...current, name: previous.name });
+      },
+    });
+    this.refresh();
+    return updated;
   }
   previewRecipeTotals(ingredients: RecipeIngredient[]) { return calculateRecipeTotal(ingredients); }
   listBatches(recipeId: string) { return this.deps.library.listRecipeBatches(recipeId); }
@@ -601,12 +647,53 @@ export class AppController {
     const [day, goals] = await Promise.all([this.deps.diary.getDiaryDay(date), this.deps.goals.listGoalPeriods()]);
     return { day, totals: sumNutrients(day?.entries ?? []), goal: getActiveGoalForDate(goals, date) };
   }
+  private buildDailySeries(start: string, count: number, days: DiaryDay[], goals: GoalPeriod[]) {
+    const byDate = new Map(days.map(item => [item.date, item]));
+    return Array.from({ length: count }, (_, index) => {
+      const date = shiftDate(start, index);
+      const day = byDate.get(date);
+      const totals = sumNutrients(day?.entries ?? []);
+      const goal = getActiveGoalForDate(goals, date);
+      return {
+        date,
+        shortLabel: date.slice(8),
+        kcal: totals.nutrients?.kcal ?? 0,
+        targetKcal: goal?.target_kcal ?? null,
+        completeness: day?.completeness ?? ('none' as const),
+        proteinG: totals.nutrients?.protein_g,
+        carbsG: totals.nutrients?.carbs_g,
+        fatG: totals.nutrients?.fat_g,
+      };
+    });
+  }
+  async dailyRange(start: string, count: number) {
+    const safeCount = Math.max(0, Math.floor(count));
+    if (safeCount === 0) return [];
+    const end = shiftDate(start, safeCount - 1);
+    const [days, goals] = await Promise.all([
+      this.deps.diary.listDiaryDays(start, end),
+      this.deps.goals.listGoalPeriods(),
+    ]);
+    return this.buildDailySeries(start, safeCount, days, goals);
+  }
   async setCompleteness(date: string, completeness: DiaryDay['completeness']) {
     await this.deps.diary.setDayCompleteness(date, completeness); this.refresh();
   }
-  async saveCustomFood(input: unknown) {
+  async saveCustomFood(input: unknown, options?: { undoLabel?: string }) {
     const food = foodRecordSchema.parse(input);
-    await this.deps.library.upsertCustomFood(food); this.refresh(); return food;
+    const previous = options?.undoLabel ? await this.deps.library.getCustomFood(food.id) : null;
+    await this.deps.library.upsertCustomFood(food);
+    if (previous && options?.undoLabel) {
+      this.setUndoAction({
+        label: options.undoLabel,
+        kind: 'update',
+        run: async () => {
+          await this.deps.library.upsertCustomFood(previous);
+        },
+      });
+    }
+    this.refresh();
+    return food;
   }
   async deleteCustomFood(id: string) {
     await this.deps.userDb.withTransactionAsync(async tx => {
@@ -858,12 +945,26 @@ export class AppController {
       weight_kg: weightKg, source: 'manual', external_source_id: null }); this.refresh();
   }
   async progress(range: number, end = localDate()) {
-    const days = await this.deps.diary.listDiaryDays(shiftDate(end, 1 - range), end);
+    const safeRange = Math.max(0, Math.floor(range));
+    const start = shiftDate(end, 1 - safeRange);
+    const today = localDate();
+    const statsEnd = end > today ? today : end;
+    const [days, goals, weighIns] = await Promise.all([
+      safeRange > 0 ? this.deps.diary.listDiaryDays(start, end) : Promise.resolve([]),
+      this.deps.goals.listGoalPeriods(),
+      this.deps.goals.listWeighIns(),
+    ]);
     const complete = days.filter(day => day.completeness === 'complete' && sumNutrients(day.entries).entryCount > 0);
     const total = sumNutrients(complete.flatMap(day => day.entries));
-    return { completeDays: complete.length, excludedDays: range - complete.length,
+    return {
+      completeDays: complete.length,
+      excludedDays: safeRange - complete.length,
       averages: total.nutrients ? scaleNutrients(total.nutrients, 1 / complete.length) : null,
-      unknownCount: total.unknownCount, trend: calculateWeightTrend(await this.deps.goals.listWeighIns()) };
+      unknownCount: total.unknownCount,
+      trend: calculateWeightTrend(weighIns),
+      daily: safeRange > 0 ? this.buildDailySeries(start, safeRange, days, goals) : [],
+      targetGoal: getActiveGoalForDate(goals, statsEnd),
+    };
   }
   async installPack(handle: SqlDatabase, path: string, priority = 100) {
     let owned = false;

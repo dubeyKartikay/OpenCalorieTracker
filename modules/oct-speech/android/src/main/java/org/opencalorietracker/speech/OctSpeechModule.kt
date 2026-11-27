@@ -238,10 +238,14 @@ class OctSpeechModule : Module() {
       }
     }
 
-    AsyncFunction("stopListeningAsync") { promise: Promise ->
+    AsyncFunction("stopListeningAsync") { targetSessionId: Int?, promise: Promise ->
       runOnMain {
         val current = recognizer
         val sessionId = activeSessionId
+        if (targetSessionId != null && targetSessionId > 0 && sessionId != targetSessionId) {
+          promise.resolve(null)
+          return@runOnMain
+        }
         if (current != null && isListening) {
           isListening = false
           userStoppedSessionId = sessionId
@@ -265,9 +269,13 @@ class OctSpeechModule : Module() {
       }
     }
 
-    AsyncFunction("cancelListeningAsync") { promise: Promise ->
+    AsyncFunction("cancelListeningAsync") { targetSessionId: Int?, promise: Promise ->
       runOnMain {
         val sessionId = activeSessionId
+        if (targetSessionId != null && targetSessionId > 0 && sessionId != targetSessionId) {
+          promise.resolve(null)
+          return@runOnMain
+        }
         activeSessionId = sessionCounter.incrementAndGet()
         destroyRecognizerLocked()
         emitState("ended", sessionId)

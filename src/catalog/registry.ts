@@ -59,7 +59,14 @@ export class FoodSourceRegistry {
   async search(query: string, options: SearchOptions = {}): Promise<{ yours: SearchCandidate[]; database: SearchCandidate[] }> {
     const sources = [this.userLibrary, ...[...this.packs.values()].filter((pack) => pack.enabled).map((pack) => pack.adapter)];
     const results = (await Promise.all(sources.map((source) => source.search(query, options)))).flat();
-    const merged = await Promise.all(results.map(async (candidate) => ({ ...candidate, food: await this.personalUnits(candidate.food) })));
+    const databaseFoods = results.filter((candidate) => candidate.bucket === 'database').map((candidate) => candidate.food);
+    const unitsByKey = await this.library.listUserFoodUnitsForKeys(databaseFoods.map((food) => foodKey(food)));
+    const merged = results.map((candidate) => {
+      if (candidate.bucket === 'yours') return candidate;
+      const personal = unitsByKey.get(foodKey(candidate.food));
+      if (!personal?.length) return candidate;
+      return { ...candidate, food: { ...candidate.food, units: mergeFoodUnits(candidate.food.units, personal) } };
+    });
     const ranked = rankCandidates(merged, query, options.preferredPrepState);
     const limit = options.limit ?? 50;
     return { yours: ranked.filter((candidate) => candidate.bucket === 'yours').slice(0, limit), database: ranked.filter((candidate) => candidate.bucket === 'database').slice(0, limit) };

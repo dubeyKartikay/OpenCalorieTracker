@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
+import { useReducedMotion } from 'react-native-reanimated';
 import {
   colors,
   fontFace,
@@ -14,6 +15,7 @@ import {
 
 import { DoopIcon } from '../DoopIcons';
 import { applyKeypadKey, formatDraftNumber } from '../../format';
+import { hapticLight, hapticSelection } from '../../haptics';
 
 export { applyKeypadKey };
 
@@ -25,40 +27,64 @@ export interface LibV2UnitRailProps {
   selectedUnit?: string | undefined;
   onSelectUnit: (unit: string) => void;
   onAddUnit?: (() => void) | undefined;
+  addUnitActive?: boolean | undefined;
 }
 
 /** Horizontal pill rail for switching the unit a keypad edits. */
-export function LibV2UnitRail({ units, selectedUnit, onSelectUnit, onAddUnit }: LibV2UnitRailProps) {
+export function LibV2UnitRail({ units, selectedUnit, onSelectUnit, onAddUnit, addUnitActive = false }: LibV2UnitRailProps) {
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={styles.unitRail}
-      contentContainerStyle={styles.unitRailContent}
-    >
-      {units.map(unit => {
-        const selected = unit === selectedUnit;
-        return (
-          <Pressable
-            key={unit}
-            accessibilityRole="button"
-            accessibilityLabel={`Use ${unit}`}
-            accessibilityState={{ selected }}
-            onPress={() => onSelectUnit(unit)}
-            style={({ pressed }) => [
-              styles.unitPill,
-              selected && styles.unitPillSelected,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text style={[styles.unitPillLabel, selected && styles.unitPillLabelSelected]}>
-              {unit}
-            </Text>
-          </Pressable>
-        );
-      })}
-      {onAddUnit && <Pressable accessibilityRole="button" accessibilityLabel="More units" onPress={onAddUnit} style={styles.addUnit}><DoopIcon name="plus" size={14} color={colors.muted} /></Pressable>}
-    </ScrollView>
+    <View style={styles.unitRailRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        style={styles.unitRail}
+        contentContainerStyle={styles.unitRailContent}
+      >
+        {units.map(unit => {
+          const selected = !addUnitActive && unit === selectedUnit;
+          return (
+            <Pressable
+              key={unit}
+              accessibilityRole="button"
+              accessibilityLabel={`Use ${unit}`}
+              accessibilityState={{ selected }}
+              onPress={() => {
+                hapticSelection();
+                onSelectUnit(unit);
+              }}
+              style={({ pressed }) => [
+                styles.unitPill,
+                selected && styles.unitPillSelected,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={[styles.unitPillLabel, selected && styles.unitPillLabelSelected]}>
+                {unit}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+      {onAddUnit && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={addUnitActive ? 'Close custom unit form' : 'Add custom unit'}
+          accessibilityState={{ expanded: addUnitActive, selected: addUnitActive }}
+          onPress={() => {
+            hapticSelection();
+            onAddUnit();
+          }}
+          style={({ pressed }) => [
+            styles.addUnit,
+            addUnitActive && styles.addUnitActive,
+            pressed && styles.pressed,
+          ]}
+        >
+          <DoopIcon name="plus" size={14} color={addUnitActive ? colors.accent : colors.muted} />
+        </Pressable>
+      )}
+    </View>
   );
 }
 
@@ -102,6 +128,29 @@ function clampDecimals(value: string, maxDecimals: number | undefined): string {
   return value.slice(0, dot + 1 + maxDecimals);
 }
 
+function BlinkingCaret() {
+  const reducedMotion = Boolean(useReducedMotion());
+  const caretOpacity = useState(() => new Animated.Value(1))[0];
+  useEffect(() => {
+    if (reducedMotion) {
+      caretOpacity.setValue(1);
+      return;
+    }
+    const blink = Animated.loop(
+      Animated.sequence([
+        Animated.delay(550),
+        Animated.timing(caretOpacity, { toValue: 0.12, duration: 0, useNativeDriver: true }),
+        Animated.delay(500),
+        Animated.timing(caretOpacity, { toValue: 1, duration: 0, useNativeDriver: true }),
+      ]),
+    );
+    blink.start();
+    return () => blink.stop();
+  }, [caretOpacity, reducedMotion]);
+
+  return <Animated.View style={[styles.caret, { opacity: caretOpacity }]} />;
+}
+
 /** Doop "LibV2" numeric keypad with an optional unit rail and done action. */
 export function InlineKeypad({
   value,
@@ -122,11 +171,6 @@ export function InlineKeypad({
   bare,
   style,
 }: InlineKeypadProps) {
-  const caretOpacity = useState(() => new Animated.Value(1))[0];
-  useEffect(() => {
-    const blink = Animated.loop(Animated.sequence([Animated.delay(550), Animated.timing(caretOpacity, { toValue: 0.12, duration: 0, useNativeDriver: true }), Animated.delay(500), Animated.timing(caretOpacity, { toValue: 1, duration: 0, useNativeDriver: true })]));
-    blink.start(); return () => blink.stop();
-  }, [caretOpacity]);
   const decimalLimit = maxDecimals != null && maxDecimals >= 0 ? maxDecimals : undefined;
   const acceptsDecimal = !digitString && allowDecimal !== false && (decimalLimit == null || decimalLimit > 0);
   const readoutVisible = showReadout !== false;
@@ -137,6 +181,7 @@ export function InlineKeypad({
     if (key === DECIMAL && !acceptsDecimal) return;
     const raw = clampDecimals(applyKeypadKey(value, key, acceptsDecimal, allowEmpty, digitString), decimalLimit);
     if (maxLength != null && raw.length > maxLength && key !== BACKSPACE) return;
+    hapticSelection();
     onChange(raw);
   };
 
@@ -156,7 +201,7 @@ export function InlineKeypad({
               >
                 {display}
               </Text>
-              <Animated.View style={[styles.caret, { opacity: caretOpacity }]} />
+              <BlinkingCaret />
               {selectedUnit && !onSelectUnit ? <Text style={styles.readoutUnit}>{selectedUnit}</Text> : null}
             </View>
           ) : (
@@ -169,7 +214,10 @@ export function InlineKeypad({
               accessibilityLabel={doneLabel ?? 'Done'}
               accessibilityState={{ disabled: doneDisabled }}
               disabled={doneDisabled}
-              onPress={onDone}
+              onPress={() => {
+                hapticLight();
+                onDone();
+              }}
               style={({ pressed }) => [styles.doneButton, doneDisabled && styles.doneButtonDisabled, pressed && styles.pressed]}
             >
               <Text style={styles.doneLabel}>{doneLabel ?? 'Done'}</Text>
@@ -210,11 +258,16 @@ export function InlineKeypad({
 export interface NumericEditorProps {
   value: string;
   onChange: (next: string) => void;
+  /** Muted readout shown when `value` is empty (defaults to `'0'`). */
+  placeholder?: string | undefined;
   unit?: string | undefined;
   units?: string[] | undefined;
   selectedUnit?: string | undefined;
   onSelectUnit?: ((unit: string) => void) | undefined;
   onAddUnit?: (() => void) | undefined;
+  addUnitActive?: boolean | undefined;
+  /** Inline custom-unit editor shown in place of the keypad when `addUnitActive` is true. */
+  unitEditor?: React.ReactNode | undefined;
   onConfirm: () => void;
   onCancel: () => void;
   onClear?: (() => void) | undefined;
@@ -238,11 +291,14 @@ export interface NumericEditorProps {
 export function NumericEditor({
   value,
   onChange,
+  placeholder,
   unit,
   units,
   selectedUnit,
   onSelectUnit,
   onAddUnit,
+  addUnitActive = false,
+  unitEditor,
   onConfirm,
   onCancel,
   onClear,
@@ -258,66 +314,85 @@ export function NumericEditor({
   allowEmpty = true,
   style,
 }: NumericEditorProps) {
-  const display = formatDraftNumber(value);
+  const display = value === '' && placeholder ? placeholder : formatDraftNumber(value);
   const shownUnit = selectedUnit ?? unit;
+  const showingUnitEditor = Boolean(addUnitActive && unitEditor);
   return (
     <View style={[styles.editorRoot, style]}>
-      <View style={styles.editorRow}>
-        <View style={styles.editorReadout}>
-          <Text
-            accessibilityLiveRegion="polite"
-            accessibilityLabel={shownUnit ? `${display} ${shownUnit}` : display}
-            numberOfLines={1}
-            adjustsFontSizeToFit
-            minimumFontScale={0.65}
-            style={[styles.editorValue, value === '' && styles.editorPlaceholder]}
+      {!showingUnitEditor ? (
+        <View style={styles.editorRow}>
+          <View style={styles.editorReadout}>
+            <Text
+              accessibilityLiveRegion="polite"
+              accessibilityLabel={shownUnit ? `${display} ${shownUnit}` : display}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.65}
+              style={[styles.editorValue, value === '' && styles.editorPlaceholder]}
+            >
+              {display}
+            </Text>
+            <View style={styles.editorCaret} />
+            {shownUnit && !onSelectUnit ? <Text style={styles.editorUnit}>{shownUnit}</Text> : null}
+          </View>
+          {headerRight}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={confirmLabel}
+            accessibilityState={{ disabled: confirmDisabled }}
+            disabled={confirmDisabled}
+            onPress={() => {
+              hapticLight();
+              onConfirm();
+            }}
+            style={({ pressed }) => [
+              styles.editorBtn,
+              styles.editorConfirmBtn,
+              confirmDisabled && styles.doneButtonDisabled,
+              pressed && styles.pressed,
+            ]}
           >
-            {display}
-          </Text>
-          <View style={styles.editorCaret} />
-          {shownUnit && !onSelectUnit ? <Text style={styles.editorUnit}>{shownUnit}</Text> : null}
+            <DoopIcon name="check" size={18} color={colors.onAccent} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={cancelLabel}
+            onPress={() => {
+              hapticSelection();
+              onCancel();
+            }}
+            style={({ pressed }) => [styles.editorBtn, pressed && styles.pressed]}
+          >
+            <DoopIcon name="close" size={16} color={colors.muted} />
+          </Pressable>
         </View>
-        {headerRight}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={confirmLabel}
-          accessibilityState={{ disabled: confirmDisabled }}
-          disabled={confirmDisabled}
-          onPress={onConfirm}
-          style={({ pressed }) => [
-            styles.editorBtn,
-            styles.editorConfirmBtn,
-            confirmDisabled && styles.doneButtonDisabled,
-            pressed && styles.pressed,
-          ]}
-        >
-          <DoopIcon name="check" size={18} color={colors.onAccent} />
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={cancelLabel}
-          onPress={onCancel}
-          style={({ pressed }) => [styles.editorBtn, pressed && styles.pressed]}
-        >
-          <DoopIcon name="close" size={16} color={colors.muted} />
-        </Pressable>
-      </View>
-      {units != null && units.length > 0 && onSelectUnit != null ? (
-        <LibV2UnitRail units={units} selectedUnit={selectedUnit} onSelectUnit={onSelectUnit} onAddUnit={onAddUnit} />
       ) : null}
-      <View style={styles.editorKeypadWrap}>
-        <InlineKeypad
-          bare
-          showReadout={false}
-          value={value}
-          onChange={onChange}
-          allowDecimal={allowDecimal}
-          maxDecimals={maxDecimals}
-          maxLength={maxLength}
-          allowEmpty={allowEmpty}
+      {units != null && units.length > 0 && onSelectUnit != null ? (
+        <LibV2UnitRail
+          units={units}
+          selectedUnit={selectedUnit}
+          onSelectUnit={onSelectUnit}
+          onAddUnit={onAddUnit}
+          addUnitActive={showingUnitEditor}
         />
-      </View>
-      {(hint || onClear) ? (
+      ) : null}
+      {showingUnitEditor ? (
+        <View style={styles.editorKeypadWrap}>{unitEditor}</View>
+      ) : (
+        <View style={styles.editorKeypadWrap}>
+          <InlineKeypad
+            bare
+            showReadout={false}
+            value={value}
+            onChange={onChange}
+            allowDecimal={allowDecimal}
+            maxDecimals={maxDecimals}
+            maxLength={maxLength}
+            allowEmpty={allowEmpty}
+          />
+        </View>
+      )}
+      {!showingUnitEditor && (hint || onClear) ? (
         <View style={styles.editorFooter}>
           {hint ? <Text style={styles.editorHint}>{hint}</Text> : <View style={{ flex: 1 }} />}
           {onClear ? (
@@ -337,7 +412,8 @@ export type LibV2KeypadProps = InlineKeypadProps;
 
 const styles = StyleSheet.create({
   caret: { width: 2, height: 26, borderRadius: 1, backgroundColor: colors.accent },
-  addUnit: { width: 40, height: 40, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
+  addUnit: { width: 40, height: 40, flexShrink: 0, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
+  addUnitActive: { borderStyle: 'solid', borderColor: colors.accent, backgroundColor: 'rgba(122,162,247,0.16)' },
   card: {
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -391,6 +467,7 @@ const styles = StyleSheet.create({
     fontSize: fontSize.t13,
     fontWeight: fontWeight.bold,
   },
+  unitRailRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1, minWidth: 0 },
   unitRail: { flex: 1, minWidth: 0 },
   unitRailContent: {
     flexDirection: 'row',

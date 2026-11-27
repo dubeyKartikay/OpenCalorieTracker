@@ -5,7 +5,7 @@ import { router, type Href } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, fontFace, fontSize, MIN_TOUCH_TARGET, radius, SCREEN_GUTTER, spacing, tabularNums, useLayoutClass } from '../tokens';
 import { RevealPanel } from './doop/Motion';
-import { DoopIcon } from './DoopIcons';
+import { DoopIcon, type DoopIconName } from './DoopIcons';
 
 export const ui = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.ground },
@@ -51,6 +51,25 @@ export const ui = StyleSheet.create({
   divider: { height: 1, backgroundColor: colors.hairline },
 });
 
+/** Tracks the active soft keyboard height on both iOS and Android (needed for Android 15+ edge-to-edge ScrollViews). */
+export function useKeyboardHeight(): number {
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, event => {
+      setKeyboardHeight(event.endCoordinates?.height ?? 0);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+  return keyboardHeight;
+}
+
 export function Page({
   title,
   action,
@@ -73,16 +92,7 @@ export function Page({
 }>) {
   const { isExpanded } = useLayoutClass();
   const maxWidth = isExpanded ? 1080 : 540;
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-  useEffect(() => {
-    // Android uses windowSoftInputMode="adjustResize", so extra bottom padding causes a snap-back jolt on dismiss.
-    if (Platform.OS !== 'ios') return;
-    const showSub = Keyboard.addListener('keyboardWillShow', event => {
-      setKeyboardHeight(event.endCoordinates?.height ?? 0);
-    });
-    const hideSub = Keyboard.addListener('keyboardWillHide', () => setKeyboardHeight(0));
-    return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
+  const keyboardHeight = useKeyboardHeight();
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={ui.screen}>
       <ScrollView
@@ -148,13 +158,19 @@ export function Page({
 /** Exact Doop centered page header with left back chevron and optional right control. */
 export function BackHeader({
   title,
+  titleContent,
   subtitle,
   onBack,
+  backIcon = 'back',
+  backLabel = 'Back',
   right,
 }: {
   title: string;
+  titleContent?: React.ReactNode;
   subtitle?: string;
   onBack: () => void;
+  backIcon?: DoopIconName;
+  backLabel?: string;
   right?: React.ReactNode;
 }) {
   return (
@@ -162,7 +178,7 @@ export function BackHeader({
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 44 }}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Back"
+          accessibilityLabel={backLabel}
           onPress={onBack}
           style={({ pressed }) => ({
             width: 44,
@@ -173,24 +189,30 @@ export function BackHeader({
             opacity: pressed ? 0.6 : 1,
           })}
         >
-          <DoopIcon name="back" size={20} color={colors.muted} strokeWidth={1.8} />
+          <DoopIcon name={backIcon} size={20} color={colors.muted} strokeWidth={1.8} />
         </Pressable>
-        <Text
-          accessibilityRole="header"
-          numberOfLines={1}
-          style={[
-            fontFace('bold'),
-            {
-              flex: 1,
-              textAlign: 'center',
-              fontSize: fontSize.t20,
-              color: colors.ink,
-              letterSpacing: -0.3,
-            },
-          ]}
-        >
-          {title}
-        </Text>
+        {titleContent ? (
+          <View style={{ flex: 1, minWidth: 0, alignItems: 'center', justifyContent: 'center' }}>
+            {titleContent}
+          </View>
+        ) : (
+          <Text
+            accessibilityRole="header"
+            numberOfLines={1}
+            style={[
+              fontFace('bold'),
+              {
+                flex: 1,
+                textAlign: 'center',
+                fontSize: fontSize.t20,
+                color: colors.ink,
+                letterSpacing: -0.3,
+              },
+            ]}
+          >
+            {title}
+          </Text>
+        )}
         <View style={{ width: 44, height: 44, marginRight: -12, alignItems: 'center', justifyContent: 'center' }}>
           {right ?? null}
         </View>

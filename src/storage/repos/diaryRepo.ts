@@ -119,11 +119,27 @@ export class DiaryRepo {
     if (from) isoDateSchema.parse(from);
     if (to) isoDateSchema.parse(to);
     return this.db.withTransactionAsync(async (tx) => {
-      const rows = await tx.getAllAsync<{ date: string }>('SELECT date FROM diary_days WHERE (? IS NULL OR date>=?) AND (? IS NULL OR date<=?) ORDER BY date', from ?? null, from ?? null, to ?? null, to ?? null);
-      const repo = new DiaryRepo(tx);
-      const days: DiaryDay[] = [];
-      for (const row of rows) days.push((await repo.getDiaryDay(row.date))!);
-      return days;
+      const dayRows = await tx.getAllAsync<{ date: string; completeness: DiaryDay['completeness'] }>(
+        'SELECT date, completeness FROM diary_days WHERE (? IS NULL OR date>=?) AND (? IS NULL OR date<=?) ORDER BY date',
+        from ?? null, from ?? null, to ?? null, to ?? null,
+      );
+      if (dayRows.length === 0) return [];
+      const entryRows = await tx.getAllAsync<{ date: string; snapshot_json: string }>(
+        'SELECT date, snapshot_json FROM diary_entries WHERE (? IS NULL OR date>=?) AND (? IS NULL OR date<=?) ORDER BY date, occurred_at, id',
+        from ?? null, from ?? null, to ?? null, to ?? null,
+      );
+      const byDate = new Map<string, DiaryEntrySnapshot[]>();
+      for (const row of entryRows) {
+        const entry = parseJson(row.snapshot_json, diaryEntrySnapshotSchema);
+        const list = byDate.get(row.date);
+        if (list) list.push(entry);
+        else byDate.set(row.date, [entry]);
+      }
+      return dayRows.map((row) => ({
+        date: row.date,
+        completeness: row.completeness,
+        entries: byDate.get(row.date) ?? [],
+      }));
     });
   }
 }

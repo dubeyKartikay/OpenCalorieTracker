@@ -8,6 +8,7 @@ import { WaterCard } from '../../src/ui/components/doop';
 import { isDraftForMeal, MealActiveDraftBlock, MealComposerField, MealComposerFooter, MealDraftAuxBlock, useMealInlineComposer, useScrollToMealComposer } from '../../src/ui/components/capture';
 import { MealEntryDragProvider, MealHoldFan, PetalHubLauncher } from '../../src/ui/components/gestures';
 import { ErrorMessage, formatWeekdayDate, Muted, NoticePill, Page, useTimedNotice } from '../../src/ui/components/primitives';
+import { hapticSuccess } from '../../src/ui/haptics';
 import { colors, fontFace, TwoPane } from '../../src/ui/tokens';
 
 export default function Today() {
@@ -62,6 +63,7 @@ export default function Today() {
   const commit = (suggestion: TodaySuggestion, meal = activeMeal) => void action.run(async () => {
     if (suggestion.kind === 'saved_meal') await controller.logSavedMeal(suggestion.id, meal, generateId());
     else await controller.confirm({ food: suggestion.food, quantity: defaultQuantity(suggestion.food), meal, idempotencyKey: generateId() });
+    hapticSuccess();
   });
 
   const handleDragMoveEntry = (entry: DiaryEntrySnapshot, targetMeal: string) => {

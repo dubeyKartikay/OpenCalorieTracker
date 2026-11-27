@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type ComponentRef, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withTiming } from 'react-native-reanimated';
-import * as Haptics from 'expo-haptics';
 import type { DiaryEntrySnapshot, GoalPeriod, NutrientAggregate } from '../../domain';
 import { sumNutrients } from '../../domain';
 import { useAction, useAppRuntime, usePreferences } from '../../app/AppRuntimeContext';
 import { MEALS } from '../../app/controller';
+import { hapticLight, hapticSelection, hapticSuccess, hapticWarning } from '../haptics';
 import { colors, fontFace, macroColors, radius, tabularNums } from '../tokens';
 import { AnchoredPopover, EntryEditPopover, measurePopoverAnchor, type PopoverAnchor } from './doop/HistoryControls';
 import type { CompletenessStatus } from './doop/CompletenessMark';
@@ -227,10 +227,13 @@ export function TodayMealRow({
       dragDisabled={action.busy}
       onLongPressHeader={!expanded && entries.length > 1 ? () => {
         setExpanded(true);
-        void Haptics.selectionAsync().catch(() => {});
+        hapticSelection();
       } : undefined}
       onPressHeader={() => {
-        if (logged) setExpanded(!expanded);
+        if (logged) {
+          hapticSelection();
+          setExpanded(!expanded);
+        }
       }}
       ending={ending}
     >
@@ -250,7 +253,10 @@ export function TodayMealRow({
                 setEditAnchor(measured);
               });
             }}
-            onDelete={() => void action.run(() => controller.deleteEntry(entry.id))}
+            onDelete={() => {
+              hapticWarning();
+              void action.run(() => controller.deleteEntry(entry.id));
+            }}
           />
         ))}
         <ErrorMessage message={action.error} />
@@ -349,7 +355,8 @@ export function DayCompletenessToggle({
       accessibilityState={{ selected: isComplete, disabled }}
       disabled={disabled}
       onPress={() => {
-        void Haptics.selectionAsync().catch(() => {});
+        if (nextStatus === 'complete') hapticSuccess();
+        else hapticSelection();
         onToggle(nextStatus);
       }}
       style={({ pressed }) => [
@@ -377,7 +384,7 @@ export function UndoToast() {
   return <RevealPanel visible={!!undo} direction="up">
     {undo ? <View style={styles.undo}><View accessibilityLiveRegion="polite" style={styles.undoLine}>
       <Text numberOfLines={1} style={[styles.entryName, { flex: 1 }]}>{undo.label}</Text>
-      <Pressable accessibilityRole="button" accessibilityLabel={`Undo: ${undo.label}`} disabled={action.busy} onPress={() => void action.run(() => controller.undo())} style={styles.iconButton}><DoopIcon name="undo" color={colors.accent} size={17} /></Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel={`Undo: ${undo.label}`} disabled={action.busy} onPress={() => { hapticLight(); void action.run(() => controller.undo()); }} style={styles.iconButton}><DoopIcon name="undo" color={colors.accent} size={17} /></Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel="Dismiss undo" onPress={controller.dismissUndo} style={styles.iconButton}><DoopIcon name="close" color={colors.muted} size={15} /></Pressable>
     </View><ErrorMessage message={action.error} /></View> : null}
   </RevealPanel>;

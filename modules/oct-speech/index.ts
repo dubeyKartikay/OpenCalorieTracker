@@ -27,8 +27,8 @@ interface NativeSpeechModule {
   getPermissionAsync(): Promise<boolean>;
   requestPermissionAsync(): Promise<boolean | { granted?: boolean; status?: string }>;
   startListeningAsync(options?: SpeechStartOptions): Promise<{ sessionId: number }>;
-  stopListeningAsync(): Promise<void>;
-  cancelListeningAsync(): Promise<void>;
+  stopListeningAsync(sessionId?: number | null): Promise<void>;
+  cancelListeningAsync(sessionId?: number | null): Promise<void>;
   addListener(eventName: 'onSpeechState', listener: (event: SpeechStateEvent) => void): NativeSpeechSubscription;
   addListener(eventName: 'onSpeechVolume', listener: (event: SpeechVolumeEvent) => void): NativeSpeechSubscription;
   addListener(eventName: 'onSpeechPartial', listener: (event: SpeechTextEvent) => void): NativeSpeechSubscription;
@@ -92,14 +92,14 @@ export async function startNativeSpeech(options?: SpeechStartOptions): Promise<n
   return result.sessionId;
 }
 
-export async function stopNativeSpeech(): Promise<void> {
+export async function stopNativeSpeech(sessionId?: number): Promise<void> {
   if (!nativeSpeech) return;
-  await nativeSpeech.stopListeningAsync();
+  await nativeSpeech.stopListeningAsync(sessionId ?? null);
 }
 
-export async function cancelNativeSpeech(): Promise<void> {
+export async function cancelNativeSpeech(sessionId?: number): Promise<void> {
   if (!nativeSpeech) return;
-  await nativeSpeech.cancelListeningAsync();
+  await nativeSpeech.cancelListeningAsync(sessionId ?? null);
 }
 
 export interface SpeechListeners {

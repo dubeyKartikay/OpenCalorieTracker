@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
+import { hapticLight, hapticSelection, hapticWarning } from '../../haptics';
 import { colors, fontFace, tabularNums } from '../../tokens';
 import { DoopIcon } from '../DoopIcons';
 import { Button, number, ui } from '../primitives';
@@ -58,7 +59,10 @@ export function WaterCard({
           accessibilityRole="button"
           accessibilityLabel={`Water, ${number(totalMl)}${goalMl != null ? ` of ${number(goalMl)}` : ''} ml. Tap to enter exact amount`}
           accessibilityState={{ expanded }}
-          onPress={() => setOpen(!expanded)}
+          onPress={() => {
+            hapticSelection();
+            setOpen(!expanded);
+          }}
           style={({ pressed }) => [styles.rowTrigger, pressed && styles.pressed]}
         >
           <DoopIcon name="water" size={18} color={expanded ? colors.accent : colors.muted} />
@@ -72,7 +76,10 @@ export function WaterCard({
           accessibilityRole="button"
           accessibilityLabel="Add 250 millilitres of water"
           disabled={disabled}
-          onPress={() => onAdd(250)}
+          onPress={() => {
+            hapticLight();
+            onAdd(250);
+          }}
           style={({ pressed }) => [styles.pill, disabled && { opacity: 0.45 }, pressed && styles.pressed]}
         >
           <Text style={styles.pillLabel}>+250</Text>
@@ -104,6 +111,7 @@ export function WaterCard({
             quiet
             disabled={disabled}
             onPress={() => {
+              hapticLight();
               onAdd(500);
               setOpen(false);
             }}
@@ -113,7 +121,10 @@ export function WaterCard({
               label={lastAmountMl == null ? 'Undo last' : `Undo ${number(lastAmountMl)} ml`}
               quiet
               disabled={disabled || totalMl <= 0}
-              onPress={onUndo}
+              onPress={() => {
+                hapticLight();
+                onUndo();
+              }}
             />
           )}
           {onClear && (
@@ -121,7 +132,10 @@ export function WaterCard({
               label="Clear water"
               quiet
               disabled={disabled || totalMl <= 0}
-              onPress={onClear}
+              onPress={() => {
+                hapticWarning();
+                onClear();
+              }}
             />
           )}
         </View>

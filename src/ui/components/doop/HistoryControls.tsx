@@ -26,6 +26,7 @@ import {
   spacing,
   tabularNums,
 } from '../../tokens';
+import { hapticLight, hapticSelection, hapticWarning } from '../../haptics';
 import { InlineKeypad } from './InlineKeypad';
 import { RevealPanel } from './Motion';
 import { DoopIcon } from '../DoopIcons';
@@ -236,6 +237,7 @@ export function EntryEditPopover({
 
   const stepAmount = (dir: -1 | 1) => {
     if (busy) return;
+    hapticSelection();
     const isMassOrVol = draftUnit === 'g' || draftUnit === 'ml';
     const base = effectiveAmount;
     const delta = isMassOrVol ? 10 * dir : (base < 2 || !Number.isInteger(base) ? 0.5 : 1) * dir;
@@ -249,6 +251,7 @@ export function EntryEditPopover({
   const selectUnit = (nextUnit: string) => {
     setUnitMenuOpen(false);
     if (nextUnit === draftUnit) return;
+    hapticSelection();
     const nextAmount = nextUnit === 'g' || nextUnit === 'ml'
       ? (draftUnit === 'g' || draftUnit === 'ml' ? (validDraft ? parsedDraft : 100) : 100)
       : (draftUnit === 'g' || draftUnit === 'ml' ? 1 : (validDraft ? parsedDraft : 1));
@@ -358,6 +361,7 @@ export function EntryEditPopover({
             accessibilityState={{ disabled: busy || !basisValid }}
             disabled={busy || !basisValid}
             onPress={() => {
+              hapticLight();
               commitDraft();
               setKeypadOpen(false);
             }}
@@ -393,7 +397,10 @@ export function EntryEditPopover({
           accessibilityLabel={`Move to ${meal}`}
           accessibilityState={{ selected: selectedMeal, disabled: busy || keypadOpen }}
           disabled={busy || keypadOpen}
-          onPress={() => onMoveMeal(meal)}
+          onPress={() => {
+            hapticSelection();
+            onMoveMeal(meal);
+          }}
           style={({ pressed }) => [
             styles.editMealChip,
             selectedMeal && styles.editMealChipActive,
@@ -446,7 +453,10 @@ export function EntryEditPopover({
       accessibilityRole="button"
       accessibilityLabel={`Remove ${entry.food.name}`}
       disabled={busy}
-      onPress={onRemove}
+      onPress={() => {
+        hapticWarning();
+        onRemove();
+      }}
       style={({ pressed }) => [styles.editRemoveBtn, pressed && styles.pressed]}
     >
       <Text style={styles.editRemoveText}>Remove</Text>
@@ -460,10 +470,12 @@ function SelectAction({
   label,
   onPress,
   tone = 'default',
+  disabled = false,
 }: {
   label: string;
   onPress: () => void;
   tone?: SelectActionTone | undefined;
+  disabled?: boolean | undefined;
 }) {
   const primary = tone === 'primary';
   const danger = tone === 'danger';
@@ -471,12 +483,19 @@ function SelectAction({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
-      onPress={onPress}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={() => {
+        if (danger) hapticWarning();
+        else hapticLight();
+        onPress();
+      }}
       style={({ pressed }) => [
         styles.selectAction,
         primary && styles.selectActionPrimary,
         danger && styles.selectActionDanger,
-        pressed && styles.pressed,
+        disabled && { opacity: 0.45 },
+        !disabled && pressed && styles.pressed,
       ]}
     >
       <Text
@@ -495,6 +514,8 @@ function SelectAction({
 
 export interface MultiSelectBarProps {
   count: number;
+  disabled?: boolean | undefined;
+  copyDisabled?: boolean | undefined;
   onCopyToToday: () => void;
   onMove: () => void;
   onDelete: () => void;
@@ -505,21 +526,24 @@ export interface MultiSelectBarProps {
 /** Floating pill bar that takes over from bottom navigation during selection. */
 export function MultiSelectBar({
   count,
+  disabled = false,
+  copyDisabled = false,
   onCopyToToday,
   onMove,
   onDelete,
   onDone,
   style,
 }: MultiSelectBarProps) {
+  const empty = count === 0;
   return (
     <View style={[styles.selectBar, style]}>
       <Text accessibilityLiveRegion="polite" style={[styles.selectCount, fontFace('bold')]}>
         {`${count} selected`}
       </Text>
       <View style={styles.selectActions}>
-        <SelectAction label="Copy to Today" onPress={onCopyToToday} />
-        <SelectAction label="Move" onPress={onMove} />
-        <SelectAction label="Delete" onPress={onDelete} tone="danger" />
+        <SelectAction label="Copy to Today" disabled={disabled || copyDisabled || empty} onPress={onCopyToToday} />
+        <SelectAction label="Move" disabled={disabled || empty} onPress={onMove} />
+        <SelectAction label="Delete" disabled={disabled || empty} onPress={onDelete} tone="danger" />
         <Pressable accessibilityRole="button" accessibilityLabel="Done selecting" onPress={onDone} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}><DoopIcon name="close" size={16} color={colors.muted} /></Pressable>
       </View>
     </View>

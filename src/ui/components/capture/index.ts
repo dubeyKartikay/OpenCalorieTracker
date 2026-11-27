@@ -43,7 +43,7 @@ export { consumePendingMealPhoto, setPendingMealPhoto } from './pendingMealPhoto
 export type { PendingMealPhoto } from './pendingMealPhoto';
 export { mergeDictatedTranscript, useVoiceDictation, VoiceDock, VoiceMicRing } from './VoiceDock';
 export type { UseVoiceDictationOptions, VoiceDictationController, VoiceDockProps, VoiceMicRingProps } from './VoiceDock';
-export { LocalFoodSearchPager, MealComposerField, MealComposerFooter, useMealInlineComposer, useScrollNodeIntoView, useScrollToMealComposer } from './MealInlineComposer';
+export { LocalFoodSearchPager, MealComposerField, MealComposerFooter, useMealInlineComposer, useScrollAboveKeyboard, useScrollNodeIntoView, useScrollToMealComposer } from './MealInlineComposer';
 export type { LocalFoodSearchPagerProps, MealInlineComposerController, UseMealInlineComposerOptions } from './MealInlineComposer';
 export { isDraftForMeal, MealActiveDraftBlock, MealDraftAuxBlock } from './MealDraftSection';
 export type { MealActiveDraftBlockProps, MealDraftAuxBlockProps } from './MealDraftSection';

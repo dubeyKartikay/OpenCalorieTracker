@@ -37,6 +37,7 @@ export type DoopIconName =
   | 'plus'
   | 'minus'
   | 'check'
+  | 'edit'
   | 'undo'
   | 'close'
   | 'back'
@@ -50,6 +51,7 @@ export type DoopIconName =
   | 'key'
   | 'external'
   | 'link'
+  | 'lock'
   | 'grip'
   | 'trash'
   | 'plate'
@@ -272,6 +274,12 @@ export function DoopIcon({
       {name === 'plus' && <Path d="M12 5v14M5 12h14" {...common} />}
       {name === 'minus' && <Path d="M5 12h14" {...common} />}
       {name === 'check' && <Path d="m5 12.5 4.5 4.5L19 7.5" {...common} />}
+      {name === 'edit' && (
+        <>
+          <Path d="M4.5 19.5h3.8L18.8 9a2.1 2.1 0 0 0-3-3L5.3 16.5l-.8 3Z" {...common} strokeWidth={strokeWidth ?? 1.65} />
+          <Path d="m13.8 8 2.2 2.2" {...common} strokeWidth={strokeWidth ?? 1.65} />
+        </>
+      )}
       {name === 'undo' && (
         <>
           <Path d="M4.4 10.2h9.2a5.6 5.6 0 1 1 0 11.2H8" {...common} strokeWidth={strokeWidth ?? 1.9} />
@@ -327,6 +335,12 @@ export function DoopIcon({
         <>
           <Path d="M10 13a4 4 0 0 0 5.66 0l2.83-2.83a4 4 0 0 0-5.66-5.66L11.3 6" {...common} strokeWidth={strokeWidth ?? 1.7} />
           <Path d="M14 11a4 4 0 0 0-5.66 0L5.5 13.83a4 4 0 1 0 5.66 5.66L12.7 18" {...common} strokeWidth={strokeWidth ?? 1.7} />
+        </>
+      )}
+      {name === 'lock' && (
+        <>
+          <Rect x={5.5} y={11} width={13} height={9} rx={2.5} {...common} strokeWidth={strokeWidth ?? 1.65} />
+          <Path d="M8.5 11V8.2a3.5 3.5 0 0 1 7 0V11" {...common} strokeWidth={strokeWidth ?? 1.65} />
         </>
       )}
       {name === 'grip' && (

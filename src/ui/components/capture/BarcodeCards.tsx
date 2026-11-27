@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { hapticSelection } from '../../haptics';
 import { colors, fontFace, macroColors, radius, tabularNums } from '../../tokens';
 import { InlineKeypad, LearnedPortionChips, MealDestinationPills } from '../doop';
 import { DoopIcon } from '../DoopIcons';
@@ -11,7 +12,7 @@ export type { CustomFoodBasis };
 export interface SegmentedSwitchOption { value: string; label: string }
 export interface SegmentedSwitchProps { options: SegmentedSwitchOption[]; value: string; onChange: (value: string) => void; disabled?: boolean | undefined }
 export function SegmentedSwitch({ options, value, onChange, disabled = false }: SegmentedSwitchProps) {
-  return <View style={styles.switchTrack} accessibilityRole="radiogroup">{options.map(option => <Pressable key={option.value} disabled={disabled} accessibilityRole="radio" accessibilityState={{ checked: option.value === value, disabled }} onPress={() => onChange(option.value)} style={[styles.switchPill, option.value === value && { backgroundColor: colors.accent }, disabled && { opacity: 0.5 }]}><Text numberOfLines={1} style={[styles.switchText, option.value === value && { color: colors.onAccent }]}>{option.label}</Text></Pressable>)}</View>;
+  return <View style={styles.switchTrack} accessibilityRole="radiogroup">{options.map(option => <Pressable key={option.value} disabled={disabled} accessibilityRole="radio" accessibilityState={{ checked: option.value === value, disabled }} onPress={() => { if (option.value !== value) hapticSelection(); onChange(option.value); }} style={[styles.switchPill, option.value === value && { backgroundColor: colors.accent }, disabled && { opacity: 0.5 }]}><Text numberOfLines={1} style={[styles.switchText, option.value === value && { color: colors.onAccent }]}>{option.label}</Text></Pressable>)}</View>;
 }
 export const BarSeg = SegmentedSwitch;
 export type BarSegProps = SegmentedSwitchProps;

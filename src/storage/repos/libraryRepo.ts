@@ -88,6 +88,27 @@ export class LibraryRepo {
     await this.db.runAsync('INSERT INTO user_food_units VALUES(?,?,?,?) ON CONFLICT(food_key,label) DO UPDATE SET grams=excluded.grams,ml=excluded.ml', key, unit.label, unit.grams, unit.ml);
   }
   async listUserFoodUnits(key: string): Promise<FoodUnit[]> { return this.db.getAllAsync<FoodUnit>('SELECT label,grams,ml FROM user_food_units WHERE food_key=? ORDER BY label', key); }
+  async listUserFoodUnitsForKeys(keys: readonly string[]): Promise<Map<string, FoodUnit[]>> {
+    const uniqueKeys = [...new Set(keys)];
+    const map = new Map<string, FoodUnit[]>();
+    if (uniqueKeys.length === 0) return map;
+    const chunkSize = 200;
+    for (let offset = 0; offset < uniqueKeys.length; offset += chunkSize) {
+      const chunk = uniqueKeys.slice(offset, offset + chunkSize);
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = await this.db.getAllAsync<{ food_key: string; label: string; grams: number | null; ml: number | null }>(
+        `SELECT food_key,label,grams,ml FROM user_food_units WHERE food_key IN (${placeholders}) ORDER BY label`,
+        ...chunk,
+      );
+      for (const row of rows) {
+        const unit: FoodUnit = { label: row.label, grams: row.grams, ml: row.ml };
+        const list = map.get(row.food_key);
+        if (list) list.push(unit);
+        else map.set(row.food_key, [unit]);
+      }
+    }
+    return map;
+  }
   async deleteUserFoodUnit(key: string, label: string): Promise<void> { await this.db.runAsync('DELETE FROM user_food_units WHERE food_key=? AND label=?', key, label); }
   async recordLearnedPortion(key: string, input: Quantity, at = nowIso()): Promise<void> {
     const quantity = quantitySchema.parse(input);
@@ -95,6 +116,7 @@ export class LibraryRepo {
     await this.db.runAsync('INSERT INTO learned_portions(food_key,unit,amount,last_used_at) VALUES(?,?,?,?) ON CONFLICT(food_key,unit,amount) DO UPDATE SET use_count=use_count+1,last_used_at=excluded.last_used_at', key, quantity.unit, quantity.amount, at);
   }
   async listLearnedPortions(key: string): Promise<LearnedPortion[]> { return this.db.getAllAsync<LearnedPortion>('SELECT * FROM learned_portions WHERE food_key=? ORDER BY use_count DESC,last_used_at DESC,unit,amount', key); }
+  async listAllLearnedPortions(): Promise<LearnedPortion[]> { return this.db.getAllAsync<LearnedPortion>('SELECT * FROM learned_portions ORDER BY use_count DESC,last_used_at DESC,unit,amount'); }
   async deleteLearnedPortion(key: string, quantity: Quantity): Promise<void> { await this.db.runAsync('DELETE FROM learned_portions WHERE food_key=? AND unit=? AND amount=?', key, quantity.unit, quantity.amount); }
 }
 export const createLibraryRepo = (db: SqlDatabase) => new LibraryRepo(db);

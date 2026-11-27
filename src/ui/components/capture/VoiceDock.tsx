@@ -15,7 +15,6 @@ import Animated, {
   withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
-import * as Haptics from 'expo-haptics';
 import {
   cancelNativeSpeech,
   getNativeSpeechCapability,
@@ -26,6 +25,7 @@ import {
   stopNativeSpeech,
   subscribeNativeSpeech,
 } from '../../../../modules/oct-speech';
+import { hapticLight, hapticSelection } from '../../haptics';
 import { colors, SCREEN_GUTTER } from '../../tokens';
 
 const BAR_COUNT = 24;
@@ -99,8 +99,9 @@ export function useVoiceDictation({ onText, onError }: UseVoiceDictationOptions)
   const onTextRef = useRef(onText);
   const onErrorRef = useRef(onError);
   const prefixRef = useRef('');
+  const attemptIdRef = useRef(0);
   const sessionIdRef = useRef(0);
-  const stoppingRef = useRef(false);
+  const stoppingAttemptRef = useRef<number | null>(null);
   const webRecognitionRef = useRef<WebSpeechRecognitionInstance | null>(null);
 
   useEffect(() => {
@@ -113,30 +114,37 @@ export function useVoiceDictation({ onText, onError }: UseVoiceDictationOptions)
     return subscribeNativeSpeech({
       onState: event => {
         if (event.sessionId !== sessionIdRef.current) return;
+        const isStopping = stoppingAttemptRef.current === attemptIdRef.current;
         if (event.state === 'ended') {
-          stoppingRef.current = false;
+          if (isStopping) sessionIdRef.current = 0;
+          stoppingAttemptRef.current = null;
           setStatus('idle');
           setLevel(0);
-        } else if (!stoppingRef.current) {
+        } else if (!isStopping) {
           setStatus(event.state);
         }
       },
       onVolume: event => {
-        if (event.sessionId !== sessionIdRef.current || stoppingRef.current) return;
+        if (event.sessionId !== sessionIdRef.current || stoppingAttemptRef.current === attemptIdRef.current) return;
         setLevel(Math.max(0, Math.min(1, event.level)));
       },
       onPartial: event => {
-        if (event.sessionId !== sessionIdRef.current) return;
+        if (event.sessionId !== sessionIdRef.current || stoppingAttemptRef.current === attemptIdRef.current) return;
         onTextRef.current(mergeDictatedTranscript(prefixRef.current, event.text));
       },
       onResult: event => {
         if (event.sessionId !== sessionIdRef.current) return;
         onTextRef.current(mergeDictatedTranscript(prefixRef.current, event.text));
+        if (stoppingAttemptRef.current === attemptIdRef.current) {
+          sessionIdRef.current = 0;
+          stoppingAttemptRef.current = null;
+        }
       },
       onError: event => {
         if (event.sessionId !== sessionIdRef.current) return;
-        const wasStopping = stoppingRef.current;
-        stoppingRef.current = false;
+        const wasStopping = stoppingAttemptRef.current === attemptIdRef.current;
+        stoppingAttemptRef.current = null;
+        sessionIdRef.current = 0;
         setStatus('idle');
         setLevel(0);
         if (!wasStopping && event.message) {
@@ -147,38 +155,54 @@ export function useVoiceDictation({ onText, onError }: UseVoiceDictationOptions)
   }, []);
 
   const cancel = useCallback(() => {
+    const activeSession = sessionIdRef.current;
+    attemptIdRef.current += 1;
     sessionIdRef.current = 0;
-    stoppingRef.current = false;
+    stoppingAttemptRef.current = null;
     setStatus('idle');
     setLevel(0);
     if (webRecognitionRef.current) {
+      const prior = webRecognitionRef.current;
+      webRecognitionRef.current = null;
+      prior.onstart = null;
+      prior.onend = null;
+      prior.onerror = null;
+      prior.onresult = null;
       try {
-        webRecognitionRef.current.abort();
+        prior.abort();
       } catch {
         // Ignore browser abort errors.
       }
-      webRecognitionRef.current = null;
     }
-    if (isNativeSpeechLinked()) {
-      void cancelNativeSpeech();
+    if (isNativeSpeechLinked() && activeSession > 0) {
+      void cancelNativeSpeech(activeSession);
     }
   }, []);
 
   const stop = useCallback(() => {
-    stoppingRef.current = true;
+    const activeAttempt = attemptIdRef.current;
+    const activeSession = sessionIdRef.current;
+    stoppingAttemptRef.current = activeAttempt;
     setStatus('idle');
     setLevel(0);
     if (webRecognitionRef.current) {
+      const activeRecognition = webRecognitionRef.current;
+      webRecognitionRef.current = null;
       try {
-        webRecognitionRef.current.stop();
+        activeRecognition.stop();
       } catch {
         // Ignore browser stop errors.
       }
-      webRecognitionRef.current = null;
       return;
     }
     if (isNativeSpeechLinked()) {
-      void stopNativeSpeech();
+      if (activeSession === 0) {
+        // Permission or startup still pending — invalidate attempt so start() cancels only its own sessionId on resolve.
+        attemptIdRef.current += 1;
+        stoppingAttemptRef.current = null;
+      } else {
+        void stopNativeSpeech(activeSession);
+      }
     }
   }, []);
 
@@ -186,8 +210,10 @@ export function useVoiceDictation({ onText, onError }: UseVoiceDictationOptions)
 
   const start = useCallback(async (initialText = ''): Promise<boolean> => {
     Keyboard.dismiss();
+    const myAttempt = ++attemptIdRef.current;
+    sessionIdRef.current = 0;
+    stoppingAttemptRef.current = null;
     prefixRef.current = initialText;
-    stoppingRef.current = false;
 
     if (Platform.OS === 'web') {
       const Ctor = getWebSpeechRecognitionCtor();
@@ -196,8 +222,14 @@ export function useVoiceDictation({ onText, onError }: UseVoiceDictationOptions)
         return false;
       }
       if (webRecognitionRef.current) {
+        const prior = webRecognitionRef.current;
+        webRecognitionRef.current = null;
+        prior.onstart = null;
+        prior.onend = null;
+        prior.onerror = null;
+        prior.onresult = null;
         try {
-          webRecognitionRef.current.abort();
+          prior.abort();
         } catch {
           // Ignore prior session cleanup errors.
         }
@@ -205,16 +237,22 @@ export function useVoiceDictation({ onText, onError }: UseVoiceDictationOptions)
       const recognition = new Ctor();
       recognition.continuous = false;
       recognition.interimResults = true;
-      recognition.onstart = () => setStatus('listening');
+      recognition.onstart = () => {
+        if (attemptIdRef.current !== myAttempt || webRecognitionRef.current !== recognition) return;
+        setStatus('listening');
+      };
       recognition.onend = () => {
         if (webRecognitionRef.current === recognition) webRecognitionRef.current = null;
-        stoppingRef.current = false;
+        if (attemptIdRef.current !== myAttempt) return;
+        stoppingAttemptRef.current = null;
         setStatus('idle');
         setLevel(0);
       };
       recognition.onerror = event => {
-        const wasStopping = stoppingRef.current;
-        stoppingRef.current = false;
+        if (webRecognitionRef.current === recognition) webRecognitionRef.current = null;
+        if (attemptIdRef.current !== myAttempt) return;
+        const wasStopping = stoppingAttemptRef.current === myAttempt;
+        stoppingAttemptRef.current = null;
         setStatus('idle');
         setLevel(0);
         if (!wasStopping && event.error !== 'aborted') {
@@ -226,13 +264,24 @@ export function useVoiceDictation({ onText, onError }: UseVoiceDictationOptions)
         }
       };
       recognition.onresult = event => {
+        if (attemptIdRef.current !== myAttempt) return;
+        const isStopping = stoppingAttemptRef.current === myAttempt;
         const parts: string[] = [];
+        let hasFinal = false;
         for (let i = 0; i < event.results.length; i += 1) {
-          const transcript = event.results[i]?.[0]?.transcript;
+          const item = event.results[i];
+          const transcript = item?.[0]?.transcript;
           if (transcript) parts.push(transcript);
+          if (item?.isFinal) hasFinal = true;
         }
+        if (isStopping && !hasFinal) return;
         onTextRef.current(mergeDictatedTranscript(prefixRef.current, parts.join(' ')));
-        setLevel(0.65);
+        if (isStopping) {
+          stoppingAttemptRef.current = null;
+          attemptIdRef.current += 1;
+        } else {
+          setLevel(0.65);
+        }
       };
       webRecognitionRef.current = recognition;
       setStatus('starting');
@@ -240,8 +289,8 @@ export function useVoiceDictation({ onText, onError }: UseVoiceDictationOptions)
         recognition.start();
         return true;
       } catch {
-        webRecognitionRef.current = null;
-        setStatus('idle');
+        if (webRecognitionRef.current === recognition) webRecognitionRef.current = null;
+        if (attemptIdRef.current === myAttempt) setStatus('idle');
         onErrorRef.current?.('Could not start browser voice dictation.');
         return false;
       }
@@ -259,8 +308,10 @@ export function useVoiceDictation({ onText, onError }: UseVoiceDictationOptions)
     }
 
     let granted = await getNativeSpeechPermission();
+    if (attemptIdRef.current !== myAttempt) return false;
     if (!granted) {
       granted = await requestNativeSpeechPermission();
+      if (attemptIdRef.current !== myAttempt) return false;
     }
     if (!granted) {
       onErrorRef.current?.('Microphone permission is required for voice dictation.');
@@ -271,12 +322,18 @@ export function useVoiceDictation({ onText, onError }: UseVoiceDictationOptions)
     setLevel(0);
     try {
       const sessionId = await startNativeSpeech();
+      if (attemptIdRef.current !== myAttempt) {
+        void cancelNativeSpeech(sessionId);
+        return false;
+      }
       sessionIdRef.current = sessionId;
       return true;
     } catch (error) {
-      setStatus('idle');
-      setLevel(0);
-      onErrorRef.current?.(error instanceof Error ? error.message : 'Could not start voice dictation.');
+      if (attemptIdRef.current === myAttempt) {
+        setStatus('idle');
+        setLevel(0);
+        onErrorRef.current?.(error instanceof Error ? error.message : 'Could not start voice dictation.');
+      }
       return false;
     }
   }, []);
@@ -463,7 +520,7 @@ export function VoiceDock({
 
     if (visible) {
       if (changed) {
-        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        hapticLight();
       }
       if (reducedMotion) {
         openProgress.set(1);
@@ -476,7 +533,7 @@ export function VoiceDock({
       }
     } else if (rendered) {
       if (changed) {
-        void Haptics.selectionAsync().catch(() => {});
+        hapticSelection();
       }
       if (reducedMotion) {
         cancelAnimation(phase);

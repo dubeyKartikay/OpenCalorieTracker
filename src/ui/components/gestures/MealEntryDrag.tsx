@@ -23,7 +23,7 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
-import * as Haptics from 'expo-haptics';
+import { hapticMedium, hapticSelection, hapticSuccess } from '../../haptics';
 import type { DiaryEntrySnapshot } from '../../../domain';
 import { colors, fontFace, radius, tabularNums } from '../../tokens';
 import { DoopIcon, inferFoodGlyph } from '../DoopIcons';
@@ -170,7 +170,7 @@ export function MealEntryDragProvider({
           if (hoveredMealRef.current !== nextHover) {
             hoveredMealRef.current = nextHover;
             setHoveredMeal(nextHover);
-            if (nextHover) void Haptics.selectionAsync().catch(() => {});
+            if (nextHover) hapticSelection();
           }
         }
       });
@@ -258,7 +258,7 @@ export function MealEntryDragProvider({
     setHoveredMeal(null);
     setActiveDrag(initialDrag);
     onDraggingChangeRef.current?.(true);
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    hapticMedium();
 
     measureAllZones(generation);
     startAutoScroll(generation);
@@ -312,7 +312,7 @@ export function MealEntryDragProvider({
       hoveredMealRef.current = nextHover;
       setHoveredMeal(nextHover);
       if (nextHover) {
-        void Haptics.selectionAsync().catch(() => {});
+        hapticSelection();
         if (!reducedMotion) {
           ghostScaleSV.set(withSpring(1.05, { damping: 20, stiffness: 360, mass: 0.65 }));
         }
@@ -346,7 +346,7 @@ export function MealEntryDragProvider({
     clearDrag();
 
     if (targetMeal) {
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      hapticSuccess();
       setRecentlyDroppedMeal(targetMeal);
       if (dropPulseTimerRef.current) clearTimeout(dropPulseTimerRef.current);
       dropPulseTimerRef.current = setTimeout(() => {

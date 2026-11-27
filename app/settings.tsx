@@ -10,12 +10,13 @@ import { SegmentedSwitch } from '../src/ui/components/capture';
 import { NumericEditor } from '../src/ui/components/doop';
 import { DoopIcon } from '../src/ui/components/DoopIcons';
 import { BackHeader, Badge, Button, DottedValue, energy, energyValue, ErrorMessage, goBackOrReplace, Input, Label, Muted, number, Page, SectionRule, toCanonicalKcal, ui } from '../src/ui/components/primitives';
+import { hapticSelection, hapticSuccess } from '../src/ui/haptics';
 import { colors, fontFace, radius, tabularNums } from '../src/ui/tokens';
 import { NumericField } from '../src/ui/components/recipes/RecipeEditor';
 
 function Card({ children }: PropsWithChildren) { return <View style={{ gap: 10 }}>{children}</View>; }
 function Pill({ label, selected = false, filled = false, disabled = false, onPress }: { label: string; selected?: boolean; filled?: boolean; disabled?: boolean; onPress: () => void }) {
-  return <Pressable accessibilityRole="button" accessibilityState={{ selected, disabled }} disabled={disabled} onPress={onPress}
+  return <Pressable accessibilityRole="button" accessibilityState={{ selected, disabled }} disabled={disabled} onPress={() => { if (!selected) hapticSelection(); onPress(); }}
     style={[styles.pill, selected && styles.pillSelected, selected && filled && styles.pillFilled, disabled && { opacity: 0.45 }]}>
     <Text style={[styles.pillText, selected && { color: filled ? colors.onAccent : colors.accent }]}>{label}</Text>
   </Pressable>;
@@ -77,7 +78,7 @@ function DailyTargets({ goal, preferences }: { goal: GoalPeriod | null; preferen
   };
   return <View>
     <Text style={styles.sectionLabel}>Goal</Text><View style={styles.goalTrack}>{(['lose', 'maintain', 'gain', 'observe'] as const).map(value => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: mode === value }}
-      onPress={() => { setMode(value); setDirty(true); }} style={[styles.goalPill, mode === value && styles.pillSelected]}><Text style={[styles.pillText, mode === value && { color: colors.accent }]}>{value[0]!.toUpperCase() + value.slice(1)}</Text></Pressable>)}</View>
+      onPress={() => { if (mode !== value) hapticSelection(); setMode(value); setDirty(true); }} style={[styles.goalPill, mode === value && styles.pillSelected]}><Text style={[styles.pillText, mode === value && { color: colors.accent }]}>{value[0]!.toUpperCase() + value.slice(1)}</Text></Pressable>)}</View>
     {(mode === 'lose' || mode === 'gain') && <View style={[ui.row, { gap: 6, marginTop: 10 }]}>{[0.25, 0.4, 0.5].map(rate => <Pill key={rate} label={String(rate)} selected={inputs.rate === rate} onPress={() => setInputs(old => ({ ...old, rate }))} />)}<Text style={styles.note}>kg/wk</Text></View>}
     <View style={{ marginTop: 28 }}><Text style={styles.sectionLabel}>Daily targets</Text>
       <View style={styles.targetRow}><Text style={styles.label}>Calories</Text><DottedValue size={16} value={mode === 'observe' ? 'Off' : number(fields.target_kcal ? energyValue(Number(fields.target_kcal), preferences.energyUnit) : null)} unit={mode === 'observe' ? '' : preferences.energyUnit} onPress={() => { if (mode !== 'observe') edit('target_kcal'); }} /></View>
@@ -129,7 +130,7 @@ function DailyTargets({ goal, preferences }: { goal: GoalPeriod | null; preferen
           />
         </View>
       )}
-      {dirty && <><Text style={styles.note}>Effective from {localDate()}. Earlier days retain their targets.</Text><Button label="Save targets" primary disabled={action.busy} onPress={() => void action.run(async () => { if (mode !== 'observe' && !fields.target_kcal.trim()) throw new Error('Enter an energy target or choose Observe'); await controller.saveGoal(makeGoal()); setDirty(false); })} /></>}
+      {dirty && <><Text style={styles.note}>Effective from {localDate()}. Earlier days retain their targets.</Text><Button label="Save targets" primary disabled={action.busy} onPress={() => void action.run(async () => { if (mode !== 'observe' && !fields.target_kcal.trim()) throw new Error('Enter an energy target or choose Observe'); await controller.saveGoal(makeGoal()); hapticSuccess(); setDirty(false); })} /></>}
       <ErrorMessage message={action.error} />
     </View>
   </View>;

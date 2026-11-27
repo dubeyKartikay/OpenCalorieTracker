@@ -257,4 +257,48 @@ describe('registry barcode tiers, pack controls and personal units', () => {
     expect(sumNutrients([snapshot]).unknownCount.fiber_g).toBe(1);
     expect(sumNutrients([snapshot]).nutrients?.fiber_g).toBe(1);
   });
+  it('supports derived per-portion and external global units in composite recipe preview', async () => {
+    const user = await scope.user();
+    const library = new LibraryRepo(user);
+    const ingredients = [{ food: food(), quantity: { amount: 200, unit: 'g' } }];
+    const recipe = { id: generateId(), name: 'Dal batch', version: 1, ingredients, cooked_weight_g: 300, servings_count: 2, notes: null };
+    await library.upsertRecipe(recipe);
+    const adapter = new UserLibraryAdapter(user);
+    const id = `recipe:${recipe.id}`;
+    const recipeFood = (await adapter.getById(id))!;
+    expect(recipeFood.units).toEqual([{ label: 'portion', grams: 150, ml: null }]);
+    expect((await adapter.getNutritionForQuantity(id, { amount: 1, unit: 'portion' }))?.nutrients?.kcal).toBe(130);
+    const withGlobalUnit = await adapter.getNutritionForQuantity(
+      id,
+      { amount: 1, unit: 'katori' },
+      [...recipeFood.units, { label: 'katori', grams: 75, ml: null }],
+    );
+    expect(withGlobalUnit?.nutrients?.kcal).toBe(65);
+  });
+  it('keeps derived recipe portion authoritative after recipe edits and preserves food-specific density order', async () => {
+    const user = await scope.user();
+    const library = new LibraryRepo(user);
+    const ingredients = [{ food: food({ nutrients: { ...food().nutrients, kcal: 100 } }), quantity: { amount: 400, unit: 'g' } }];
+    const recipeId = generateId();
+    const id = `recipe:${recipeId}`;
+    await library.upsertRecipe({ id: recipeId, name: 'Stew', version: 1, ingredients, cooked_weight_g: 400, servings_count: 2, notes: null });
+    // Even if a stale personal unit named `portion` exists, derived portion tracks recipe edits.
+    await library.upsertUserFoodUnit(id, { label: 'portion', grams: 200, ml: null });
+    await library.upsertRecipe({ id: recipeId, name: 'Stew', version: 1, ingredients, cooked_weight_g: 400, servings_count: 4, notes: null });
+    const adapter = new UserLibraryAdapter(user);
+    const staleCardUnits = [{ label: 'portion', grams: 200, ml: null }];
+    const resolved = await adapter.resolveForQuantity(id, { amount: 1, unit: 'portion' }, staleCardUnits);
+    expect(resolved?.food.source_version).toBe('2');
+    expect(resolved?.aggregate.nutrients?.kcal).toBe(100);
+
+    // Food-specific density takes precedence over fallback global density.
+    await library.upsertUserFoodUnit(id, { label: 'ladle', grams: 100, ml: 100 });
+    const globalFallback = [{ label: 'global-cup', grams: 200, ml: 100 }];
+    const freshFood = (await adapter.getById(id))!;
+    const mergedForUi = { ...freshFood, units: [...freshFood.units, ...globalFallback] };
+    const uiKcal = calculateNutrition(mergedForUi, { amount: 100, unit: 'ml' }).kcal;
+    const adapterKcal = (await adapter.getNutritionForQuantity(id, { amount: 100, unit: 'ml' }, globalFallback))?.nutrients?.kcal;
+    expect(uiKcal).toBe(100);
+    expect(adapterKcal).toBe(uiKcal);
+  });
 });

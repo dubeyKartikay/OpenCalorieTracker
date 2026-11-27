@@ -26,6 +26,20 @@ export const toCanonicalKcal = (value: number, unit: 'kcal' | 'kJ' = 'kcal') =>
 export const energy = (kcal: number | null | undefined, unit: 'kcal' | 'kJ' = 'kcal') =>
   `${number(energyValue(kcal, unit))} ${unit}`;
 
+/** Macro calorie percentage split shared by Food Detail and Recipe screens. */
+export function macroShare(proteinG: number, carbsG: number, fatG: number): { protein: number; carbs: number; fat: number } {
+  const p = Math.max(0, proteinG) * 4;
+  const c = Math.max(0, carbsG) * 4;
+  const f = Math.max(0, fatG) * 9;
+  const total = p + c + f;
+  if (total <= 0) return { protein: 0, carbs: 0, fat: 0 };
+  return {
+    protein: Math.round((p / total) * 100),
+    carbs: Math.round((c / total) * 100),
+    fat: Math.round((f / total) * 100),
+  };
+}
+
 const parseCalendarDate = (value: string) =>
   /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T12:00:00`) : new Date(value);
 

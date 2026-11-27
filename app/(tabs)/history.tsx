@@ -13,6 +13,7 @@ import { isDraftForMeal, MealActiveDraftBlock, MealComposerField, MealComposerFo
 import { DraggableEntryRow, MealEntryDragProvider, MealHoldFan, useMealEntryDrag } from '../../src/ui/components/gestures';
 import { DoopIcon } from '../../src/ui/components/DoopIcons';
 import { Button, energyValue, ErrorMessage, Muted, NoticePill, number, Page, ui, useTimedNotice } from '../../src/ui/components/primitives';
+import { hapticLight, hapticSelection, hapticSuccess } from '../../src/ui/haptics';
 import { colors, fontFace, macroColors, radius, tabularNums, TwoPane } from '../../src/ui/tokens';
 
 const entryTime = (entry: DiaryEntrySnapshot) => {
@@ -59,7 +60,8 @@ function HistoryDay({ initialDate }: { initialDate: string }) {
   const action = useAction();
 
   const today = localDate();
-  const activeDay = result.value ?? (date === today ? todayDiary.value : undefined);
+  const isToday = date === today;
+  const activeDay = result.value ?? (isToday ? todayDiary.value : undefined);
   const entries = activeDay?.day?.entries.filter(entry => entry.draft_state === 'confirmed') ?? [];
   const configuredMeals = preferences.value?.mealSections ?? [...MEALS];
   const unit = preferences.value?.energyUnit ?? 'kcal';
@@ -114,9 +116,17 @@ function HistoryDay({ initialDate }: { initialDate: string }) {
   const calendarSelect = (next: string) => {
     if (action.busy) return;
     if (calendarIntent === 'move') {
+      if (next === date) {
+        closeMenu();
+        return;
+      }
       const entry = entries.find(item => item.id === expanded);
       if (entry) moveEntry(entry, next);
     } else if (calendarIntent === 'copy' && copyMeal) {
+      if (next === date) {
+        closeMenu();
+        return;
+      }
       void action.run(async () => { await controller.copyMeal(date, copyMeal, next, copyMeal); closeMenu(); });
     } else chooseDate(next);
   };
@@ -124,9 +134,13 @@ function HistoryDay({ initialDate }: { initialDate: string }) {
   const commitUsual = (suggestion: TodaySuggestion, meal: string) => void action.run(async () => {
     if (suggestion.kind === 'saved_meal') await controller.logSavedMeal(suggestion.id, meal, date, generateId());
     else await controller.confirm({ food: suggestion.food, quantity: defaultQuantity(suggestion.food), meal, date, idempotencyKey: generateId() });
+    hapticSuccess();
   });
 
-  const toggleEntry = (id: string) => setSelected(values => values.includes(id) ? values.filter(value => value !== id) : [...values, id]);
+  const toggleEntry = (id: string) => {
+    hapticSelection();
+    setSelected(values => values.includes(id) ? values.filter(value => value !== id) : [...values, id]);
+  };
   const activeEntry = entries.find(entry => entry.id === expanded);
   const activeMeal = menu?.startsWith('meal:') ? menu.slice(5) : null;
   const mealEntries = activeMeal ? entries.filter(entry => entry.meal === activeMeal) : [];
@@ -160,8 +174,15 @@ function HistoryDay({ initialDate }: { initialDate: string }) {
       onScroll={event => { scrollOffsetRef.current = event.nativeEvent.contentOffset.y; }}
       footer={<View style={{ gap: 8 }}>
         <RevealPanel visible={selecting} direction="up">
-          <MultiSelectBar count={selected.length} onCopyToToday={() => { if (selected.length) void action.run(async () => { await controller.copyEntries(selected, today); clearSelection(); }); }} onMove={() => { if (selected.length) setMoving(value => !value); }}
-            onDelete={() => { if (selected.length) void action.run(async () => { await controller.deleteEntries(selected); clearSelection(); }); }} onDone={clearSelection} />
+          <MultiSelectBar
+            count={selected.length}
+            disabled={action.busy}
+            copyDisabled={isToday}
+            onCopyToToday={() => { if (selected.length && !isToday) void action.run(async () => { await controller.copyEntries(selected, today); clearSelection(); }); }}
+            onMove={() => { if (selected.length) setMoving(value => !value); }}
+            onDelete={() => { if (selected.length) void action.run(async () => { await controller.deleteEntries(selected); clearSelection(); }); }}
+            onDone={clearSelection}
+          />
         </RevealPanel>
         <MealComposerFooter composer={composer} />
       </View>}
@@ -259,13 +280,13 @@ function HistoryDay({ initialDate }: { initialDate: string }) {
       <AnchoredPopover anchor={menu ? anchor : null} onClose={closeMenu} width={menu === 'calendar' ? 350 : menu === 'entry' ? 304 : 214} label={menu === 'calendar' ? 'Choose date' : menu === 'entry' ? 'Edit entry' : menu === 'day' ? 'Day actions' : 'Meal actions'} surface={menu === 'calendar'}>
         {menu === 'calendar' ? <RailMonthSheet selectedDate={date} maxDate={today} days={days} loadMonth={loadCalendar} onSelectDate={calendarSelect} onClose={closeMenu} /> : null}
         {menu === 'day' ? <View style={styles.menu}>
-          <Pressable disabled={action.busy || !entries.length} accessibilityRole="button" accessibilityLabel="Copy day to Today" onPress={() => void action.run(async () => { await controller.copyEntries(entries.map(entry => entry.id), today); closeMenu(); })} style={styles.menuRow}><DoopIcon name="today" size={16} color={colors.muted} /><Text style={styles.menuText}>Copy day to Today</Text></Pressable>
-          <Pressable disabled={action.busy || !entries.length} accessibilityRole="button" accessibilityLabel="Select entries" onPress={() => { closeMenu(); setExpanded(null); setSelecting(true); setSelected([]); }} style={styles.menuRow}><DoopIcon name="check" size={16} color={colors.muted} /><Text style={styles.menuText}>Select entries</Text></Pressable>
+          <Pressable disabled={action.busy || isToday || !entries.length} accessibilityRole="button" accessibilityLabel="Copy day to Today" accessibilityState={{ disabled: action.busy || isToday || !entries.length }} onPress={() => void action.run(async () => { await controller.copyEntries(entries.map(entry => entry.id), today); hapticSuccess(); closeMenu(); })} style={[styles.menuRow, (action.busy || isToday || !entries.length) && styles.menuRowDisabled]}><DoopIcon name="today" size={16} color={colors.muted} /><Text style={styles.menuText}>Copy day to Today</Text></Pressable>
+          <Pressable disabled={action.busy || !entries.length} accessibilityRole="button" accessibilityLabel="Select entries" accessibilityState={{ disabled: action.busy || !entries.length }} onPress={() => { hapticLight(); closeMenu(); setExpanded(null); setSelecting(true); setSelected([]); }} style={[styles.menuRow, (action.busy || !entries.length) && styles.menuRowDisabled]}><DoopIcon name="check" size={16} color={colors.muted} /><Text style={styles.menuText}>Select entries</Text></Pressable>
         </View> : null}
         {activeMeal ? <View style={styles.menu}>
-          <Pressable disabled={action.busy || !mealEntries.length} accessibilityRole="button" onPress={() => void action.run(async () => { await controller.copyMeal(date, activeMeal, today, activeMeal); closeMenu(); })} style={styles.menuRow}><DoopIcon name="today" size={16} color={colors.muted} /><Text style={styles.menuText}>Copy to Today</Text></Pressable>
-          <Pressable disabled={action.busy || !mealEntries.length} accessibilityRole="button" onPress={() => { setCalendarIntent('copy'); setCopyMeal(activeMeal); setMenu('calendar'); }} style={styles.menuRow}><DoopIcon name="today" size={16} color={colors.muted} /><Text style={styles.menuText}>Copy to…</Text><DoopIcon name="chevronDown" size={14} color={colors.muted} /></Pressable>
-          <Pressable disabled={action.busy || !mealEntries.length || savedMeal === activeMeal} accessibilityRole="button" onPress={() => void action.run(async () => { await controller.saveSavedMeal({ name: activeMeal, items: mealEntries.map(({ food, quantity }) => ({ food, quantity })) }); setSavedMeal(activeMeal); })} style={styles.menuRow}><DoopIcon name={savedMeal === activeMeal ? 'check' : 'pin'} size={16} color={savedMeal === activeMeal ? colors.success : colors.muted} /><Text style={styles.menuText}>{savedMeal === activeMeal ? 'Saved as meal' : 'Save as meal'}</Text></Pressable>
+          <Pressable disabled={action.busy || isToday || !mealEntries.length} accessibilityRole="button" accessibilityLabel="Copy to Today" accessibilityState={{ disabled: action.busy || isToday || !mealEntries.length }} onPress={() => void action.run(async () => { await controller.copyMeal(date, activeMeal, today, activeMeal); hapticSuccess(); closeMenu(); })} style={[styles.menuRow, (action.busy || isToday || !mealEntries.length) && styles.menuRowDisabled]}><DoopIcon name="today" size={16} color={colors.muted} /><Text style={styles.menuText}>Copy to Today</Text></Pressable>
+          <Pressable disabled={action.busy || !mealEntries.length} accessibilityRole="button" accessibilityLabel="Copy to another date" accessibilityState={{ disabled: action.busy || !mealEntries.length }} onPress={() => { hapticLight(); setCalendarIntent('copy'); setCopyMeal(activeMeal); setMenu('calendar'); }} style={[styles.menuRow, (action.busy || !mealEntries.length) && styles.menuRowDisabled]}><DoopIcon name="today" size={16} color={colors.muted} /><Text style={styles.menuText}>Copy to…</Text><DoopIcon name="chevronDown" size={14} color={colors.muted} /></Pressable>
+          <Pressable disabled={action.busy || !mealEntries.length || savedMeal === activeMeal} accessibilityRole="button" accessibilityLabel={savedMeal === activeMeal ? 'Saved as meal' : 'Save as meal'} accessibilityState={{ disabled: action.busy || !mealEntries.length || savedMeal === activeMeal }} onPress={() => void action.run(async () => { await controller.saveSavedMeal({ name: activeMeal, items: mealEntries.map(({ food, quantity }) => ({ food, quantity })) }); hapticSuccess(); setSavedMeal(activeMeal); })} style={[styles.menuRow, (action.busy || !mealEntries.length || savedMeal === activeMeal) && styles.menuRowDisabled]}><DoopIcon name={savedMeal === activeMeal ? 'check' : 'pin'} size={16} color={savedMeal === activeMeal ? colors.success : colors.muted} /><Text style={styles.menuText}>{savedMeal === activeMeal ? 'Saved as meal' : 'Save as meal'}</Text></Pressable>
         </View> : null}
         {menu === 'entry' && activeEntry ? (
           <EntryEditPopover
@@ -436,6 +457,7 @@ const styles = StyleSheet.create({
   dragGrip: { width: 14, alignItems: 'center', justifyContent: 'center', opacity: 0.6 },
   menu: { padding: 6 },
   menuRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8, borderRadius: radius.r12 },
+  menuRowDisabled: { opacity: 0.45 },
   menuText: { ...fontFace('semibold'), flexShrink: 1, color: colors.ink, fontSize: 13 },
   menuTitle: { ...fontFace('bold'), color: colors.ink, fontSize: 14 },
   movePanel: { gap: 10, marginBottom: 16 },

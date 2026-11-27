@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { ComponentRef, ReactNode } from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
+import { hapticLight, hapticSelection } from '../../haptics';
 import { colors, fontFace, tabularNums } from '../../tokens';
 import { DoopIcon } from '../DoopIcons';
 import { energy, formatShortDate } from '../primitives';
@@ -45,7 +46,7 @@ export interface RailTrendDayCellProps {
 export function RailTrendDayCell({ day, selected, onPress, disabled, energyUnit = 'kcal' }: RailTrendDayCellProps) {
   const label = dateObject(day.date).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
   return <Pressable accessibilityRole="button" accessibilityLabel={`${label}, ${day.completeness === 'none' ? 'nothing logged' : day.completeness}, ${energy(day.kcal, energyUnit)}`}
-    accessibilityState={{ selected, disabled: !!disabled }} disabled={disabled} onPress={onPress}
+    accessibilityState={{ selected, disabled: !!disabled }} disabled={disabled} onPress={() => { hapticSelection(); onPress(); }}
     style={({ pressed }) => [styles.cell, selected && styles.cellSelected, pressed && styles.pressed]}>
     <Text style={styles.initial}>{day.weekdayInitial}</Text>
     <Text style={[styles.date, selected && { color: colors.accent }]}>{Number(day.dayNumber)}</Text>
@@ -73,11 +74,11 @@ export function WeekDateRail({ days, selectedDate, rangeLabel, energyUnit = 'kca
   return <View style={[styles.rail, style]}>
     <View style={styles.head}>
       <Pressable ref={rangeAnchor} accessibilityRole="button" accessibilityLabel={`Choose date, ${rangeLabel}`} accessibilityHint="Opens the month calendar"
-        onPress={() => { if (rangeAnchor.current) onOpenCalendar?.(rangeAnchor.current); }} style={({ pressed }) => [styles.range, pressed && styles.pressed]}>
+        onPress={() => { if (rangeAnchor.current) { hapticLight(); onOpenCalendar?.(rangeAnchor.current); } }} style={({ pressed }) => [styles.range, pressed && styles.pressed]}>
         <Text numberOfLines={1} style={styles.rangeText}>{rangeLabel}</Text><DoopIcon name="chevronDown" size={14} color={colors.muted} />
       </Pressable>
-      <Pressable accessibilityRole="button" accessibilityLabel="Previous week" onPress={onPrevWeek} style={styles.nav}><DoopIcon name="chevronLeft" size={18} color={colors.muted} /></Pressable>
-      <Pressable accessibilityRole="button" accessibilityLabel="Next week" accessibilityState={{ disabled: !!disableNext }} disabled={disableNext} onPress={onNextWeek} style={[styles.nav, disableNext && { opacity: 0.34 }]}><DoopIcon name="chevronRight" size={18} color={colors.muted} /></Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel="Previous week" onPress={() => { hapticSelection(); onPrevWeek(); }} style={styles.nav}><DoopIcon name="chevronLeft" size={18} color={colors.muted} /></Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel="Next week" accessibilityState={{ disabled: !!disableNext }} disabled={disableNext} onPress={() => { hapticSelection(); onNextWeek(); }} style={[styles.nav, disableNext && { opacity: 0.34 }]}><DoopIcon name="chevronRight" size={18} color={colors.muted} /></Pressable>
       <View style={{ flex: 1 }} />{trailing}
     </View>
     <View style={styles.days}>{days.map(day => <RailTrendDayCell key={day.date} day={day} energyUnit={energyUnit} selected={day.date === selectedDate} disabled={maxDate ? day.date > maxDate : false} onPress={() => onSelectDate(day.date)} />)}</View>
@@ -142,6 +143,7 @@ export function RailMonthSheet({ selectedDate, maxDate, days = [], loadMonth, on
   const selectedWeekRange = railRangeLabel(selectedWeekStart, selectedWeekEnd);
 
   const step = (amount: number) => {
+    hapticSelection();
     setLoaded([]); setLoadError(false);
     setMonth(isoDate(new Date(first.getFullYear(), first.getMonth() + amount, 1, 12)).slice(0, 7));
   };
@@ -174,7 +176,7 @@ export function RailMonthSheet({ selectedDate, maxDate, days = [], loadMonth, on
               accessibilityLabel={`${cell.iso}, ${isFuture ? 'upcoming' : status === 'none' ? 'nothing logged' : status}`}
               accessibilityState={{ selected: isSelected, disabled: isFuture }}
               disabled={isFuture}
-              onPress={() => onSelectDate(cell.iso)}
+              onPress={() => { hapticSelection(); onSelectDate(cell.iso); }}
               style={[
                 styles.calendarCell,
                 isSelected && styles.calendarSelected,
@@ -194,7 +196,7 @@ export function RailMonthSheet({ selectedDate, maxDate, days = [], loadMonth, on
       })}
     </View>
     {loadError ? <Text accessibilityRole="alert" style={styles.calendarNote}>Log status unavailable</Text> : null}
-    <Pressable accessibilityRole="button" onPress={() => onSelectDate(maxDate)} style={styles.latest}><Text style={[styles.rangeText, { color: colors.accent }]}>Latest week</Text></Pressable>
+    <Pressable accessibilityRole="button" onPress={() => { hapticSelection(); onSelectDate(maxDate); }} style={styles.latest}><Text style={[styles.rangeText, { color: colors.accent }]}>Latest week</Text></Pressable>
   </View>;
 }
 

@@ -1,6 +1,7 @@
 import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RailIcon } from '../../src/ui/components/RailIcon';
+import { hapticSelection } from '../../src/ui/haptics';
 import { colors, fontFace, fontSize } from '../../src/ui/tokens';
 
 /** Shared IconRailAppNav (exact Doop tab order: Today · History · Progress · Library). */
@@ -10,6 +11,11 @@ export default function TabLayout() {
 
   return (
     <Tabs
+      screenListeners={{
+        tabPress: () => {
+          hapticSelection();
+        },
+      }}
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: colors.ink,

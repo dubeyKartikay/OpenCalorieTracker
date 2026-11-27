@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ComponentRef } from 'react';
 import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Line } from 'react-native-svg';
 import { router } from 'expo-router';
-import { useAction, useAppRuntime, useAsyncResource, useDateRangeCalendarLoader, useHistoryDay, usePreferences, useProgressData } from '../../src/app/AppRuntimeContext';
+import { useAction, useAppRuntime, useDateRangeCalendarLoader, usePreferences, useProgressData } from '../../src/app/AppRuntimeContext';
 import { localDate, shiftDate } from '../../src/app/controller';
 import { calculateWeeklyRate, nutrientKeys, type NutrientKey } from '../../src/domain';
 import { SegmentedSwitch } from '../../src/ui/components/capture';
@@ -14,6 +14,7 @@ import type { PopoverAnchor } from '../../src/ui/components/doop/HistoryControls
 import { RailMonthSheet, shortRailDate, weekEndForDate } from '../../src/ui/components/doop/WeekDateRail';
 import { DoopIcon } from '../../src/ui/components/DoopIcons';
 import { energyValue, ErrorMessage, number, Page } from '../../src/ui/components/primitives';
+import { hapticLight, hapticSelection, hapticSuccess } from '../../src/ui/haptics';
 import { colors, fontFace, macroColors, radius, tabularNums, TwoPane } from '../../src/ui/tokens';
 
 const KG_TO_LB = 2.2046226218;
@@ -34,7 +35,6 @@ function MacroAverageRow({ label, average, target, color, first }: { label: stri
 
 export default function Progress() {
   const { controller } = useAppRuntime();
-  const revision = controller.getRevision();
   const [range, setRange] = useState(30);
   const [anchorDate, setAnchorDate] = useState(localDate);
   const [weight, setWeight] = useState('');
@@ -52,25 +52,10 @@ export default function Progress() {
   const start = shiftDate(end, 1 - range);
   const statsEnd = end > today ? today : end;
   const result = useProgressData(range, end);
-  const target = useHistoryDay(statsEnd);
-  const daily = useAsyncResource(useCallback(async () => {
-    void revision;
-    // Bound concurrent SQLite reads even for a year of history.
-    const days = [];
-    for (let offset = 0; offset < range; offset += 14) {
-      const batch = await Promise.all(Array.from({ length: Math.min(14, range - offset) }, async (_, index) => {
-        const date = shiftDate(start, offset + index);
-        const value = await controller.day(date);
-        return { date, shortLabel: date.slice(8), kcal: value.totals.nutrients?.kcal ?? 0, targetKcal: value.goal?.target_kcal ?? null,
-          completeness: value.day?.completeness ?? 'none' as const,
-          proteinG: value.totals.nutrients?.protein_g, carbsG: value.totals.nutrients?.carbs_g, fatG: value.totals.nutrients?.fat_g };
-      }));
-      days.push(...batch);
-    }
-    return days;
-  }, [controller, start, range, revision]), `${start}:${range}`);
   const loadCalendar = useDateRangeCalendarLoader();
   const value = result.value;
+  const dailyDays = value?.daily ?? [];
+  const targetGoal = value?.targetGoal ?? null;
   const unit = preferences.value?.weightUnit ?? 'kg';
   const energyUnit = preferences.value?.energyUnit ?? 'kcal';
   const factor = unit === 'lb' ? KG_TO_LB : 1;
@@ -87,6 +72,7 @@ export default function Progress() {
   const saveWeight = () => { if (canSave) void action.run(async () => {
     await controller.weighIn(numericWeight / (entryUnit === 'lb' ? KG_TO_LB : 1), statsEnd);
     if (entryUnit !== unit) await controller.updatePreferences({ weightUnit: entryUnit });
+    hapticSuccess();
     setWeight(''); setLoggingWeight(false);
   }); };
   const changeEntryUnit = (next: 'kg' | 'lb') => {
@@ -96,27 +82,27 @@ export default function Progress() {
     }
     setEntryUnit(next);
   };
-  const error = result.error ?? daily.error ?? action.error ?? preferences.error ?? target.error;
+  const error = result.error ?? action.error ?? preferences.error;
   return <Page><View>
     <View style={styles.header}>
       <Pressable ref={rangeRef} accessibilityRole="button" accessibilityLabel="Choose date range" accessibilityState={{ expanded: !!calendarAnchor }} onPress={() => measurePopoverAnchor(rangeRef.current, setCalendarAnchor)} style={styles.rangeButton}><Text numberOfLines={1} style={styles.rangeLabel}>{`${shortRailDate(start)} – ${shortRailDate(end)}`}</Text><DoopIcon name="chevronDown" size={14} color={colors.muted} /></Pressable>
-      <View accessibilityLabel="Chart range" style={styles.rangeTrack}>{RANGES.map(item => <Pressable key={item.days} accessibilityRole="button" accessibilityLabel={item.days === 7 ? 'Week' : item.days === 30 ? 'Month' : item.days === 90 ? 'Three months' : 'Year'} accessibilityState={{ selected: range === item.days }} onPress={() => { setRange(item.days); setSelectedDay(null); }} style={[styles.rangeSegment, range === item.days && styles.rangeActive]}><Text style={[styles.rangeSegmentText, range === item.days && styles.rangeActiveText]}>{item.label}</Text></Pressable>)}</View>
+      <View accessibilityLabel="Chart range" style={styles.rangeTrack}>{RANGES.map(item => <Pressable key={item.days} accessibilityRole="button" accessibilityLabel={item.days === 7 ? 'Week' : item.days === 30 ? 'Month' : item.days === 90 ? 'Three months' : 'Year'} accessibilityState={{ selected: range === item.days }} onPress={() => { if (range !== item.days) hapticSelection(); setRange(item.days); setSelectedDay(null); }} style={[styles.rangeSegment, range === item.days && styles.rangeActive]}><Text style={[styles.rangeSegmentText, range === item.days && styles.rangeActiveText]}>{item.label}</Text></Pressable>)}</View>
     </View>
     {error ? <View style={{ marginVertical: 8 }}><ErrorMessage message={error} /></View> : null}
     <TwoPane gap={30} primary={<View>
       <View style={styles.calorieHeader}>
         <View><View style={styles.figures}><Text style={styles.largeValue}>{number(energyValue(value?.averages?.kcal, energyUnit))}</Text><Text style={styles.energyUnit}>{`${energyUnit}/day`}</Text></View><Text style={styles.coverage}>{`${value?.completeDays ?? 0} of ${elapsedDays} days`}</Text></View>
-        <View style={styles.targetLegend}><Svg width={14} height={4} accessible={false}><Line x1={0} y1={2} x2={14} y2={2} stroke={colors.muted} strokeDasharray="3 3" strokeOpacity={0.7} /></Svg><Text style={styles.targetLabel}>{target.value?.goal?.target_kcal == null ? 'No target' : `${number(energyValue(target.value.goal.target_kcal, energyUnit))} target`}</Text></View>
+        <View style={styles.targetLegend}><Svg width={14} height={4} accessible={false}><Line x1={0} y1={2} x2={14} y2={2} stroke={colors.muted} strokeDasharray="3 3" strokeOpacity={0.7} /></Svg><Text style={styles.targetLabel}>{targetGoal?.target_kcal == null ? 'No target' : `${number(energyValue(targetGoal.target_kcal, energyUnit))} target`}</Text></View>
       </View>
-      <CalorieBarChart key={`${range}-${end}`} days={daily.value ?? []} selectedDate={selectedDay} onSelectDay={setSelectedDay} energyUnit={energyUnit} style={{ marginTop: 10 }} onOpenHistory={date => router.push({ pathname: '/(tabs)/history', params: { date, selection: String(Date.now()) } })} />
+      <CalorieBarChart key={`${range}-${end}`} days={dailyDays} selectedDate={selectedDay} onSelectDay={setSelectedDay} energyUnit={energyUnit} style={{ marginTop: 10 }} onOpenHistory={date => router.push({ pathname: '/(tabs)/history', params: { date, selection: String(Date.now()) } })} />
       <View style={styles.macroSection}>{([
         ['Protein', 'protein_g', macroColors.protein], ['Carbs', 'carbs_g', macroColors.carbs], ['Fat', 'fat_g', macroColors.fat],
-      ] as const).map(([label, key, color], index) => <MacroAverageRow key={key} label={label} average={value?.averages?.[key]} target={target.value?.goal?.[key]} color={color} first={index === 0} />)}</View>
+      ] as const).map(([label, key, color], index) => <MacroAverageRow key={key} label={label} average={value?.averages?.[key]} target={targetGoal?.[key]} color={color} first={index === 0} />)}</View>
     </View>} secondary={<View>
       {!loggingWeight ? (
         <View style={styles.weightHeader}>
           <View><View style={styles.figures}><Text style={styles.largeValue}>{weightFigure(latest ? latest.trendKg * factor : null)}</Text><Text style={styles.energyUnit}>{unit}</Text></View><Text style={styles.weeklyRate}>{`${weeklyRate != null && weeklyRate > 0 ? '+' : ''}${weightFigure(weeklyRate === null ? null : weeklyRate * factor)} ${unit}/wk`}</Text></View>
-          <View style={styles.weightActions}><Pressable accessibilityRole="button" accessibilityLabel="Log a weigh-in" onPress={() => { Keyboard.dismiss(); setEntryUnit(unit); setWeight(''); setLoggingWeight(true); }} style={[styles.weightButton, { backgroundColor: colors.surface, borderColor: colors.border }]}><DoopIcon name="plus" size={17} color={colors.ink} /></Pressable>
+          <View style={styles.weightActions}><Pressable accessibilityRole="button" accessibilityLabel="Log a weigh-in" onPress={() => { hapticLight(); Keyboard.dismiss(); setEntryUnit(unit); setWeight(''); setLoggingWeight(true); }} style={[styles.weightButton, { backgroundColor: colors.surface, borderColor: colors.border }]}><DoopIcon name="plus" size={17} color={colors.ink} /></Pressable>
             <Pressable ref={infoRef} accessibilityRole="button" accessibilityLabel="How the trend is smoothed" accessibilityState={{ expanded: !!infoAnchor }} onPress={() => measurePopoverAnchor(infoRef.current, setInfoAnchor)} style={styles.weightButton}><DoopIcon name="info" size={16} color={colors.muted} /></Pressable>
           </View>
         </View>
@@ -150,7 +136,7 @@ export default function Progress() {
       {!loggingWeight ? <WeightTrendChart points={visibleTrend.map(point => ({ date: point.weighIn.date, shortLabel: point.weighIn.date.slice(5), rawKg: point.weighIn.weight_kg, trendKg: point.trendKg }))} unit={unit} startDate={start} endDate={end} style={{ marginTop: 8 }} /> : null}
       <MicronutrientsCard averages={value?.averages ?? null} unknownCount={value?.unknownCount ?? ZERO_UNKNOWN} style={{ marginTop: 30 }} />
     </View>} />
-    <AnchoredPopover anchor={calendarAnchor} onClose={() => setCalendarAnchor(null)} width={350} label="Choose date" surface><RailMonthSheet selectedDate={anchorDate} maxDate={today} days={daily.value} loadMonth={loadCalendar} onSelectDate={date => { setAnchorDate(date); setSelectedDay(null); setCalendarAnchor(null); }} onClose={() => setCalendarAnchor(null)} /></AnchoredPopover>
+    <AnchoredPopover anchor={calendarAnchor} onClose={() => setCalendarAnchor(null)} width={350} label="Choose date" surface><RailMonthSheet selectedDate={anchorDate} maxDate={today} days={dailyDays} loadMonth={loadCalendar} onSelectDate={date => { setAnchorDate(date); setSelectedDay(null); setCalendarAnchor(null); }} onClose={() => setCalendarAnchor(null)} /></AnchoredPopover>
     <AnchoredPopover anchor={infoAnchor} onClose={() => setInfoAnchor(null)} width={312} label="How the trend is smoothed"><ProgTrendPop /></AnchoredPopover>
   </View></Page>;
 }
