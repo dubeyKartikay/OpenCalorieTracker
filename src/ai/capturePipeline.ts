@@ -66,17 +66,43 @@ function validCalculation<T>(calculate: () => T): T {
 function draftItem(food: FoodRecord, input: ExtractedMealItem, candidates: SearchCandidate[], sourceLabel: string): MealDraftItem {
   return validCalculation(() => calculateDraftItem(food, input, candidates, sourceLabel));
 }
+function tryHighEstimateGrams(food: FoodRecord, range: ExtractedMealItem['estimate_range']): Quantity | null {
+  if (!range || !Number.isFinite(range.max_g) || range.max_g <= 0) return null;
+  const candidate: Quantity = { amount: range.max_g, unit: 'g' };
+  try {
+    resolveQuantityToBasis(food, candidate);
+    return candidate;
+  } catch (error) {
+    if (error instanceof UnitConversionError) return null;
+    throw error;
+  }
+}
 function calculateDraftItem(food: FoodRecord, input: ExtractedMealItem, candidates: SearchCandidate[], sourceLabel: string): MealDraftItem {
   let quantity: Quantity;
   let certainty = input.portion_certainty;
   let assumption = input.assumption_note ?? null;
-  try { quantity = quantityFor(food, { amount: input.amount, unit: input.unit }); }
-  catch (error) {
+  const highEstimate = tryHighEstimateGrams(food, input.estimate_range);
+  try {
+    const parsed = quantityFor(food, { amount: input.amount, unit: input.unit });
+    if (certainty === 'estimated' && highEstimate) {
+      const parsedBasis = resolveQuantityToBasis(food, parsed);
+      const highBasis = resolveQuantityToBasis(food, highEstimate);
+      quantity = highBasis >= parsedBasis ? highEstimate : parsed;
+    } else {
+      quantity = parsed;
+    }
+  } catch (error) {
     if (!(error instanceof UnitConversionError)) throw error;
     if (error.message === 'Quantity conversion overflow') throw new AIError('malformed_output');
-    quantity = defaultQuantity(food);
-    certainty = 'estimated';
-    assumption = note(assumption, `The unit "${input.unit}" has no food-specific conversion; assumed ${quantity.amount} ${quantity.unit}.`);
+    if (highEstimate) {
+      quantity = highEstimate;
+      certainty = 'estimated';
+      assumption = note(assumption, `The unit "${input.unit}" has no food-specific conversion; used high estimate (${quantity.amount} g).`);
+    } else {
+      quantity = defaultQuantity(food);
+      certainty = 'estimated';
+      assumption = note(assumption, `The unit "${input.unit}" has no food-specific conversion; assumed ${quantity.amount} ${quantity.unit}.`);
+    }
   }
   const nutrients = calculateNutrition(food, quantity);
   let range: MealDraftItem['estimate_range'] = null;
@@ -129,7 +155,7 @@ export async function captureMealDraft(options: CaptureMealDraftOptions): Promis
   const model = options.model ?? DEFAULT_AI_MODEL;
   vision(imageDataUrl, model, knownModels);
   const extracted = await complete(provider, {
-    instructions: instructions(mealExtractionSchema, 'Extract the current meal into foods and portions, not final nutrition totals. Use singular household units. Mark photo/inferred portions estimated. Provide an explicit estimated_fallback_per_100g for each item in case no local food matches, with missing fiber null. At most two material clarification questions; include a not-sure option with a stated assumption. Effects target zero-based item indices. Never apply cooking fat twice.'),
+    instructions: instructions(mealExtractionSchema, 'Extract the current meal into foods and portions, not final nutrition totals. Use singular household units or grams (g) / ml. For restaurant, composite, photo, or unmeasured items, mark portion_certainty "estimated" and always provide a realistic estimate_range (min_g, max_g) in grams. Provide an explicit estimated_fallback_per_100g for each item in case no local food matches, with missing fiber null. At most two material clarification questions; include a not-sure option with a stated assumption. Effects target zero-based item indices. Use replace_item (with targetItemIndex, display_name, optional query, and estimated_fallback_per_100g) when clarifying fillings, variants, or recipes on an item. Never apply cooking fat twice.'),
     userText: text, imageDataUrl, model, signal,
   }, mealExtractionSchema);
   const candidates = await Promise.all(extracted.items.map(item => search(catalog, item.query, item.prep_state)));
@@ -184,11 +210,22 @@ export async function applyClarifyingAnswer(proposalInput: MealDraftProposal, qu
     const effect = option.effect;
     if (effect.kind === 'none') continue;
     if (effect.kind === 'add_food') {
-      const candidates = await search(catalog, effect.query!);
+      const candidates = await search(catalog, effect.query!, effect.prep_state);
       const candidate = candidates[0];
-      if (!candidate) throw new AIError('malformed_output');
-      items.push(draftItem(candidate.food, { query: effect.query!, display_name: candidate.food.name, prep_state: candidate.food.prep_state,
-        amount: effect.amount!, unit: effect.unit!, portion_certainty: 'stated', assumption_note: `${question.label}: ${option.label}.` }, candidates, candidate.sourceLabel));
+      const addedInput: ExtractedMealItem = {
+        query: effect.query!,
+        display_name: effect.display_name ?? candidate?.food.name ?? effect.query!,
+        prep_state: effect.prep_state ?? candidate?.food.prep_state ?? 'prepared',
+        amount: effect.amount!,
+        unit: effect.unit!,
+        portion_certainty: effect.estimate_range ? 'estimated' : 'stated',
+        estimate_range: effect.estimate_range ?? null,
+        estimated_fallback_per_100g: effect.estimated_fallback_per_100g ?? null,
+        assumption_note: `${question.label}: ${option.label}.`,
+      };
+      if (!candidate && !effect.estimated_fallback_per_100g) throw new AIError('malformed_output');
+      const food = candidate?.food ?? estimate(addedInput);
+      items.push(draftItem(food, addedInput, candidates, candidate?.sourceLabel ?? 'AI estimate'));
       continue;
     }
     const index = effect.targetItemIndex!;
@@ -200,6 +237,31 @@ export async function applyClarifyingAnswer(proposalInput: MealDraftProposal, qu
       input.amount *= effect.multiplier!;
       if (input.estimate_range) input.estimate_range = { min_g: input.estimate_range.min_g * effect.multiplier!, max_g: input.estimate_range.max_g * effect.multiplier! };
       items[index] = draftItem(item.food, input, item.candidates, item.sourceLabel);
+    } else if (effect.kind === 'replace_item') {
+      const replacementQuery = effect.query ?? effect.display_name!;
+      const prepState = effect.prep_state ?? item.food.prep_state;
+      const candidates = effect.query ? await search(catalog, effect.query, prepState) : [];
+      const candidate = candidates.find(c => c.matchTier <= 1) ?? (!effect.estimated_fallback_per_100g ? candidates.find(c => c.matchTier <= 2) : undefined);
+      const replacedInput: ExtractedMealItem = {
+        ...input,
+        query: replacementQuery,
+        display_name: effect.display_name ?? candidate?.food.name ?? replacementQuery,
+        prep_state: prepState,
+        amount: effect.amount ?? input.amount,
+        unit: effect.unit ?? input.unit,
+        estimate_range: effect.estimate_range !== undefined ? effect.estimate_range : input.estimate_range,
+        estimated_fallback_per_100g: effect.estimated_fallback_per_100g ?? null,
+      };
+      if (candidate) {
+        items[index] = draftItem(candidate.food, replacedInput, candidates, candidate.sourceLabel);
+      } else if (effect.estimated_fallback_per_100g) {
+        const estimatedFood = estimate(replacedInput);
+        items[index] = draftItem(estimatedFood, replacedInput, [], 'AI estimate');
+      } else {
+        // Rename/keep existing nutrients if no fallback nutrients were supplied.
+        const renamedFood = foodRecordSchema.parse({ ...item.food, name: replacedInput.display_name, prep_state: prepState });
+        items[index] = draftItem(renamedFood, replacedInput, item.candidates, item.sourceLabel);
+      }
     } else {
       // A prep change must use the corresponding source record, never relabel raw nutrition as cooked.
       const query = item.food.name.replace(/\b(?:raw|cooked|prepared)\b/gi, '').replace(/[,;\s]+$/, '').trim();

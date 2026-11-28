@@ -2,7 +2,7 @@ import { Image, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { useAction, useActiveDraft, useAIStatus, useAppRuntime } from '../../../app/AppRuntimeContext';
 import { sumNutrients, type DiaryEntrySnapshot, type OfflinePhotoDraft } from '../../../domain';
-import { colors, fontFace, radius, tabularNums } from '../../tokens';
+import { colors, fontFace, macroColors, radius, tabularNums } from '../../tokens';
 import { Button, energyValue, ErrorMessage, number, ui } from '../primitives';
 import { AIFailedCard, DraftAskChips, DraftItemCard, MealDraftPanel } from './DraftCards';
 import type { MealInlineComposerController } from './MealInlineComposer';
@@ -77,7 +77,7 @@ export function MealActiveDraftBlock({
           isEstimatedSource={item.provenance_kind === 'ai_estimate'}
           portionText={`${number(item.quantity.amount, 2)} ${item.quantity.unit} · ${item.portion_certainty === 'stated' ? 'you said' : 'estimate'}`}
           portionCertainty={item.portion_certainty}
-          estimateRangeText={item.estimate_range ? `${number(item.estimate_range.min_g, 1)}–${number(item.estimate_range.max_g, 1)} g · estimate range` : null}
+          estimateRangeText={item.estimate_range ? `${number(item.quantity.amount, 2)} ${item.quantity.unit} · est. ${number(item.estimate_range.min_g, 1)}–${number(item.estimate_range.max_g, 1)} g` : null}
           energyText={number(energyValue(item.nutrients.kcal, energyUnit))}
           macrosText={`P ${number(item.nutrients.protein_g, 1)} · C ${number(item.nutrients.carbs_g, 1)} · F ${number(item.nutrients.fat_g, 1)} g`}
           fiberUnknown={item.unknownCount.fiber_g > 0}
@@ -89,13 +89,24 @@ export function MealActiveDraftBlock({
           } : {})}
         />
       ))}
-      <View style={styles.fiberSummary}>
-        <Text style={styles.resultMeta}>Fiber</Text>
-        <Text style={styles.fiberValue}>
-          {draft.proposal.totals.nutrients?.fiber_g != null ? '+' : ''}
-          {number(draft.proposal.totals.nutrients?.fiber_g)} g
-          {draft.proposal.totals.unknownCount.fiber_g ? ` · ${draft.proposal.totals.unknownCount.fiber_g} unknown` : ''}
-        </Text>
+      <View style={styles.macroSummary}>
+        {([
+          ['P', draft.proposal.totals.nutrients?.protein_g, macroColors.protein],
+          ['C', draft.proposal.totals.nutrients?.carbs_g, macroColors.carbs],
+          ['F', draft.proposal.totals.nutrients?.fat_g, macroColors.fat],
+          ['Fiber', draft.proposal.totals.nutrients?.fiber_g, colors.muted],
+        ] as const).map(([label, value, color]) => (
+          <View key={label} style={styles.macroPill}>
+            <View style={[styles.macroDot, { backgroundColor: color }]} />
+            <Text style={styles.resultMeta}>{label}</Text>
+            <Text style={styles.macroValue}>
+              {value != null ? `+${number(value)} g` : '—'}
+            </Text>
+          </View>
+        ))}
+        {draft.proposal.totals.unknownCount.fiber_g > 0 && (
+          <Text style={styles.resultMeta}>· {draft.proposal.totals.unknownCount.fiber_g} fiber unknown</Text>
+        )}
       </View>
       {draft.proposal.clarifying_questions.slice(0, 2).map(question => (
         <DraftAskChips
@@ -207,6 +218,8 @@ const styles = StyleSheet.create({
   attachment: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
   photo: { width: 48, height: 48, borderRadius: radius.r12, borderWidth: 1, borderColor: colors.border },
   offlineDraft: { borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, borderRadius: radius.r12, marginVertical: 8, paddingHorizontal: 10 },
-  fiberSummary: { minHeight: 32, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  fiberValue: { ...fontFace('semibold'), fontVariant: [...tabularNums.fontVariant], color: colors.lavender, fontSize: 11 },
+  macroSummary: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border, borderStyle: 'dashed' },
+  macroPill: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  macroDot: { width: 6, height: 6, borderRadius: 3 },
+  macroValue: { ...fontFace('semibold'), fontVariant: [...tabularNums.fontVariant], color: colors.lavender, fontSize: 11 },
 });

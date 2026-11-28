@@ -6,15 +6,30 @@ const text = z.string().trim().min(1);
 const index = z.int().nonnegative();
 const gramsRange = z.strictObject({ min_g: number, max_g: number })
   .refine(range => range.min_g <= range.max_g, 'Invalid estimate range');
+const fallbackNutrientsPer100gSchema = z.strictObject({
+  kcal: number,
+  protein_g: number,
+  carbs_g: number,
+  fat_g: number,
+  fiber_g: number.nullable(),
+});
 export const clarificationEffectSchema = z.strictObject({
-  kind: z.enum(['none', 'add_food', 'scale_item', 'set_prep_state']),
-  targetItemIndex: index.optional(), query: text.optional(), amount: number.optional(), unit: text.optional(),
-  multiplier: number.optional(), prep_state: prepStateSchema.optional(),
+  kind: z.enum(['none', 'add_food', 'scale_item', 'set_prep_state', 'replace_item']),
+  targetItemIndex: index.optional(),
+  query: text.optional(),
+  display_name: text.optional(),
+  amount: number.optional(),
+  unit: text.optional(),
+  multiplier: number.optional(),
+  prep_state: prepStateSchema.optional(),
+  estimate_range: gramsRange.nullish(),
+  estimated_fallback_per_100g: fallbackNutrientsPer100gSchema.nullish(),
 }).superRefine((effect, ctx) => {
   const valid = effect.kind === 'none'
     || (effect.kind === 'add_food' && effect.query !== undefined && effect.amount !== undefined && effect.unit !== undefined)
     || (effect.kind === 'scale_item' && effect.targetItemIndex !== undefined && effect.multiplier !== undefined)
-    || (effect.kind === 'set_prep_state' && effect.targetItemIndex !== undefined && effect.prep_state !== undefined);
+    || (effect.kind === 'set_prep_state' && effect.targetItemIndex !== undefined && effect.prep_state !== undefined)
+    || (effect.kind === 'replace_item' && effect.targetItemIndex !== undefined && (effect.query !== undefined || effect.display_name !== undefined));
   if (!valid) ctx.addIssue({ code: 'custom', message: 'Incomplete clarification effect' });
 });
 export const clarifyingQuestionSchema = z.strictObject({
@@ -26,7 +41,7 @@ export const mealExtractionSchema = z.strictObject({
     query: text, display_name: text, prep_state: prepStateSchema, amount: number, unit: text,
     portion_certainty: portionCertaintySchema,
     estimate_range: gramsRange.nullish(),
-    estimated_fallback_per_100g: z.strictObject({ kcal: number, protein_g: number, carbs_g: number, fat_g: number, fiber_g: number.nullable() }).nullish(),
+    estimated_fallback_per_100g: fallbackNutrientsPer100gSchema.nullish(),
     assumption_note: text.nullish(),
   })).min(1),
   clarifying_questions: z.array(clarifyingQuestionSchema).max(2),

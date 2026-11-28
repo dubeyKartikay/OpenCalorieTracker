@@ -231,12 +231,109 @@ describe('local-grounded drafts against node:sqlite and both compiled packs', ()
     expect(draft.items[0]).toMatchObject({ provenance_kind: 'ai_estimate', sourceLabel: 'AI estimate', food: { source_pack_id: null, source_id: null, source_version: null }, nutrients: { kcal: 250, fiber_g: null } });
     expect(draft.items[0]?.food.provenance_kind).toBe('ai_estimate');
   });
-  it('calculates calorie ranges from local nutrients and states unsupported-unit assumptions', async () => {
+  it('uses the high end of estimate_range for estimated items and unsupported units, and falls back to serving when no range exists', async () => {
     const { catalog } = await setup();
-    const ai = provider(extraction([item({ query: 'dal tadka', unit: 'mysterious bucket', estimate_range: { min_g: 100, max_g: 200 } })]));
-    const draft = await captureMealDraft({ provider: ai, catalog, text: 'some dal', meal: 'Lunch' });
-    expect(draft.items[0]).toMatchObject({ quantity: { amount: 1, unit: 'serving' }, portion_certainty: 'estimated', nutrients: { kcal: 186 }, estimate_range: { min_g: 100, max_g: 200, min_kcal: 124, max_kcal: 248 } });
-    expect(draft.items[0]?.assumption_note).toContain('no food-specific conversion');
+    const aiWithRange = provider(extraction([item({ query: 'dal tadka', unit: 'mysterious bucket', estimate_range: { min_g: 100, max_g: 200 } })]));
+    const draftWithRange = await captureMealDraft({ provider: aiWithRange, catalog, text: 'some dal', meal: 'Lunch' });
+    expect(draftWithRange.items[0]).toMatchObject({ quantity: { amount: 200, unit: 'g' }, portion_certainty: 'estimated', nutrients: { kcal: 248 }, estimate_range: { min_g: 100, max_g: 200, min_kcal: 124, max_kcal: 248 } });
+    expect(draftWithRange.items[0]?.assumption_note).toContain('used high estimate (200 g)');
+
+    // Restaurant AI estimate with non-gram household unit (e.g. "1 burrito") uses max_g (450 g) instead of 100 g fallback
+    const burritoAi = provider(extraction([item({
+      query: 'Taco Bell Boss Burrito',
+      display_name: 'Taco Bell Boss Burrito',
+      prep_state: 'prepared',
+      amount: 1,
+      unit: 'burrito',
+      portion_certainty: 'estimated',
+      estimate_range: { min_g: 250, max_g: 450 },
+      estimated_fallback_per_100g: { kcal: 190, protein_g: 9, carbs_g: 22, fat_g: 7, fiber_g: 2 },
+    })]));
+    const burritoDraft = await captureMealDraft({ provider: burritoAi, catalog, text: 'Taco Bell Boss Burrito', meal: 'Lunch' });
+    expect(burritoDraft.items[0]).toMatchObject({
+      provenance_kind: 'ai_estimate',
+      quantity: { amount: 450, unit: 'g' },
+      portion_certainty: 'estimated',
+      nutrients: { kcal: 855, protein_g: 40.5, carbs_g: 99, fat_g: 31.5, fiber_g: 9 },
+      estimate_range: { min_g: 250, max_g: 450, min_kcal: 475, max_kcal: 855 },
+    });
+
+    // Estimated gram item with estimate_range also uses the highest estimate (max_g)
+    const estimatedGramsAi = provider(extraction([item({
+      query: 'dal tadka',
+      amount: 150,
+      unit: 'g',
+      portion_certainty: 'estimated',
+      estimate_range: { min_g: 120, max_g: 220 },
+    })]));
+    const estimatedGramsDraft = await captureMealDraft({ provider: estimatedGramsAi, catalog, text: 'a bowl of dal', meal: 'Lunch' });
+    expect(estimatedGramsDraft.items[0]).toMatchObject({ quantity: { amount: 220, unit: 'g' }, portion_certainty: 'estimated' });
+
+    // Unsupported unit without estimate_range still falls back safely to default serving
+    const aiNoRange = provider(extraction([item({ query: 'dal tadka', unit: 'mysterious bucket', estimate_range: null })]));
+    const draftNoRange = await captureMealDraft({ provider: aiNoRange, catalog, text: 'some dal', meal: 'Lunch' });
+    expect(draftNoRange.items[0]).toMatchObject({ quantity: { amount: 1, unit: 'serving' }, portion_certainty: 'estimated', nutrients: { kcal: 186 } });
+    expect(draftNoRange.items[0]?.assumption_note).toContain('no food-specific conversion');
+  });
+
+  it('replaces an AI-estimated item locally via replace_item clarification chips without compounding or extra AI calls', async () => {
+    const { catalog } = await setup();
+    const burritoQuestion: MealExtraction['clarifying_questions'][number] = {
+      id: 'filling',
+      topic: 'ingredient',
+      label: 'Which filling was in the Boss Burrito?',
+      options: [
+        {
+          id: 'chicken',
+          label: 'Chicken',
+          effect: {
+            kind: 'replace_item',
+            targetItemIndex: 0,
+            display_name: 'Taco Bell Boss Burrito (Chicken)',
+            estimated_fallback_per_100g: { kcal: 170, protein_g: 11, carbs_g: 20, fat_g: 5, fiber_g: 2 },
+          },
+        },
+        {
+          id: 'veg',
+          label: 'Vegetarian',
+          effect: {
+            kind: 'replace_item',
+            targetItemIndex: 0,
+            display_name: 'Taco Bell Boss Burrito (Vegetarian)',
+            estimated_fallback_per_100g: { kcal: 150, protein_g: 6, carbs_g: 23, fat_g: 4, fiber_g: 4 },
+          },
+        },
+        { id: 'unsure', label: 'Not sure', effect: { kind: 'none' } },
+      ],
+    };
+    const ai = provider(extraction([item({
+      query: 'Taco Bell Boss Burrito',
+      display_name: 'Taco Bell Boss Burrito',
+      prep_state: 'prepared',
+      amount: 1,
+      unit: 'burrito',
+      portion_certainty: 'estimated',
+      estimate_range: { min_g: 250, max_g: 450 },
+      estimated_fallback_per_100g: { kcal: 190, protein_g: 9, carbs_g: 22, fat_g: 7, fiber_g: 2 },
+    })], [burritoQuestion]));
+
+    const original = await captureMealDraft({ provider: ai, catalog, text: 'Taco Bell Boss Burrito', meal: 'Lunch' });
+    expect(original.items[0]?.nutrients.kcal).toBe(855);
+
+    const chicken = await applyClarifyingAnswer(original, 'filling', 'chicken', catalog);
+    expect(chicken.items[0]).toMatchObject({
+      food: { name: 'Taco Bell Boss Burrito (Chicken)' },
+      quantity: { amount: 450, unit: 'g' },
+      nutrients: { kcal: 765, protein_g: 49.5 },
+    });
+
+    const veg = await applyClarifyingAnswer(chicken, 'filling', 'veg', catalog);
+    expect(veg.items[0]).toMatchObject({
+      food: { name: 'Taco Bell Boss Burrito (Vegetarian)' },
+      quantity: { amount: 450, unit: 'g' },
+      nutrients: { kcal: 675, fiber_g: 18 },
+    });
+    expect(ai.completeJson).toHaveBeenCalledOnce();
   });
   it('adds local Ghee with zero AI calls, and repeating or switching the chip does not compound', async () => {
     const { user, catalog } = await setup();
