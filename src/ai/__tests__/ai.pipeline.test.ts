@@ -6,9 +6,9 @@ import { calculateNutrition, generateId } from '../../domain';
 import { exportBundleV1, LibraryRepo } from '../../storage';
 import { food, resources } from '../../storage/__tests__/fixtures';
 import { AIError, AI_MODEL_OPTIONS, applyClarifyingAnswer, buildAuthorizationUrl, captureMealDraft, clearOAuthJwksCache, DEFAULT_AGENT_NAME_HINT,
-  DEFAULT_AI_MODEL, exchangeAuthorizationCode, extractNutritionLabel, generatePkcePair, hasRequiredOAuthScope, looksLikeMultiFoodCapture, loopbackRedirectUri,
-  mealExtractionSchema, OPENAI_API_RESOURCE, OPENAI_AUTHORIZE_ENDPOINT, OPENAI_DYNAMIC_CLIENT_ID, OPENAI_ISSUER, OPENAI_REQUIRED_PLAN_SCOPE, OPENAI_REVOKE_ENDPOINT,
-  OPENAI_TOKEN_ENDPOINT, OpenAIResponsesProvider, parseResponsesSseStream, refreshAccessToken, revokeOAuthToken,
+  DEFAULT_AI_MODEL, exchangeAuthorizationCode, extractNutritionLabel, fetchOpenAIModelCatalog, generatePkcePair, hasRequiredOAuthScope, looksLikeMultiFoodCapture, loopbackRedirectUri,
+  mealExtractionSchema, modelSupportsVision, OPENAI_API_RESOURCE, OPENAI_AUTHORIZE_ENDPOINT, OPENAI_DYNAMIC_CLIENT_ID, OPENAI_ISSUER, OPENAI_MODELS_ENDPOINT, OPENAI_REQUIRED_PLAN_SCOPE, OPENAI_REVOKE_ENDPOINT,
+  OPENAI_TOKEN_ENDPOINT, OpenAIResponsesProvider, parseOpenAIModelCatalog, parseResponsesSseStream, pickPreferredAIModel, refreshAccessToken, revokeOAuthToken,
   unavailableLoopbackAuthPort, verifyOAuthIdToken } from '..';
 import type { AIAuthMode, AIProvider, ExtractedMealItem, MealExtraction } from '..';
 
@@ -326,10 +326,91 @@ describe('label extraction, validation, search heuristic and PKCE', () => {
   it.each([['dal', false], ['dal tadka', false], ['2 rotis and 1 katori dal', true], ['rice, dal', true], ['rice with ghee', true], ['2 rotis 1 dal', true]])('classifies %s deterministically', (text, expected) => {
     expect(looksLikeMultiFoodCapture(text as string)).toBe(expected);
   });
-  it('exposes vision model metadata and the requested default', () => {
-    expect(DEFAULT_AI_MODEL).toBe('gpt-5-mini');
-    expect(AI_MODEL_OPTIONS.map(model => model.id)).toEqual(['gpt-5-mini', 'gpt-5']);
+  it('exposes current GPT-6 vision model defaults and parses live OAuth/API model catalogs', async () => {
+    expect(DEFAULT_AI_MODEL).toBe('gpt-6.2-sol');
+    expect(AI_MODEL_OPTIONS.map(model => model.id)).toEqual(['gpt-6-luna', 'gpt-6.1-terra', 'gpt-6.2-sol', 'gpt-6.2-astra']);
     expect(AI_MODEL_OPTIONS.every(model => model.supportsVision)).toBe(true);
+    expect(modelSupportsVision('gpt-6.3-sol')).toBe(true);
+    expect(modelSupportsVision('gpt-5.2')).toBe(true);
+    expect(modelSupportsVision('custom-text-only')).toBe(false);
+    expect(modelSupportsVision('whisper-1')).toBe(false);
+    expect(modelSupportsVision('custom-vision', [{ id: 'custom-vision', label: 'Vision', supportsVision: true }])).toBe(true);
+    expect(modelSupportsVision('custom-text-only', [{ id: 'custom-text-only', label: 'Text only', supportsVision: false }])).toBe(false);
+
+    const oauthModels = parseOpenAIModelCatalog({
+      models: [
+        { slug: 'gpt-6.2-sol', display_name: 'GPT-6.2 Sol', visibility: 'list', input_modalities: ['text', 'image'] },
+        { slug: 'gpt-6.2-astra', display_name: 'GPT-6.2 Astra', visibility: 'list', input_modalities: ['text', 'image'] },
+        { slug: 'gpt-internal-hidden', display_name: 'Hidden', visibility: 'hide', input_modalities: ['text'] },
+        { slug: 'gpt-unlisted-no-vis', display_name: 'Unlisted', input_modalities: ['text', 'image'] },
+        { slug: 'gpt-5-mini', display_name: 'GPT-5 mini', visibility: 'list', input_modalities: ['text', 'image'] },
+        { slug: 'gpt-web-only', display_name: 'Web Only', visibility: 'list', supported_in_api: false },
+        { slug: 'custom-text-only', display_name: 'Custom Text', visibility: 'list' },
+        { slug: 'gpt-6-text-only', display_name: 'GPT-6 Text', visibility: 'list', input_modalities: ['text'] },
+      ],
+    });
+    expect(oauthModels).toEqual([
+      { id: 'gpt-6.2-sol', label: 'GPT-6.2 Sol', supportsVision: true },
+      { id: 'gpt-6.2-astra', label: 'GPT-6.2 Astra', supportsVision: true },
+      { id: 'custom-text-only', label: 'Custom Text', supportsVision: false },
+      { id: 'gpt-6-text-only', label: 'GPT-6 Text', supportsVision: false },
+    ]);
+
+    const apiKeyModels = parseOpenAIModelCatalog({
+      object: 'list',
+      data: [
+        { id: 'whisper-1' },
+        { id: 'gpt-5.2' },
+        { id: 'gpt-5-mini' },
+        { id: 'gpt-6.2-astra' },
+        { id: 'gpt-6.2-sol-2026-10-15' },
+        { id: 'gpt-6.2-sol' },
+        { id: 'gpt-5.4-mini' },
+        { id: 'gpt-6-luna' },
+        { id: 'gpt-6-cyber' },
+      ],
+    });
+    expect(apiKeyModels).toEqual([
+      { id: 'gpt-6-luna', label: 'GPT-6 Luna', supportsVision: true },
+      { id: 'gpt-6.2-sol', label: 'GPT-6.2 Sol', supportsVision: true },
+      { id: 'gpt-6.2-astra', label: 'GPT-6.2 Astra', supportsVision: true },
+      { id: 'gpt-5.2', label: 'GPT-5.2', supportsVision: true },
+      { id: 'gpt-5.4-mini', label: 'GPT-5.4 mini', supportsVision: true },
+    ]);
+    expect(pickPreferredAIModel(apiKeyModels, 'gpt-5-mini')).toBe('gpt-6.2-sol');
+    expect(pickPreferredAIModel(apiKeyModels, 'gpt-5.2')).toBe('gpt-5.2');
+    expect(pickPreferredAIModel(apiKeyModels, 'gpt-5.4-mini')).toBe('gpt-5.4-mini');
+
+    const catalogFetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(Response.json({ models: [{ slug: 'gpt-6.2-sol', display_name: 'GPT-6.2 Sol', visibility: 'list' }] }));
+    const fetched = await fetchOpenAIModelCatalog({
+      getAccessToken: () => 'expired-token',
+      onAuthExpiredRetry: async () => 'fresh-token',
+      fetch: catalogFetch,
+    });
+    expect(fetched).toEqual([{ id: 'gpt-6.2-sol', label: 'GPT-6.2 Sol', supportsVision: true }]);
+    expect(catalogFetch).toHaveBeenCalledTimes(2);
+    expect(catalogFetch.mock.calls[0]![0]).toBe(OPENAI_MODELS_ENDPOINT);
+    expect((catalogFetch.mock.calls[1]![1]?.headers as Record<string, string>).Authorization).toBe('Bearer fresh-token');
+
+    // Aborting while response.json() is resolving must reject as timeout rather than publishing stale data
+    const abortCtrl = new AbortController();
+    let releaseJson!: (value: unknown) => void;
+    const delayedResponse = {
+      ok: true,
+      status: 200,
+      json: () => new Promise(resolve => { releaseJson = resolve; }),
+    } as unknown as Response;
+    const pendingCatalog = fetchOpenAIModelCatalog({
+      getAccessToken: () => 'valid-token',
+      fetch: vi.fn<typeof globalThis.fetch>().mockResolvedValue(delayedResponse),
+      signal: abortCtrl.signal,
+    });
+    await vi.waitFor(() => expect(releaseJson).toBeDefined());
+    abortCtrl.abort();
+    releaseJson({ models: [{ slug: 'gpt-6.2-sol', display_name: 'GPT-6.2 Sol', visibility: 'list' }] });
+    await expect(pendingCatalog).rejects.toMatchObject({ code: 'timeout' });
   });
   it('generates cryptographically random PKCE S256 and a 127.0.0.1 authorization URL', async () => {
     const pair = await generatePkcePair(); const other = await generatePkcePair();

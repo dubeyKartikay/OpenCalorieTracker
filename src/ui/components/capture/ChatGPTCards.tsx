@@ -10,6 +10,9 @@ export interface ChatGPTConnectionCardProps {
   consentChecked: boolean; onToggleConsent: () => void; onConnectChatGPT: () => void;
   onSaveApiKey: (apiKey: string) => void; maskedKey?: string | null | undefined;
   models: AIModelChoice[]; selectedModel: string; onSelectModel: (modelId: string) => void;
+  modelsState?: 'idle' | 'loading' | 'loaded' | 'empty' | 'error' | undefined;
+  modelsError?: string | null | undefined;
+  onRetryModels?: (() => void) | undefined;
   onOpenManageUsage?: (() => void) | undefined; onDisconnect: () => void;
   oauthNote?: string | null | undefined; busy?: boolean | undefined;
 }
@@ -39,17 +42,41 @@ export function ChatGPTConnectionCard(props: ChatGPTConnectionCardProps) {
         {!!props.maskedKey && <Text style={styles.maskedKey}>{props.maskedKey}</Text>}
       </View>
       <View style={styles.rows}>
-        <Pressable accessibilityRole="button" accessibilityLabel={`Model, ${model}`} accessibilityState={{ expanded: modelsOpen }} disabled={props.busy}
+        <Pressable accessibilityRole="button" accessibilityLabel={`Model, ${props.modelsState === 'loading' ? 'Loading' : model}`} accessibilityState={{ expanded: modelsOpen }} disabled={props.busy}
           onPress={() => setModelsOpen(open => !open)} style={styles.row}>
-          <Text style={styles.rowText}>Model</Text><View style={styles.rowValue}><Text style={styles.modelValue}>{model}</Text><DoopIcon name="chevronDown" size={16} color={colors.muted} /></View>
+          <Text style={styles.rowText}>Model</Text><View style={styles.rowValue}><Text style={styles.modelValue}>{props.modelsState === 'loading' ? 'Loading…' : model}</Text><DoopIcon name="chevronDown" size={16} color={colors.muted} /></View>
         </Pressable>
         {modelsOpen && <View style={styles.models} accessibilityRole="radiogroup" accessibilityLabel="Model">
-          {props.models.map(item => <Pressable key={item.id} accessibilityRole="radio" accessibilityState={{ checked: item.id === props.selectedModel }} disabled={props.busy}
-            onPress={() => { props.onSelectModel(item.id); setModelsOpen(false); }} style={[styles.modelRow, item.id === props.selectedModel && styles.modelSelected]}>
-            <Text style={[styles.rowText, { flex: 1, fontSize: 13 }]}>{item.label}</Text>
-            {item.supportsVision && <DoopIcon name="camera" size={14} color={colors.muted} />}
-            {item.id === props.selectedModel && <DoopIcon name="check" size={14} color={colors.accent} />}
-          </Pressable>)}
+          {props.modelsState === 'loading' ? (
+            <View style={styles.modelStatusRow}>
+              <Text style={styles.modelStatusText}>Loading models from OpenAI…</Text>
+            </View>
+          ) : props.modelsState === 'error' ? (
+            <View style={styles.modelStatusRow}>
+              <Text style={styles.modelStatusText}>{props.modelsError ?? 'Could not load models from OpenAI.'}</Text>
+              {props.onRetryModels && (
+                <Pressable accessibilityRole="button" disabled={props.busy} onPress={props.onRetryModels} style={styles.pill}>
+                  <Text style={styles.linkLabel}>Retry</Text>
+                </Pressable>
+              )}
+            </View>
+          ) : props.modelsState === 'empty' || props.models.length === 0 ? (
+            <View style={styles.modelStatusRow}>
+              <Text style={styles.modelStatusText}>{props.modelsError ?? 'No compatible models available for this account.'}</Text>
+              {props.onRetryModels && (
+                <Pressable accessibilityRole="button" disabled={props.busy} onPress={props.onRetryModels} style={styles.pill}>
+                  <Text style={styles.linkLabel}>Retry</Text>
+                </Pressable>
+              )}
+            </View>
+          ) : (
+            props.models.map(item => <Pressable key={item.id} accessibilityRole="radio" accessibilityState={{ checked: item.id === props.selectedModel }} disabled={props.busy}
+              onPress={() => { props.onSelectModel(item.id); setModelsOpen(false); }} style={[styles.modelRow, item.id === props.selectedModel && styles.modelSelected]}>
+              <Text style={[styles.rowText, { flex: 1, fontSize: 13 }]}>{item.label}</Text>
+              {item.supportsVision && <DoopIcon name="camera" size={14} color={colors.muted} />}
+              {item.id === props.selectedModel && <DoopIcon name="check" size={14} color={colors.accent} />}
+            </Pressable>)
+          )}
         </View>}
         {props.onOpenManageUsage && <Pressable accessibilityRole="button" disabled={props.busy} onPress={props.onOpenManageUsage} style={styles.row}>
           <Text style={styles.rowText}>Manage usage</Text><DoopIcon name="external" size={15} color={colors.muted} />
@@ -161,6 +188,8 @@ const styles = StyleSheet.create({
   models: { padding: 6, borderRadius: 16, backgroundColor: colors.raised, borderWidth: 1, borderColor: colors.border, marginBottom: 8 },
   modelRow: { minHeight: 44, borderRadius: 10, paddingHorizontal: 10, flexDirection: 'row', gap: 8, alignItems: 'center' },
   modelSelected: { backgroundColor: colors.surface },
+  modelStatusRow: { paddingHorizontal: 10, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  modelStatusText: { ...fontFace(), fontSize: 12, color: colors.muted, flex: 1, lineHeight: 17 },
   confirm: { borderTopWidth: 1, borderBottomWidth: 1, borderColor: colors.hairline, paddingVertical: 14, gap: 12 },
   pill: { height: 40, minWidth: 60, borderRadius: 999, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 13, justifyContent: 'center', alignItems: 'center' },
   keyBlock: { marginTop: 8, paddingTop: 12, borderTopWidth: 1, borderColor: colors.hairline, gap: 8 },

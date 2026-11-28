@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppState, Linking, Platform } from 'react-native';
 import { useAction, useAIStatus, useAppRuntime } from '../src/app/AppRuntimeContext';
-import { AI_MODEL_OPTIONS } from '../src/ai';
 import { ChatGPTConnectionCard } from '../src/ui/components/capture';
 import { BackHeader, Button, ErrorMessage, goBackOrReplace, Muted, Page } from '../src/ui/components/primitives';
 
@@ -42,6 +41,14 @@ export default function ChatGPT() {
     };
   }, [connectingOAuth, controller]);
 
+  const connectedMode = status.value?.mode;
+  const credentialGeneration = status.value?.credentialGeneration;
+  useEffect(() => {
+    if (connectedMode && connectedMode !== 'disconnected') {
+      void controller.refreshAvailableAIModels();
+    }
+  }, [connectedMode, credentialGeneration, controller]);
+
   return <Page><BackHeader title="ChatGPT" onBack={() => goBackOrReplace('/settings')} />
     <ErrorMessage message={action.error ?? status.error} />
     {status.loading && <Muted>Checking AI connection…</Muted>}
@@ -61,7 +68,9 @@ export default function ChatGPT() {
         if (!status.value?.consentAccepted) throw new Error('Allow meal text and photos to be sent to OpenAI before saving a key.');
         await controller.saveApiKey(key); setOAuthNote(null);
       })}
-      maskedKey={status.value.maskedKey} models={[...AI_MODEL_OPTIONS]} selectedModel={status.value.model}
+      maskedKey={status.value.maskedKey} models={status.value.models} selectedModel={status.value.model}
+      modelsState={status.value.modelsState} modelsError={status.value.modelsError}
+      onRetryModels={() => void controller.refreshAvailableAIModels({ force: true })}
       onSelectModel={model => void action.run(() => controller.setAIModel(model))}
       {...(status.value.mode === 'chatgpt_oauth' ? { onOpenManageUsage: () => void action.run(() => Linking.openURL('https://chatgpt.com/#settings')) } : {})}
       onDisconnect={() => void action.run(async () => {

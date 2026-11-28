@@ -173,7 +173,7 @@ describe('Slice 3 against real SQLite and compiled packs', () => {
       },
     } }));
     vi.stubGlobal('fetch', fetch);
-    expect(await app.getPreferences()).toMatchObject({ allowLiveOffLookup: false, aiModel: 'gpt-5-mini', aiConsentAccepted: false });
+    expect(await app.getPreferences()).toMatchObject({ allowLiveOffLookup: false, aiModel: 'gpt-6.2-sol', aiConsentAccepted: false });
     expect(await app.resolveBarcode('4006381333931')).toMatchObject({ status: 'not_found', liveLookupAttempted: false });
     expect(fetch).not.toHaveBeenCalled();
     await app.updatePreferences({ allowLiveOffLookup: true });
@@ -188,9 +188,9 @@ describe('Slice 3 against real SQLite and compiled packs', () => {
 
   it('keeps credentials in session memory, masks keys, grounds AI locally and confirms/undoes a whole meal', async () => {
     const { app, credentials, ai } = await open();
-    await connect(app); await app.setAIModel('gpt-5');
+    await connect(app); await app.setAIModel('gpt-6.2-astra');
     expect(await credentials.getApiKey()).toBe('sk-proj-test-secret-9d3f');
-    expect(await app.getAIStatus()).toMatchObject({ mode: 'api_key', model: 'gpt-5', consentAccepted: true, maskedKey: 'sk-proj-••••9d3f' });
+    expect(await app.getAIStatus()).toMatchObject({ mode: 'api_key', model: 'gpt-6.2-astra', consentAccepted: true, maskedKey: 'sk-proj-••••9d3f' });
     const proposal = await capture(app);
     expect(proposal.items).toHaveLength(2);
     expect(proposal.items.every(item => item.provenance_kind === 'database' && item.food.source_pack_id === 'custom-home-pack')).toBe(true);
@@ -626,5 +626,164 @@ describe('Slice 3 against real SQLite and compiled packs', () => {
 
     releaseClear();
     await pendingSignOut;
+  });
+
+  it('auto-upgrades retired GPT-5 preferences, loads live /v1/models, and clears cache on sign-out', async () => {
+    const aiFetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json({
+      models: [
+        { slug: 'gpt-6.1-terra', display_name: 'GPT-6.1 Terra', visibility: 'list', input_modalities: ['text', 'image'] },
+        { slug: 'gpt-6.2-astra', display_name: 'GPT-6.2 Astra', visibility: 'list', input_modalities: ['text', 'image'] },
+      ],
+    }));
+    const { app, credentials } = await open({ aiFetch, aiProviderFactory: undefined });
+    await app.deps.userDb.runAsync(
+      "INSERT INTO preferences(key,value_json,updated_at) VALUES('aiModel','\"gpt-5-mini\"','2026-11-23')",
+    );
+    expect((await app.getPreferences()).aiModel).toBe('gpt-6.2-sol');
+    await expect(app.setAIModel('gpt-5-mini')).rejects.toThrow(/retired/i);
+
+    await credentials.setOAuthSession?.({ accessToken: 'oauth-live-token', clientId: 'oaiapp_live' });
+    const models = await app.refreshAvailableAIModels();
+    expect(models.map(m => m.id)).toEqual(['gpt-6.1-terra', 'gpt-6.2-astra']);
+    // Current default gpt-6.2-sol was not in the account's live catalog, so controller auto-selected gpt-6.1-terra
+    expect(await app.getAIStatus()).toMatchObject({
+      mode: 'chatgpt_oauth',
+      model: 'gpt-6.1-terra',
+      modelsState: 'loaded',
+      modelsError: null,
+      models: [
+        { id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra', supportsVision: true },
+        { id: 'gpt-6.2-astra', label: 'GPT-6.2 Astra', supportsVision: true },
+      ],
+    });
+    // Cached per credential generation
+    await app.refreshAvailableAIModels();
+    expect(aiFetch).toHaveBeenCalledTimes(1);
+
+    // Same-mode credential switch advances credentialGeneration and invalidates cache
+    const genBefore = (await app.getAIStatus()).credentialGeneration;
+    await app.saveApiKey('sk-proj-account-b-1234');
+    const statusAfterKey = await app.getAIStatus();
+    expect(statusAfterKey.credentialGeneration).toBeGreaterThan(genBefore);
+    expect(statusAfterKey.modelsState).toBe('idle');
+    expect(statusAfterKey.models).toEqual([]);
+
+    await app.disconnectAI();
+    expect((await app.getAIStatus()).models.map(m => m.id)).toEqual(['gpt-6-luna', 'gpt-6.1-terra', 'gpt-6.2-sol', 'gpt-6.2-astra']);
+  });
+
+  it('reconciles aiModel atomically without undoing concurrent consent withdrawal or preference edits, and reconciles before direct inference and after restore', async () => {
+    let releaseFirstModels!: (response: Response) => void;
+    let postedModel: string | null = null;
+    const aiFetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async (url, init) => {
+      if (url === 'https://api.openai.com/v1/models') {
+        if (!releaseFirstModels) {
+          return new Promise<Response>(resolve => { releaseFirstModels = resolve; });
+        }
+        return Response.json({
+          models: [{ slug: 'gpt-6-luna', display_name: 'GPT-6 Luna', visibility: 'list', input_modalities: ['text', 'image'] }],
+        });
+      }
+      if (url === 'https://api.openai.com/v1/responses') {
+        const body = JSON.parse(String(init?.body)) as { model: string };
+        postedModel = body.model;
+        const payload = JSON.stringify({
+          name: 'Oats', brand: null, basis: 'per_100g', serving_g: 40, serving_ml: null,
+          kcal: 380, protein_g: 13, carbs_g: 66, fat_g: 7, fiber_g: 10, sugar_g: 1, sat_fat_g: 1, sodium_mg: 2,
+        });
+        return new Response(
+          `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: payload })}\n\ndata: ${JSON.stringify({ type: 'response.completed' })}\n\n`,
+          {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          },
+        );
+      }
+      throw new Error(`Unexpected URL ${String(url)}`);
+    });
+
+    const { app, credentials } = await open({ aiFetch, aiProviderFactory: undefined });
+    await app.setAIConsent(true);
+    await credentials.setOAuthSession?.({ accessToken: 'oauth-token-1', clientId: 'oaiapp_1' });
+
+    // Start refresh, then withdraw AI consent and change weightUnit before refresh resolves
+    const pendingRefresh = app.refreshAvailableAIModels();
+    await vi.waitFor(() => expect(releaseFirstModels).toBeDefined());
+    await app.setAIConsent(false);
+    await app.updatePreferences({ weightUnit: 'lb' });
+
+    releaseFirstModels(Response.json({
+      models: [{ slug: 'gpt-6-luna', display_name: 'GPT-6 Luna', visibility: 'list', input_modalities: ['text', 'image'] }],
+    }));
+    await pendingRefresh;
+
+    // Atomic reconciliation updated aiModel to gpt-6-luna WITHOUT reverting aiConsentAccepted or weightUnit
+    expect(await app.getPreferences()).toMatchObject({
+      aiModel: 'gpt-6-luna',
+      aiConsentAccepted: false,
+      weightUnit: 'lb',
+    });
+
+    // Replace restore resetting preferences (aiModel -> default gpt-6.2-sol) still reconciles on cached refresh & direct inference
+    const backup = await app.exportJson();
+    await app.restoreJson(backup, 'replace');
+    expect((await app.getPreferences()).aiModel).toBe('gpt-6.2-sol');
+    await app.refreshAvailableAIModels();
+    expect((await app.getPreferences()).aiModel).toBe('gpt-6-luna');
+
+    // Direct inference without visiting Settings reconciles to gpt-6-luna before POST /v1/responses
+    await app.saveApiKey('sk-proj-direct-infer-5555');
+    await app.setAIConsent(true);
+    await app.extractLabelFromImage('data:image/png;base64,aGVsbG8=');
+    expect(postedModel).toBe('gpt-6-luna');
+  });
+
+  it('prevents older overlapping forced refreshes from clobbering newer catalogs and surfaces catalog errors safely', async () => {
+    let releaseFirst!: (response: Response) => void;
+    let releaseSecond!: (response: Response) => void;
+    let callNum = 0;
+    const aiFetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => {
+      callNum += 1;
+      if (callNum === 1) return new Promise<Response>(resolve => { releaseFirst = resolve; });
+      if (callNum === 2) return new Promise<Response>(resolve => { releaseSecond = resolve; });
+      return new Response(null, { status: 403 });
+    });
+    const { app, credentials } = await open({ aiFetch, aiProviderFactory: undefined });
+    await credentials.setOAuthSession?.({ accessToken: 'oauth-token-overlap', clientId: 'oaiapp_overlap' });
+
+    const first = app.refreshAvailableAIModels({ force: true });
+    await vi.waitFor(() => expect(releaseFirst).toBeDefined());
+    const second = app.refreshAvailableAIModels({ force: true });
+    await vi.waitFor(() => expect(releaseSecond).toBeDefined());
+
+    releaseSecond(Response.json({
+      models: [{ slug: 'gpt-6.2-astra', display_name: 'GPT-6.2 Astra', visibility: 'list', input_modalities: ['text', 'image'] }],
+    }));
+    await second;
+    expect((await app.getAIStatus()).models.map(m => m.id)).toEqual(['gpt-6.2-astra']);
+
+    // Older refresh resolves later — must NOT overwrite newer catalog or selected model
+    releaseFirst(Response.json({
+      models: [{ slug: 'gpt-6-luna', display_name: 'GPT-6 Luna', visibility: 'list', input_modalities: ['text', 'image'] }],
+    }));
+    await first;
+    expect((await app.getAIStatus()).models.map(m => m.id)).toEqual(['gpt-6.2-astra']);
+    expect((await app.getPreferences()).aiModel).toBe('gpt-6.2-astra');
+
+    // 403 surfaces error state instead of unverified fallback options
+    await app.refreshAvailableAIModels({ force: true });
+    expect(await app.getAIStatus()).toMatchObject({
+      modelsState: 'error',
+      models: [],
+    });
+    expect((await app.getAIStatus()).modelsError).toBeTruthy();
+
+    // SecureStore failure during refresh does not throw an unhandled rejection
+    const failingStore = {
+      ...createMemoryCredentialStore(),
+      getOAuthSession: async () => { throw new Error('Keystore locked'); },
+    };
+    const { app: failingApp } = await open({ credentials: failingStore, aiFetch, aiProviderFactory: undefined });
+    await expect(failingApp.refreshAvailableAIModels()).resolves.toBeInstanceOf(Array);
   });
 });

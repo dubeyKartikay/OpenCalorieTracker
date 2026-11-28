@@ -4,13 +4,41 @@ import type { NutrientAggregate, Quantity } from '../domain';
 import type * as schemas from './schemas';
 
 export type AIAuthMode = 'disconnected' | 'chatgpt_oauth' | 'api_key';
-export interface AIModelOption { id: 'gpt-5-mini' | 'gpt-5'; label: string; supportsVision: boolean }
-/** UI defaults; the connection layer must filter these against the account's model catalogue. */
+export type AIModelsCatalogState = 'idle' | 'loading' | 'loaded' | 'empty' | 'error';
+export interface AIModelOption { id: string; label: string; supportsVision: boolean }
+/** Fallback defaults when offline or disconnected before the account's live /v1/models catalog loads. */
 export const AI_MODEL_OPTIONS: readonly AIModelOption[] = [
-  { id: 'gpt-5-mini', label: 'GPT-5 mini', supportsVision: true },
-  { id: 'gpt-5', label: 'GPT-5', supportsVision: true },
+  { id: 'gpt-6-luna', label: 'GPT-6 Luna', supportsVision: true },
+  { id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra', supportsVision: true },
+  { id: 'gpt-6.2-sol', label: 'GPT-6.2 Sol', supportsVision: true },
+  { id: 'gpt-6.2-astra', label: 'GPT-6.2 Astra', supportsVision: true },
 ];
-export const DEFAULT_AI_MODEL = 'gpt-5-mini';
+export const DEFAULT_AI_MODEL = 'gpt-6.2-sol';
+export const LEGACY_RETIRED_AI_MODELS = new Set<string>(['gpt-5', 'gpt-5-mini']);
+
+const NON_VISION_MODEL_PATTERN = /^(?:gpt-3\.5|o1-mini|text-|whisper|tts|dall-e|babbage|davinci|omni-moderation)|(?:^|-)(?:audio|realtime|transcribe|tts|embedding|moderation|instruct|search)(?:-|$)/i;
+const DOCUMENTED_VISION_MODEL_PATTERN = /^(?:gpt-(?:6(?:\.\d+)?|5(?:\.\d+)?|4\.1|4o)|o[34])(?:-(?:astra|sol|terra|luna|pro|mini|nano|codex|instant|thinking))?$/i;
+
+export function modelSupportsVision(modelId: string, knownModels?: readonly AIModelOption[]): boolean {
+  const known = knownModels?.find(option => option.id === modelId)
+    ?? AI_MODEL_OPTIONS.find(option => option.id === modelId);
+  if (known) return known.supportsVision;
+  const trimmed = modelId.trim();
+  if (!trimmed || NON_VISION_MODEL_PATTERN.test(trimmed)) return false;
+  return DOCUMENTED_VISION_MODEL_PATTERN.test(trimmed);
+}
+
+const PREFERRED_MODEL_ORDER = ['gpt-6.2-sol', 'gpt-6.1-terra', 'gpt-6-luna', 'gpt-6.2-astra'] as const;
+
+export function pickPreferredAIModel(models: readonly AIModelOption[], currentModel?: string): string {
+  if (currentModel && !LEGACY_RETIRED_AI_MODELS.has(currentModel) && models.some(option => option.id === currentModel)) {
+    return currentModel;
+  }
+  for (const preferred of PREFERRED_MODEL_ORDER) {
+    if (models.some(option => option.id === preferred)) return preferred;
+  }
+  return models.find(option => option.supportsVision)?.id ?? models[0]?.id ?? DEFAULT_AI_MODEL;
+}
 export type AIErrorCode = 'not_connected' | 'timeout' | 'network' | 'quota_exhausted' | 'auth_expired' | 'refusal' | 'malformed_output' | 'unsupported_media';
 const messages: Record<AIErrorCode, string> = {
   not_connected: 'Connect AI to analyse this meal, or continue with manual entry.',

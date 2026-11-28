@@ -9,8 +9,8 @@ import { createUnavailableHealthPort, HealthSyncEngine } from '../health';
 import type { HealthCapability, HealthPermissionsState, HealthPermissionScope, HealthPlatformPort, HealthWeightImportResult } from '../health';
 import { BarcodeResolver, parseNutritionLabelText } from '../barcode';
 import type { BarcodeResolution } from '../barcode';
-import { AIError, DEFAULT_AGENT_NAME_HINT, OPENAI_DYNAMIC_CLIENT_ID, OpenAIResponsesProvider, applyClarifyingAnswer, buildAuthorizationUrl, captureMealDraft, exchangeAuthorizationCode, extractNutritionLabel, generatePkcePair, hasRequiredOAuthScope, refreshAccessToken, revokeOAuthToken, verifyOAuthIdToken } from '../ai';
-import type { AIAuthMode, AIProvider, LoopbackAuthPort, MealDraftProposal, NutritionLabelExtraction, PkceCryptoProvider } from '../ai';
+import { AIError, AI_MODEL_OPTIONS, DEFAULT_AGENT_NAME_HINT, DEFAULT_AI_MODEL, LEGACY_RETIRED_AI_MODELS, OPENAI_DYNAMIC_CLIENT_ID, OpenAIResponsesProvider, applyClarifyingAnswer, buildAuthorizationUrl, captureMealDraft, exchangeAuthorizationCode, extractNutritionLabel, fetchOpenAIModelCatalog, generatePkcePair, hasRequiredOAuthScope, pickPreferredAIModel, refreshAccessToken, revokeOAuthToken, verifyOAuthIdToken } from '../ai';
+import type { AIAuthMode, AIModelOption, AIModelsCatalogState, AIProvider, LoopbackAuthPort, MealDraftProposal, NutritionLabelExtraction, PkceCryptoProvider } from '../ai';
 import { createMemoryCredentialStore, maskSecretKey } from './credentials';
 import type { CredentialStore, OAuthSession } from './credentials';
 
@@ -108,7 +108,7 @@ const preferencesSchema = z.strictObject({
   onboardingCompleted: z.boolean().default(false), ageConfirmed18Plus: z.boolean().default(false),
   energyUnit: z.enum(['kcal', 'kJ']).default('kcal'), weightUnit: z.enum(['kg', 'lb']).default('kg'),
   mealSections: z.array(z.string().trim().min(1)).min(1).default(() => [...MEALS]),
-  allowLiveOffLookup: z.boolean().default(false), aiModel: z.string().trim().min(1).default('gpt-5-mini'),
+  allowLiveOffLookup: z.boolean().default(false), aiModel: z.string().trim().min(1).default(DEFAULT_AI_MODEL),
   aiConsentAccepted: z.boolean().default(false),
   leadMetric: z.enum(['calories', 'protein', 'fiber', 'water']).default('calories'),
   healthNutritionWriteEnabled: z.boolean().default(false),
@@ -135,12 +135,14 @@ export function estimateTargetPreview(input: TargetInputs) {
 async function readPreferences(db: SqlDatabase): Promise<AppPreferences> {
   const rows = await db.getAllAsync<{ key: string; value_json: string }>('SELECT key,value_json FROM preferences');
   const values = Object.fromEntries(rows.filter(row => row.key in preferencesSchema.shape).map(row => [row.key, JSON.parse(row.value_json)]));
-  return preferencesSchema.parse(values);
+  const parsed = preferencesSchema.parse(values);
+  return LEGACY_RETIRED_AI_MODELS.has(parsed.aiModel) ? { ...parsed, aiModel: DEFAULT_AI_MODEL } : parsed;
 }
 async function writePreferences(db: SqlDatabase, patch: Partial<AppPreferences>) {
   const preferences = preferencesSchema.parse({ ...await readPreferences(db), ...patch });
+  const now = new Date().toISOString();
   for (const [key, value] of Object.entries(preferences)) {
-    await db.runAsync('INSERT INTO preferences(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at', key, JSON.stringify(value), new Date().toISOString());
+    await db.runAsync('INSERT INTO preferences(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at', key, JSON.stringify(value), now);
   }
   return preferences;
 }
@@ -163,21 +165,32 @@ export class AppController {
   private pendingCredentialMutations = 0;
   private aiConsentGeneration = 0;
   private credentialAbortController = new AbortController();
+  private aiRequestAbortController = new AbortController();
   private credentialOpChain: Promise<void> = Promise.resolve();
   private oauthConnectAttempt = 0;
   private activeOAuthCancel: (() => void) | null = null;
   private activeOAuthCallbackCancel: (() => void) | null = null;
   private confirmingDraft: Promise<DiaryEntrySnapshot[]> | null = null;
   private refreshingOAuth: { gen: number; promise: Promise<string | null> } | null = null;
+  private modelFetchAttempt = 0;
+  private availableModelsCache: { gen: number; models: AIModelOption[] } | null = null;
+  private modelsCatalogState: { gen: number; status: AIModelsCatalogState; error: string | null } | null = null;
+  private fetchingModels: { gen: number; requestId: number; promise: Promise<AIModelOption[]> } | null = null;
   private entryHealthChains = new Map<string, Promise<void>>();
   private abortActiveAIRequests() {
-    this.credentialAbortController.abort();
-    this.credentialAbortController = new AbortController();
+    this.aiRequestAbortController.abort();
+    this.aiRequestAbortController = new AbortController();
   }
   private invalidateCredentials() {
     this.credentialGeneration++;
+    this.modelFetchAttempt++;
+    this.credentialAbortController.abort();
+    this.credentialAbortController = new AbortController();
     this.abortActiveAIRequests();
     this.refreshingOAuth = null;
+    this.availableModelsCache = null;
+    this.modelsCatalogState = null;
+    this.fetchingModels = null;
   }
   private invalidateAIConsent() {
     this.aiConsentGeneration++;
@@ -1049,14 +1062,177 @@ export class AppController {
     const key = await this.credentials.getApiKey();
     return key ? { mode: 'api_key' as const, token: key } : null;
   }
-  async getAIStatus(): Promise<{ mode: AIAuthMode; model: string; consentAccepted: boolean; maskedKey: string | null; statusLabel: string }> {
+  private getCachedAIModels(): AIModelOption[] {
+    return this.availableModelsCache?.gen === this.credentialGeneration
+      ? [...this.availableModelsCache.models]
+      : [...AI_MODEL_OPTIONS];
+  }
+  private getAIModelsState(connected: boolean): { status: AIModelsCatalogState; error: string | null } {
+    if (!connected) return { status: 'idle', error: null };
+    if (this.fetchingModels?.gen === this.credentialGeneration) return { status: 'loading', error: null };
+    if (this.modelsCatalogState?.gen === this.credentialGeneration) {
+      return { status: this.modelsCatalogState.status, error: this.modelsCatalogState.error };
+    }
+    return { status: 'idle', error: null };
+  }
+  private async reconcileAIModel(models: readonly AIModelOption[], expectedGen: number, expectedRequestId?: number): Promise<string | null> {
+    if (!models.length) return null;
+    const isFresh = () =>
+      this.pendingCredentialMutations === 0
+      && this.credentialGeneration === expectedGen
+      && (expectedRequestId === undefined || this.modelFetchAttempt === expectedRequestId);
+    if (!isFresh()) return null;
+    let updated = false;
+    const resolved = await this.deps.userDb.withTransactionAsync(async tx => {
+      if (!isFresh()) return null;
+      const current = await readPreferences(tx);
+      if (models.some(option => option.id === current.aiModel)) return current.aiModel;
+      const next = pickPreferredAIModel(models, current.aiModel);
+      if (!isFresh()) return null;
+      await tx.runAsync(
+        'INSERT INTO preferences(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at',
+        'aiModel',
+        JSON.stringify(next),
+        new Date().toISOString(),
+      );
+      updated = true;
+      return next;
+    });
+    if (updated) this.refresh();
+    return resolved;
+  }
+  async getAIStatus(): Promise<{
+    mode: AIAuthMode;
+    model: string;
+    consentAccepted: boolean;
+    maskedKey: string | null;
+    statusLabel: string;
+    models: AIModelOption[];
+    modelsLoading: boolean;
+    modelsState: AIModelsCatalogState;
+    modelsError: string | null;
+    credentialGeneration: number;
+  }> {
     const [connection, preferences, key] = await Promise.all([this.aiConnection(), this.getPreferences(), this.credentials.getApiKey()]);
-    return { mode: connection?.mode ?? 'disconnected', model: preferences.aiModel, consentAccepted: preferences.aiConsentAccepted,
+    const connected = Boolean(connection);
+    const catalogState = this.getAIModelsState(connected);
+    const models = connected
+      ? (catalogState.status === 'loaded' ? this.getCachedAIModels() : [])
+      : [...AI_MODEL_OPTIONS];
+    return {
+      mode: connection?.mode ?? 'disconnected',
+      model: preferences.aiModel,
+      consentAccepted: preferences.aiConsentAccepted,
       maskedKey: key ? maskSecretKey(key) : null,
-      statusLabel: connection?.mode === 'chatgpt_oauth' ? 'Connected with ChatGPT' : connection ? 'Connected with OpenAI API key' : 'AI disconnected' };
+      statusLabel: connection?.mode === 'chatgpt_oauth' ? 'Connected with ChatGPT' : connection ? 'Connected with OpenAI API key' : 'AI disconnected',
+      models,
+      modelsLoading: catalogState.status === 'loading',
+      modelsState: catalogState.status,
+      modelsError: catalogState.error,
+      credentialGeneration: this.credentialGeneration,
+    };
+  }
+  async refreshAvailableAIModels(options?: { force?: boolean; signal?: AbortSignal; connection?: { mode: 'chatgpt_oauth' | 'api_key'; token: string } }): Promise<AIModelOption[]> {
+    const waitForShared = (shared: Promise<AIModelOption[]>, callerSignal?: AbortSignal): Promise<AIModelOption[]> => {
+      if (!callerSignal) return shared;
+      if (callerSignal.aborted) return Promise.resolve(this.getCachedAIModels());
+      return new Promise<AIModelOption[]>(resolve => {
+        const onAbort = () => resolve(this.getCachedAIModels());
+        callerSignal.addEventListener('abort', onAbort, { once: true });
+        shared.then(
+          value => { callerSignal.removeEventListener('abort', onAbort); resolve(value); },
+          () => { callerSignal.removeEventListener('abort', onAbort); resolve(this.getCachedAIModels()); },
+        );
+      });
+    };
+    try {
+      if (options?.signal?.aborted || this.pendingCredentialMutations > 0) return this.getCachedAIModels();
+      const capturedGen = this.credentialGeneration;
+      if (!options?.force && this.availableModelsCache?.gen === capturedGen) {
+        const cached = [...this.availableModelsCache.models];
+        await this.reconcileAIModel(cached, capturedGen);
+        return cached;
+      }
+      if (!options?.force && this.fetchingModels?.gen === capturedGen) {
+        return waitForShared(this.fetchingModels.promise, options?.signal);
+      }
+      const authAbortSignal = this.credentialAbortController.signal;
+      const connection = options?.connection ?? await this.aiConnection();
+      if (!connection || options?.signal?.aborted || this.pendingCredentialMutations > 0 || this.credentialGeneration !== capturedGen) {
+        return [...AI_MODEL_OPTIONS];
+      }
+      if (!options?.force && this.fetchingModels?.gen === capturedGen) {
+        return waitForShared(this.fetchingModels.promise, options?.signal);
+      }
+      const requestId = ++this.modelFetchAttempt;
+      let promise: Promise<AIModelOption[]> | undefined;
+      promise = (async () => {
+        try {
+          const models = await fetchOpenAIModelCatalog({
+            getAccessToken: async signal => {
+              if (this.pendingCredentialMutations > 0 || this.credentialGeneration !== capturedGen) return null;
+              if (connection.mode === 'api_key') {
+                const key = await this.credentials.getApiKey();
+                return this.pendingCredentialMutations === 0 && this.credentialGeneration === capturedGen ? key : null;
+              }
+              return this.resolveValidOAuthAccessToken(false, capturedGen, signal);
+            },
+            onAuthExpiredRetry:
+              connection.mode === 'chatgpt_oauth'
+                ? signal => this.resolveValidOAuthAccessToken(true, capturedGen, signal)
+                : undefined,
+            canSendRequest: () =>
+              this.pendingCredentialMutations === 0
+              && this.credentialGeneration === capturedGen
+              && this.modelFetchAttempt === requestId,
+            authAbortSignal,
+            fetch: this.deps.aiFetch,
+          });
+          if (this.pendingCredentialMutations === 0 && this.credentialGeneration === capturedGen && this.modelFetchAttempt === requestId) {
+            if (models.length > 0) {
+              this.availableModelsCache = { gen: capturedGen, models };
+              this.modelsCatalogState = { gen: capturedGen, status: 'loaded', error: null };
+              await this.reconcileAIModel(models, capturedGen, requestId);
+              this.refresh();
+              return [...models];
+            }
+            this.availableModelsCache = null;
+            this.modelsCatalogState = { gen: capturedGen, status: 'empty', error: 'No compatible models were returned for this account.' };
+            this.refresh();
+            return [];
+          }
+          return this.getCachedAIModels();
+        } catch (error) {
+          if (this.pendingCredentialMutations === 0 && this.credentialGeneration === capturedGen && this.modelFetchAttempt === requestId) {
+            const message = error instanceof AIError
+              ? (error.code === 'auth_expired' ? 'Sign-in expired. Reconnect to load models.' : 'Could not load models from OpenAI.')
+              : 'Could not load models from OpenAI.';
+            this.modelsCatalogState = { gen: capturedGen, status: 'error', error: message };
+            this.refresh();
+          }
+          return this.getCachedAIModels();
+        } finally {
+          if (this.fetchingModels?.promise === promise) {
+            this.fetchingModels = null;
+            this.refresh();
+          }
+        }
+      })();
+      this.fetchingModels = { gen: capturedGen, requestId, promise };
+      this.modelsCatalogState = { gen: capturedGen, status: 'loading', error: null };
+      this.refresh();
+      return waitForShared(promise, options?.signal);
+    } catch {
+      return this.getCachedAIModels();
+    }
   }
   async setAIConsent(accepted: boolean): Promise<void> { await this.updatePreferences({ aiConsentAccepted: accepted }); }
-  async setAIModel(model: string): Promise<void> { await this.updatePreferences({ aiModel: model }); }
+  async setAIModel(model: string): Promise<void> {
+    const trimmed = model.trim();
+    if (!trimmed) throw new Error('Choose a valid model.');
+    if (LEGACY_RETIRED_AI_MODELS.has(trimmed)) throw new Error('This model has been retired. Choose a current model.');
+    await this.updatePreferences({ aiModel: trimmed });
+  }
   async saveApiKey(apiKey: string): Promise<void> {
     const key = apiKey.trim(); if (!key) throw new Error('Enter an OpenAI API key');
     this.pendingCredentialMutations++;
@@ -1305,46 +1481,61 @@ export class AppController {
       clearTimeout(timer);
     }
   }
-  private async connectedProvider() {
+  private async connectedProvider(signal?: AbortSignal) {
     if (this.pendingCredentialMutations > 0) throw new AIError('not_connected');
+    if (signal?.aborted) throw new AIError('timeout');
     const capturedGen = this.credentialGeneration;
     const capturedConsentGen = this.aiConsentGeneration;
-    const authAbortSignal = this.credentialAbortController.signal;
+    const authAbortSignal = this.aiRequestAbortController.signal;
     const connection = await this.aiConnection();
     if (!connection || this.pendingCredentialMutations > 0 || this.credentialGeneration !== capturedGen) throw new AIError('not_connected');
-    const preferences = await this.getPreferences();
+    let preferences = await this.getPreferences();
     if (this.pendingCredentialMutations > 0 || this.credentialGeneration !== capturedGen) throw new AIError('not_connected');
     if (this.aiConsentGeneration !== capturedConsentGen || !preferences.aiConsentAccepted) throw new AIError('refusal');
+    if (!this.deps.aiProviderFactory && this.availableModelsCache?.gen !== capturedGen) {
+      await this.refreshAvailableAIModels({ connection, ...(signal ? { signal } : {}) });
+      if (signal?.aborted) throw new AIError('timeout');
+      if (this.pendingCredentialMutations > 0 || this.credentialGeneration !== capturedGen) throw new AIError('not_connected');
+      if (this.aiConsentGeneration !== capturedConsentGen) throw new AIError('refusal');
+      preferences = await this.getPreferences();
+      if (this.pendingCredentialMutations > 0 || this.credentialGeneration !== capturedGen) throw new AIError('not_connected');
+      if (this.aiConsentGeneration !== capturedConsentGen || !preferences.aiConsentAccepted) throw new AIError('refusal');
+    } else if (this.availableModelsCache?.gen === capturedGen) {
+      const reconciled = await this.reconcileAIModel(this.availableModelsCache.models, capturedGen);
+      if (reconciled) preferences = { ...preferences, aiModel: reconciled };
+    }
+    const knownModels = this.getCachedAIModels();
     const provider = this.deps.aiProviderFactory?.(connection.token, connection.mode)
       ?? new OpenAIResponsesProvider({
         authMode: connection.mode,
-        getAccessToken: async signal => {
+        getAccessToken: async tokenSignal => {
           if (this.pendingCredentialMutations > 0 || this.credentialGeneration !== capturedGen || this.aiConsentGeneration !== capturedConsentGen) return null;
           if (connection.mode === 'api_key') {
             const key = await this.credentials.getApiKey();
             return this.pendingCredentialMutations === 0 && this.credentialGeneration === capturedGen && this.aiConsentGeneration === capturedConsentGen ? key : null;
           }
-          return this.resolveValidOAuthAccessToken(false, capturedGen, signal);
+          return this.resolveValidOAuthAccessToken(false, capturedGen, tokenSignal);
         },
         onAuthExpiredRetry:
           connection.mode === 'chatgpt_oauth'
-            ? signal => {
+            ? tokenSignal => {
                 if (this.pendingCredentialMutations > 0 || this.aiConsentGeneration !== capturedConsentGen) return Promise.resolve(null);
-                return this.resolveValidOAuthAccessToken(true, capturedGen, signal);
+                return this.resolveValidOAuthAccessToken(true, capturedGen, tokenSignal);
               }
             : undefined,
         canSendRequest: () =>
           this.pendingCredentialMutations === 0 && this.credentialGeneration === capturedGen && this.aiConsentGeneration === capturedConsentGen,
         authAbortSignal,
+        knownModels,
         fetch: this.deps.aiFetch,
       });
-    return { provider, model: preferences.aiModel };
+    return { provider, model: preferences.aiModel, knownModels };
   }
   async captureMealWithAI(input: { text: string; imageDataUrl?: string; meal: string; date?: string; signal?: AbortSignal }): Promise<MealDraftProposal> {
     const generation = ++this.draftGeneration;
     try {
       const date = isoDateSchema.parse(input.date ?? localDate());
-      const connection = await this.connectedProvider();
+      const connection = await this.connectedProvider(input.signal);
       const proposal = await captureMealDraft({ ...input, ...connection, catalog: this.deps.catalog });
       if (generation !== this.draftGeneration || input.signal?.aborted) throw new AIError('timeout');
       this.activeDraft = { proposal, meal: input.meal, date }; this.refresh(); return proposal;
@@ -1469,7 +1660,7 @@ export class AppController {
   }
   async extractLabelFromImage(imageDataUrl: string, signal?: AbortSignal): Promise<NutritionLabelExtraction> {
     try {
-      const connection = await this.connectedProvider();
+      const connection = await this.connectedProvider(signal);
       return await extractNutritionLabel({ ...connection, imageDataUrl, ...(signal ? { signal } : {}) });
     } catch (error) { throw error instanceof AIError ? error : new AIError(signal?.aborted ? 'timeout' : 'network'); }
   }
