@@ -1,7 +1,7 @@
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
-import { useMemo, useState, type PropsWithChildren } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { useCallback, useMemo, useState, type PropsWithChildren } from 'react';
+import { BackHandler, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { useAction, useAIStatus, useAppRuntime, useHealthStatus, usePacksManager, usePreferences, useTodayDiary } from '../src/app/AppRuntimeContext';
 import { localDate, type AppPreferences } from '../src/app/controller';
 import type { GoalPeriod, TargetEstimate } from '../src/domain';
@@ -155,25 +155,56 @@ function Preferences({ preferences }: { preferences: AppPreferences }) {
 function Backup() {
   const runtime = useAppRuntime(); const action = useAction();
   const [json, setJson] = useState(''); const [preview, setPreview] = useState<ReturnType<typeof runtime.controller.previewRestore> | null>(null);
-  const [path, setPath] = useState(''); const [message, setMessage] = useState(''); const [csv, setCsv] = useState(''); const [importOpen, setImportOpen] = useState(false); const [csvOpen, setCsvOpen] = useState(false);
+  const [path, setPath] = useState(''); const [lastExport, setLastExport] = useState<{ contents: string; filename: string } | null>(null);
+  const [message, setMessage] = useState(''); const [csv, setCsv] = useState(''); const [importOpen, setImportOpen] = useState(false); const [csvOpen, setCsvOpen] = useState(false);
   const updateJson = (text: string) => { setJson(text); setPreview(null); setMessage(''); };
-  const exportCsv = (kind: 'diary' | 'weight') => void action.run(async () => { const contents = kind === 'diary' ? await runtime.controller.exportDiaryCsv() : await runtime.controller.exportWeightCsv(); setCsv(contents); setPath(await runtime.saveBackup(contents, `open-calorie-tracker-${kind}.csv`)); });
+  const exportCsv = (kind: 'diary' | 'weight') => void action.run(async () => {
+    const filename = `open-calorie-tracker-${kind}.csv`;
+    const contents = kind === 'diary' ? await runtime.controller.exportDiaryCsv() : await runtime.controller.exportWeightCsv();
+    setCsv(contents);
+    setLastExport({ contents, filename });
+    setPath(await runtime.saveBackup(contents, filename));
+  });
   return <View style={{ marginTop: 28 }}><SectionRule label="Export & import" uppercase />
     <View style={[styles.targetRow, { minHeight: 64 }]}><Text style={styles.label}>Export</Text><View style={ui.row}>
-      <Pill label="JSON" disabled={action.busy} onPress={() => void action.run(async () => { const exported = await runtime.controller.exportJson(); updateJson(exported); setPath(await runtime.saveBackup(exported)); })} />
+      <Pill label="JSON" disabled={action.busy} onPress={() => void action.run(async () => {
+        const filename = 'open-calorie-tracker-backup-v1.json';
+        const exported = await runtime.controller.exportJson();
+        updateJson(exported);
+        setLastExport({ contents: exported, filename });
+        setPath(await runtime.saveBackup(exported, filename));
+      })} />
       <Pill label="CSV" disabled={action.busy} onPress={() => setCsvOpen(open => !open)} /></View></View>
     <Text style={styles.note}>API keys and ChatGPT sign-in are never exported</Text>
     {csvOpen && <View style={ui.wrap}><Button label="Diary CSV" quiet disabled={action.busy} onPress={() => exportCsv('diary')} /><Button label="Weight CSV" quiet disabled={action.busy} onPress={() => exportCsv('weight')} /></View>}
     {!!path && <Text selectable style={styles.note}>Saved: {path}</Text>}
+    {!!lastExport && runtime.shareBackup && (
+      <View style={ui.wrap}>
+        <Button
+          label={Platform.OS === 'android' ? 'Save copy to folder' : 'Share export file'}
+          quiet
+          disabled={action.busy}
+          onPress={() => void action.run(async () => {
+            const dest = await runtime.shareBackup!(lastExport.contents, lastExport.filename, path || undefined);
+            if (dest) setMessage(Platform.OS === 'android' ? 'Export saved to selected folder.' : 'Export shared.');
+          })}
+        />
+      </View>
+    )}
     {!!csv && <ScrollView style={{ maxHeight: 180 }} nestedScrollEnabled><Text selectable style={styles.note}>{csv}</Text></ScrollView>}
     <Pressable accessibilityRole="button" accessibilityState={{ expanded: importOpen }} onPress={() => setImportOpen(open => !open)} style={[styles.nav, { marginTop: 14 }]}><Text style={styles.label}>Import JSON backup</Text><DoopIcon name="chevronDown" size={16} color={colors.muted} /></Pressable>
     {importOpen && <View style={styles.estimator}><Button label="Open JSON backup file" quiet disabled={action.busy} onPress={() => void action.run(async () => { const picked = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true }); if (!picked.canceled && picked.assets[0]) updateJson(await runtime.readTextFile(picked.assets[0].uri)); })} />
       <Input label="Backup JSON · copy or paste" value={json} onChangeText={updateJson} multiline autoCapitalize="none" autoCorrect={false} style={{ minHeight: 120, maxHeight: 240, textAlignVertical: 'top' }} />
       <Button label="Validate & preview restore" disabled={action.busy || !json.trim()} onPress={() => void action.run(async () => { setPreview(runtime.controller.previewRestore(json)); })} />
-      <Text style={styles.note}>Includes diary snapshots, water logs, custom foods, recipes, batches, goals, weigh-ins and pack metadata. Pack files, saved meals, photo drafts, personal units, barcode links, learned portions and local settings are not included.</Text>
+      <Text style={styles.note}>Includes diary snapshots, water logs, custom foods, barcode links, saved meals, personal units, learned portions, recipes, batches, goals, weigh-ins and pack metadata. Pack files, offline photo drafts, health sync links and local settings are not included.</Text>
       {preview && <><Label>{preview.days} days · {preview.entries} entries · {preview.foods} foods · {preview.packs} pack records</Label><Text style={styles.note}>{preview.bundle.recipes.length} recipes · {preview.bundle.recipe_batches.length} batches · {preview.goals} goals · {preview.weighIns} weigh-ins · {preview.waterLogs} water logs</Text>
-        <Text style={styles.note}>Merge keeps existing records on conflicts. Replace clears existing personal data and local settings. Restored pack metadata needs its pack file imported again.</Text>
-        <View style={ui.wrap}>{(['merge', 'replace'] as const).map(mode => <Button key={mode} label={`Restore · ${mode === 'merge' ? 'Merge' : 'Replace'}`} disabled={action.busy} onPress={() => void action.run(async () => { await runtime.controller.restoreJson(json, mode); setPreview(null); setMessage('Backup restored.'); })} />)}</View></>}
+        {preview.droppedDuplicateGoals > 0 && <Text style={styles.note}>{`${preview.droppedDuplicateGoals} duplicate same-day goal ${preview.droppedDuplicateGoals === 1 ? 'entry' : 'entries'} in this legacy backup will be deduplicated.`}</Text>}
+        <Text style={styles.note}>Merge keeps existing records on conflicts. Replace clears existing personal data and local settings. Bundled food packs remount automatically; third-party packs need re-importing.</Text>
+        <View style={ui.wrap}>{(['merge', 'replace'] as const).map(mode => <Button key={mode} label={`Restore · ${mode === 'merge' ? 'Merge' : 'Replace'}`} disabled={action.busy} onPress={() => void action.run(async () => {
+          const outcome = await runtime.controller.restoreJson(json, mode);
+          setPreview(null);
+          setMessage(outcome.packErrors.length ? `Backup restored, but some food packs could not remount: ${outcome.packErrors.join('; ')}` : 'Backup restored.');
+        })} />)}</View></>}
     </View>}
     <ErrorMessage message={action.error} />{!!message && <Muted>{message}</Muted>}
   </View>;
@@ -194,7 +225,7 @@ function OSHealth({ preferences }: { preferences: AppPreferences | undefined }) 
   </View>;
 }
 function Privacy({ preferences }: { preferences: AppPreferences | undefined }) {
-  const { controller } = useAppRuntime(); const action = useAction();
+  const runtime = useAppRuntime(); const { controller } = runtime; const action = useAction();
   const [deleting, setDeleting] = useState(false);
   const [deleted, setDeleted] = useState(false);
   return <><OSHealth preferences={preferences} /><Backup /><View style={{ marginTop: 28 }}><SectionRule label="What’s sent where" uppercase />
@@ -205,11 +236,11 @@ function Privacy({ preferences }: { preferences: AppPreferences | undefined }) {
   </View>
     <View style={{ marginTop: 28 }}><SectionRule label="Local data" uppercase />
       <Pressable accessibilityRole="button" accessibilityState={{ expanded: deleting }} onPress={() => setDeleting(open => !open)} style={styles.nav}><Text style={[styles.label, { color: colors.danger }]}>Delete local data</Text></Pressable>
-      {deleting && <View style={styles.estimator}><Text style={styles.note}>Delete this device’s diary, library, recipes, batches, goals, photos and settings? Export a backup first if you want to keep them. This cannot be undone.</Text><View style={ui.wrap}>
+      {deleting && <View style={styles.estimator}><Text style={styles.note}>Delete this device’s diary, library, recipes, batches, goals, photos, cached barcode lookups, app-owned exports, and settings? Files you saved outside the app and records already synced to Apple Health / Health Connect are not removed. This cannot be undone.</Text><View style={ui.wrap}>
         <Button label="Cancel" quiet disabled={action.busy} onPress={() => setDeleting(false)} />
         <Button label="Delete local data" disabled={action.busy} onPress={() => void action.run(async () => {
-          await controller.restoreJson(JSON.stringify({ schema_version: 1, exported_at: new Date().toISOString(), diary_days: [], custom_foods: [], recipes: [], recipe_batches: [], goal_periods: [], weigh_ins: [], packs: [], water_logs: [] }), 'replace');
-          await controller.disconnectAI(); setDeleting(false); setDeleted(true);
+          await controller.deleteLocalData({ clearSandboxExports: runtime.clearSandboxExports });
+          setDeleting(false); setDeleted(true);
         })} />
       </View></View>}
       {deleted && <Text accessibilityLiveRegion="polite" style={styles.note}>Local data deleted.</Text>}
@@ -219,6 +250,14 @@ export default function Settings() {
   const today = useTodayDiary(); const preferences = usePreferences(); const ai = useAIStatus();
   const [view, setView] = useState<'settings' | 'privacy' | 'databases' | 'display'>('settings');
   const { controller } = useAppRuntime(); const action = useAction();
+  useFocusEffect(useCallback(() => {
+    if (view === 'settings' || Platform.OS === 'web') return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      setView('settings');
+      return true;
+    });
+    return () => sub.remove();
+  }, [view]));
   return <Page><BackHeader title={view === 'privacy' ? 'Data & privacy' : view === 'databases' ? 'Food databases' : view === 'display' ? 'Display' : 'Settings'} onBack={() => view !== 'settings' ? setView('settings') : goBackOrReplace('/(tabs)')} />
     <ErrorMessage message={today.error ?? preferences.error} />
     {view === 'settings' && <>

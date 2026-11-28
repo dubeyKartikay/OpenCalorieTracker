@@ -9,6 +9,7 @@ private struct LoopbackFailure: Error {
 private struct CallbackResult {
   let code: String
   let state: String
+  let clientId: String?
 }
 
 public final class OctOAuthLoopbackModule: Module {
@@ -57,7 +58,11 @@ public final class OctOAuthLoopbackModule: Module {
         self?.sessions.removeValue(forKey: sessionId)
         switch result {
         case .success(let callback):
-          promise.resolve(["code": callback.code, "state": callback.state])
+          var payload: [String: String] = ["code": callback.code, "state": callback.state]
+          if let clientId = callback.clientId, !clientId.isEmpty {
+            payload["clientId"] = clientId
+          }
+          promise.resolve(payload)
         case .failure(let error):
           promise.reject("ERR_OAUTH_LOOPBACK", error.message)
         }
@@ -232,8 +237,10 @@ private final class LoopbackSession {
         failResponse(connection, id: id, message: "The sign-in response is missing an authorization code.", error: "Missing OAuth authorization code")
         return
       }
+      let rawClientId = query["client_id"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+      let issuedClientId = (rawClientId?.isEmpty == false) ? rawClientId : nil
       finishing = true
-      respond(connection, id: id, status: "200 OK", message: "Sign-in complete — you can return to OpenCalorieTracker.", result: .success(CallbackResult(code: code, state: expectedState)))
+      respond(connection, id: id, status: "200 OK", message: "Finishing sign-in in the app…", result: .success(CallbackResult(code: code, state: expectedState, clientId: issuedClientId)))
     } catch {
       failResponse(connection, id: id, message: "Invalid sign-in response.", error: "Invalid OAuth callback query")
     }
@@ -260,8 +267,23 @@ private final class LoopbackSession {
 
   private func respond(_ connection: NWConnection, id: UUID, status: String, message: String,
                        result: Result<CallbackResult, LoopbackFailure>? = nil) {
+    let isSuccess = status.hasPrefix("200")
+    let refreshMeta = isSuccess ? "<meta http-equiv=\"refresh\" content=\"0;url=opencalorietracker://chatgpt\">" : ""
+    let badgeColor = isSuccess ? "#7aa2f7" : "#f7768e"
+    let badgeBg = isSuccess ? "rgba(122,162,247,0.14)" : "rgba(247,118,142,0.14)"
+    let badgeBorder = isSuccess ? "rgba(122,162,247,0.42)" : "rgba(247,118,142,0.42)"
+    let glyph = isSuccess
+      ? "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"\(badgeColor)\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 12h14\"/><path d=\"m13 6 6 6-6 6\"/></svg>"
+      : "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"\(badgeColor)\" stroke-width=\"2.2\" stroke-linecap=\"round\"><path d=\"M12 8v5\"/><circle cx=\"12\" cy=\"16.5\" r=\"0.8\" fill=\"\(badgeColor)\"/></svg>"
+    let heading = isSuccess ? "Returning to OpenCalorieTracker" : "Sign-in could not finish"
+    let action = isSuccess
+      ? "<a class=\"cta\" href=\"opencalorietracker://chatgpt\">Open OpenCalorieTracker</a>"
+      : "<a class=\"cta ghost\" href=\"opencalorietracker://chatgpt\">Return to OpenCalorieTracker</a>"
+    let footnote = isSuccess
+      ? "Secure local callback · You can close this tab if the app does not open"
+      : "No account data was stored · Return to the app to retry"
     let body = Data("""
-    <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OpenCalorieTracker sign-in</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#1a1b26;color:#c0caf5;font:18px system-ui,sans-serif}main{max-width:32rem;padding:2rem;text-align:center}h1{color:#7aa2f7;font-size:1.4rem}</style></head><body><main><h1>OpenCalorieTracker</h1><p>\(message)</p></main></body></html>
+    <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">\(refreshMeta)<title>OpenCalorieTracker</title><style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#1a1b26;color:#c0caf5;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}.card{width:100%;max-width:360px;background:#24283b;border:1px solid #2e3348;border-radius:20px;padding:32px 24px 26px;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.45)}.badge{width:56px;height:56px;margin:0 auto 18px;border-radius:50%;display:grid;place-items:center;background:\(badgeBg);border:1.5px solid \(badgeBorder)}.brand{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#7aa2f7;margin:0 0 8px}h1{margin:0 0 8px;font-size:20px;font-weight:700;letter-spacing:-.02em;color:#e4e8fb}p{margin:0;font-size:14px;color:#9aa5ce}.cta{display:block;margin-top:24px;padding:13px 18px;border-radius:12px;background:#7aa2f7;color:#1a1b26;text-decoration:none;font-weight:700;font-size:14px}.cta.ghost{background:#2e3348;color:#c0caf5}.foot{margin-top:16px;font-size:11px;color:#565f89}</style></head><body><main class="card"><div class="badge">\(glyph)</div><div class="brand">OpenCalorieTracker</div><h1>\(heading)</h1><p>\(message)</p>\(action)<p class="foot">\(footnote)</p></main></body></html>
     """.utf8)
     let headers = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.count)\r\nConnection: close\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'\r\n\r\n"
     connection.send(content: Data(headers.utf8) + body, contentContext: .finalMessage, isComplete: true,

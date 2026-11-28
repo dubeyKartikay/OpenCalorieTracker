@@ -3,7 +3,7 @@ import type { ComponentRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { router } from 'expo-router';
-import Svg, { Circle, ClipPath, Defs, G, Line, Path, Pattern, Polygon, Rect, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, ClipPath, Defs, G, Line, Path, Polygon, Rect, Text as SvgText } from 'react-native-svg';
 import { hapticSelection } from '../../haptics';
 import { colors, fontFace, fontFamily, macroColors, tabularNums } from '../../tokens';
 import { DoopIcon } from '../DoopIcons';
@@ -82,7 +82,7 @@ export interface CalorieBarChartProps {
 
 interface TargetChange { index: number; from: number; to: number; date: string; x: number; y: number }
 
-/** Real stacked SVG bars; partial days are hatched, and unlogged days remain gaps. */
+/** Real stacked SVG bars for logged days; unlogged days remain gaps. */
 export function CalorieBarChart({ days, energyUnit = 'kcal', selectedDate, onSelectDay, onOpenHistory, style }: CalorieBarChartProps) {
   const [width, setWidth] = useState(0);
   const [localSelection, setLocalSelection] = useState<string | null>(null);
@@ -92,7 +92,6 @@ export function CalorieBarChart({ days, energyUnit = 'kcal', selectedDate, onSel
   const plotRef = useRef<ComponentRef<typeof View>>(null);
   const targetRefs = useRef<Record<string, ComponentRef<typeof View> | null>>({});
   const id = useId().replace(/[^a-zA-Z0-9]/g, '');
-  const hatchId = `partial${id}`;
   const selected = selectedDate === undefined ? localSelection : selectedDate;
   const selectedIndex = days.findIndex(day => day.date === selected);
   const selectedDay = days[selectedIndex];
@@ -149,14 +148,13 @@ export function CalorieBarChart({ days, energyUnit = 'kcal', selectedDate, onSel
   return <View style={[styles.chart, style]}>
     <View ref={plotRef} onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ height: CALORIE_PLOT_HEIGHT, width: '100%' }}>
       {width > 0 ? <Svg width={width} height={CALORIE_PLOT_HEIGHT} viewBox={`0 0 ${width} ${CALORIE_PLOT_HEIGHT}`} accessible={false}>
-        <Defs><Pattern id={hatchId} patternUnits="userSpaceOnUse" width={4} height={4} patternTransform="rotate(45)"><Line x1={0} y1={0} x2={0} y2={4} stroke={colors.border} strokeWidth={1} /></Pattern>
+        <Defs>
           {days.map((day, index) => day.completeness === 'complete' ? <ClipPath id={`bar${id}${index}`} key={day.date}><Rect x={index * slot + (slot - barWidth) / 2} y={y(positive(day.kcal))} width={barWidth} height={CALORIE_PLOT_HEIGHT - y(positive(day.kcal))} rx={2} /></ClipPath> : null)}
         </Defs>
         {days.map((day, index) => {
           if (day.completeness === 'none') return null;
           const x = index * slot + (slot - barWidth) / 2;
           const height = CALORIE_PLOT_HEIGHT - y(positive(day.kcal));
-          if (day.completeness === 'partial') return <Rect key={day.date} x={x} y={y(positive(day.kcal))} width={barWidth} height={height} rx={2} fill={`url(#${hatchId})`} stroke={colors.border} strokeWidth={0.8} />;
           const p = positive(day.proteinG) * 4;
           const c = positive(day.carbsG) * 4;
           const f = positive(day.fatG) * 9;
@@ -187,7 +185,7 @@ export function CalorieBarChart({ days, energyUnit = 'kcal', selectedDate, onSel
           />
         ) : null
       ) : (
-        days.map((day, index) => day.completeness !== 'none' ? <Pressable key={day.date} accessibilityRole="button" accessibilityLabel={`${fullDate(day.date)}, ${day.completeness}, ${fmt(energyValue(day.kcal, energyUnit))} ${energyUnit}`} accessibilityState={{ selected: day.date === selected }} onPress={() => inspect(day, index)} style={{ position: 'absolute', left: index * slot, top: 0, width: slot, height: CALORIE_PLOT_HEIGHT }} /> : null)
+        days.map((day, index) => day.completeness !== 'none' ? <Pressable key={day.date} accessibilityRole="button" accessibilityLabel={`${fullDate(day.date)}, ${fmt(energyValue(day.kcal, energyUnit))} ${energyUnit}`} accessibilityState={{ selected: day.date === selected }} onPress={() => inspect(day, index)} style={{ position: 'absolute', left: index * slot, top: 0, width: slot, height: CALORIE_PLOT_HEIGHT }} /> : null)
       )}
       {days.length === 0 ? <View style={styles.empty}><Text style={styles.emptyText}>No days to chart</Text></View> : null}
     </View>

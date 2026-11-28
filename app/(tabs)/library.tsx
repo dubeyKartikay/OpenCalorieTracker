@@ -12,8 +12,10 @@ import type { SearchCandidate } from '../../src/catalog';
 import { UndoToast } from '../../src/ui/components/Diary';
 import { FoodRow, GLOBAL_UNITS, NewCustomFood, PIN_KEY, type LibrarySharedContext } from '../../src/ui/components/FoodSearch';
 import { DoopIcon, mealDaypartGlyph } from '../../src/ui/components/DoopIcons';
+import { AnchoredPopover, measurePopoverAnchor, type PopoverAnchor } from '../../src/ui/components/doop/HistoryControls';
 import { SparklePromptRow, useScrollAboveKeyboard, useVoiceDictation, VoiceDock, VoiceMicRing } from '../../src/ui/components/capture';
 import { ErrorMessage, Muted, NoticePill, useKeyboardHeight, useTimedNotice } from '../../src/ui/components/primitives';
+import { useAbandonOnTabPress } from '../../src/ui/components/tabAbandon';
 import { hapticSelection } from '../../src/ui/haptics';
 import { colors, fontFace, radius, SCREEN_GUTTER, useLayoutClass } from '../../src/ui/tokens';
 
@@ -23,7 +25,14 @@ const EMPTY_ENTRIES_MAP = new Map<string, DiaryEntrySnapshot[]>();
 const EMPTY_STRING_SET = new Set<string>();
 const EMPTY_LEARNED_MAP = new Map<string, Quantity[]>();
 
-function SectionLabel({ label }: { label: string }) {
+function SectionLabel({ label, onPress }: { label: string; onPress?: (() => void) | undefined }) {
+  if (onPress) {
+    return (
+      <Pressable accessibilityRole="button" accessibilityLabel={`Dismiss active editor from ${label}`} onPress={onPress} style={styles.section}>
+        <Text accessibilityRole="header" style={styles.sectionText}>{label}</Text>
+      </Pressable>
+    );
+  }
   return (
     <View style={styles.section}>
       <Text accessibilityRole="header" style={styles.sectionText}>{label}</Text>
@@ -53,20 +62,32 @@ export default function Library() {
   }
   const [focused, setFocused] = useState(false);
   const [filter, setFilter] = useState('All');
-  const [chooser, setChooser] = useState(false);
+  const [chooserAnchor, setChooserAnchor] = useState<PopoverAnchor | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [customFoodOpen, setCustomFoodOpen] = useState(false);
   const [notice, setNotice] = useTimedNotice();
   const input = useRef<ComponentRef<typeof TextInput>>(null);
+  const mealControlRef = useRef<ComponentRef<typeof View> | null>(null);
   const scrollRef = useRef<ComponentRef<typeof ScrollView> | null>(null);
   const scrollOffsetRef = useRef(0);
   const keyboardHeight = useKeyboardHeight();
   const ensureVisible = useScrollAboveKeyboard(scrollRef, scrollOffsetRef);
   const voiceSession = useVoiceDictation({
-    onText: setQuery,
+    onText: next => {
+      setExpanded(null);
+      setQuery(next);
+    },
     onError: message => setNotice(message),
   });
   const cancelVoice = voiceSession.cancel;
   useFocusEffect(useCallback(() => () => cancelVoice(), [cancelVoice]));
+  useAbandonOnTabPress(() => {
+    cancelVoice();
+    setExpanded(null);
+    setChooserAnchor(null);
+    setCustomFoodOpen(false);
+    Keyboard.dismiss();
+  });
   const { isExpanded } = useLayoutClass();
   const search = useCatalogSearch(query);
   const shared = useAsyncResource(useCallback(async () => {
@@ -150,8 +171,33 @@ export default function Library() {
   const likelyItems = (resting.value?.rest ?? []).filter(matchesFilter);
   const totalResting = (resting.value?.pinned.length ?? 0) + (resting.value?.rest.length ?? 0);
   const typing = query.trim().length > 0;
-  const renderRow = (candidate: SearchCandidate) => <FoodRow key={foodKey(candidate.food)} candidate={candidate} meal={meal} date={targetDate} searchResult={typing} shared={sharedContext}
-    expanded={expanded === foodKey(candidate.food)} onEnsureVisible={ensureVisible} onToggle={() => { Keyboard.dismiss(); setExpanded(old => old === foodKey(candidate.food) ? null : foodKey(candidate.food)); }} />;
+  const dismissInline = () => {
+    setExpanded(null);
+    setCustomFoodOpen(false);
+    Keyboard.dismiss();
+  };
+  const hasInlineOpen = Boolean(expanded) || customFoodOpen;
+  const renderRow = (candidate: SearchCandidate) => {
+    const key = foodKey(candidate.food);
+    return (
+      <FoodRow
+        key={key}
+        candidate={candidate}
+        meal={meal}
+        date={targetDate}
+        searchResult={typing}
+        shared={sharedContext}
+        expanded={expanded === key}
+        onEnsureVisible={ensureVisible}
+        onClose={() => setExpanded(old => (old === key ? null : old))}
+        onToggle={() => {
+          Keyboard.dismiss();
+          setCustomFoodOpen(false);
+          setExpanded(old => (old === key ? null : key));
+        }}
+      />
+    );
+  };
   return <SafeAreaView edges={['top', 'left', 'right']} style={styles.screen}>
     <ScrollView
       ref={scrollRef}
@@ -169,8 +215,8 @@ export default function Library() {
         <View style={[styles.search, (typing || focused || voiceSession.active) && styles.searchActive]}>
           <DoopIcon name="search" size={18} color={colors.muted} />
           <TextInput ref={input} accessibilityLabel="Search library" placeholder="Search" placeholderTextColor={colors.muted} value={query}
-            onChangeText={setQuery} showSoftInputOnFocus={!voiceSession.active} onPressIn={() => { if (voiceSession.active) voiceSession.stop(); }} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} autoCapitalize="none" autoCorrect={false} style={styles.input} />
-          {typing && <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => { voiceSession.cancel(); setQuery(''); input.current?.focus(); }} style={styles.clear}><DoopIcon name="close" size={16} color={colors.muted} /></Pressable>}
+            onChangeText={next => { setExpanded(null); setQuery(next); }} showSoftInputOnFocus={!voiceSession.active} onPressIn={() => { if (voiceSession.active) voiceSession.stop(); }} onFocus={() => { setChooserAnchor(null); setFocused(true); }} onBlur={() => setFocused(false)} autoCapitalize="none" autoCorrect={false} style={styles.input} />
+          {typing && <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => { voiceSession.cancel(); setExpanded(null); setQuery(''); input.current?.focus(); }} style={styles.clear}><DoopIcon name="close" size={16} color={colors.muted} /></Pressable>}
           <View style={styles.capturePair}>
             <Pressable accessibilityRole="button" accessibilityLabel="Open camera for barcode or photo" onPress={() => { voiceSession.cancel(); router.push({ pathname: '/barcode', params: { meal, date: targetDate, mode: 'barcode', returnTo: 'library' } }); }} style={styles.captureHit}><DoopIcon name="camera" size={20} color={colors.muted} /></Pressable>
             <Pressable accessibilityRole="button" accessibilityLabel={voiceSession.active ? 'Stop voice dictation' : 'Search by voice'} accessibilityState={{ selected: voiceSession.active }} onPress={() => { if (voiceSession.active) voiceSession.stop(); else { setNotice(''); void voiceSession.start(query); } }} style={styles.captureHit}><View style={[styles.micWrap, voiceSession.active && styles.micActive]}><VoiceMicRing active={voiceSession.active} size={34} borderRadius={17} /><DoopIcon name="mic" size={20} color={voiceSession.active ? colors.onAccent : colors.muted} /></View></Pressable>
@@ -182,14 +228,15 @@ export default function Library() {
       <View style={styles.filtersRow}>
         <View style={styles.filters}>{['All', 'Meals', 'Foods', 'Recipes'].map(value => {
           const active = filter === value;
-          return <Pressable key={value} accessibilityRole="button" accessibilityState={{ selected: active }} onPress={() => { if (!active) hapticSelection(); setFilter(value); }} style={styles.filterHit}>
+          return <Pressable key={value} accessibilityRole="button" accessibilityState={{ selected: active }} onPress={() => { if (!active) hapticSelection(); setExpanded(null); setChooserAnchor(null); setFilter(value); }} style={styles.filterHit}>
             <View style={[styles.filterTab, active && styles.filterTabActive]}><Text style={[styles.filterText, active && styles.filterTextActive]}>{value}</Text></View>
           </Pressable>;
         })}</View>
-        <Pressable accessibilityRole="button" accessibilityLabel={'Destination ' + meal} accessibilityState={{ expanded: chooser }} onPress={() => { hapticSelection(); setChooser(value => !value); }} style={styles.mealControl}>
-          <DoopIcon name={mealDaypartGlyph(meal)} size={18} color={colors.muted} strokeWidth={1.5} /><Text numberOfLines={1} style={styles.mealName}>{meal}</Text><DoopIcon name="chevronDown" size={14} color={colors.muted} />
-        </Pressable>
-        {chooser && <View style={styles.chooser}>{chooserMeals.map(value => <Pressable key={value} accessibilityRole="button" accessibilityState={{ selected: meal === value }} onPress={() => { hapticSelection(); router.setParams({ meal: value }); setChooser(false); }} style={[styles.mealOption, meal === value && styles.chooserActive]}><Text style={[styles.optionText, meal === value && styles.accent]}>{value}</Text>{meal === value && <DoopIcon name="check" size={12} color={colors.accent} />}</Pressable>)}</View>}
+        <View ref={mealControlRef} collapsable={false} style={styles.mealControlWrap}>
+          <Pressable accessibilityRole="button" accessibilityLabel={'Destination ' + meal} accessibilityState={{ expanded: Boolean(chooserAnchor) }} onPress={() => { hapticSelection(); Keyboard.dismiss(); if (chooserAnchor) setChooserAnchor(null); else measurePopoverAnchor(mealControlRef.current, setChooserAnchor); }} style={styles.mealControl}>
+            <DoopIcon name={mealDaypartGlyph(meal)} size={18} color={colors.muted} strokeWidth={1.5} /><Text numberOfLines={1} style={styles.mealName}>{meal}</Text><DoopIcon name="chevronDown" size={14} color={colors.muted} />
+          </Pressable>
+        </View>
       </View>
       {filter === 'Recipes' && <Pressable accessibilityRole="link" onPress={() => router.push({ pathname: '/recipes', params: { meal, date: targetDate } })} style={styles.recipeLink}><Text style={styles.linkText}>+ New recipe</Text></Pressable>}
       {looksLikeMultiFoodCapture(query) && <SparklePromptRow summary="Break down with AI" busy={activeDraft.busy} disabled={ai.loading || !ai.value} onPress={() => {
@@ -200,17 +247,45 @@ export default function Library() {
       }} />}
       <ErrorMessage message={search.error ?? resting.error ?? shared.error ?? preferences.error ?? ai.error ?? activeDraft.error} />
       {typing ? <>
-        {!!yours.length && <><SectionLabel label="Your items" />{yours.map(renderRow)}</>}
-        {!!database.length && <><SectionLabel label="Food database" />{database.map(renderRow)}</>}
+        {!!yours.length && <><SectionLabel label="Your items" onPress={hasInlineOpen ? dismissInline : undefined} />{yours.map(renderRow)}</>}
+        {!!database.length && <><SectionLabel label="Food database" onPress={hasInlineOpen ? dismissInline : undefined} />{database.map(renderRow)}</>}
         {(search.loading || search.debouncing) && <Muted>Searching local foods…</Muted>}
         {!search.loading && !search.debouncing && !yours.length && !database.length && <Muted>No matching foods.</Muted>}
       </> : <>
-        {!!pinnedItems.length && <><SectionLabel label="Pinned" />{pinnedItems.map(renderRow)}</>}
-        {!!likelyItems.length && <><SectionLabel label="Likely now" />{likelyItems.map(renderRow)}</>}
+        {!!pinnedItems.length && <><SectionLabel label="Pinned" onPress={hasInlineOpen ? dismissInline : undefined} />{pinnedItems.map(renderRow)}</>}
+        {!!likelyItems.length && <><SectionLabel label="Likely now" onPress={hasInlineOpen ? dismissInline : undefined} />{likelyItems.map(renderRow)}</>}
         {!resting.loading && totalResting === 0 && <Muted style={styles.emptyNote}>Your saved foods and meals will appear here. Search to find food.</Muted>}
-        <View style={styles.create}><NewCustomFood key={energyUnit} onEnsureVisible={ensureVisible} /></View>
+        <View style={styles.create}><NewCustomFood key={energyUnit} open={customFoodOpen} onOpenChange={open => { if (open) setExpanded(null); setCustomFoodOpen(open); }} onEnsureVisible={ensureVisible} /></View>
       </>}
+      {hasInlineOpen ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss active food editor"
+          onPress={dismissInline}
+          style={styles.emptyTapOff}
+        />
+      ) : null}
     </ScrollView>
+    <AnchoredPopover anchor={chooserAnchor} onClose={() => setChooserAnchor(null)} width={196} label="Destination meal">
+      <View style={styles.chooser}>
+        {chooserMeals.map(value => (
+          <Pressable
+            key={value}
+            accessibilityRole="button"
+            accessibilityState={{ selected: meal === value }}
+            onPress={() => {
+              hapticSelection();
+              router.setParams({ meal: value });
+              setChooserAnchor(null);
+            }}
+            style={[styles.mealOption, meal === value && styles.chooserActive]}
+          >
+            <Text style={[styles.optionText, meal === value && styles.accent]}>{value}</Text>
+            {meal === value && <DoopIcon name="check" size={12} color={colors.accent} />}
+          </Pressable>
+        ))}
+      </View>
+    </AnchoredPopover>
     <View pointerEvents="box-none" style={styles.toast}><UndoToast /></View>
     <VoiceDock visible={voiceSession.active} level={voiceSession.level} onStop={voiceSession.stop} flushMarginHorizontal={0} flushMarginBottom={0} />
   </SafeAreaView>;
@@ -218,7 +293,8 @@ export default function Library() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.ground },
-  content: { width: '100%', alignSelf: 'center', paddingHorizontal: SCREEN_GUTTER, paddingTop: 8, paddingBottom: 36 },
+  content: { flexGrow: 1, width: '100%', alignSelf: 'center', paddingHorizontal: SCREEN_GUTTER, paddingTop: 8, paddingBottom: 36 },
+  emptyTapOff: { flex: 1, minHeight: 80 },
   searchRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   search: { flex: 1, minWidth: 0, height: 48, flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 14, paddingRight: 4, borderWidth: 1, borderColor: colors.hairline, borderRadius: radius.r16, backgroundColor: colors.surface },
   searchActive: { borderColor: colors.accent },
@@ -237,9 +313,10 @@ const styles = StyleSheet.create({
   filterText: { color: colors.muted, ...fontFace('semibold'), fontSize: 15 },
   filterTextActive: { color: colors.ink },
   accent: { color: colors.accent },
+  mealControlWrap: { flexShrink: 1 },
   mealControl: { height: 48, flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
   mealName: { ...fontFace('semibold'), fontSize: 15, color: colors.ink, flexShrink: 1 },
-  chooser: { position: 'absolute', right: 0, top: 48, width: 196, flexDirection: 'row', flexWrap: 'wrap', padding: 6, gap: 4, borderRadius: radius.r12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.raised, elevation: 10, boxShadow: '0 18px 38px rgba(0,0,0,0.46)' },
+  chooser: { flexDirection: 'row', flexWrap: 'wrap', padding: 6, gap: 4 },
   chooserActive: { backgroundColor: 'rgba(122,162,247,0.16)' },
   mealOption: { width: '48%', height: 44, borderRadius: radius.r8, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   optionText: { ...fontFace('semibold'), fontSize: 11, color: colors.ink },

@@ -52,7 +52,9 @@ class OctOAuthLoopbackModule : Module() {
             }
           }
         }
-        mapOf("code" to result.code, "state" to result.state)
+        val payload = mutableMapOf("code" to result.code, "state" to result.state)
+        if (!result.clientId.isNullOrBlank()) payload["clientId"] = result.clientId
+        payload
       } finally {
         sessions.remove(sessionId, session)
         session.server.close()

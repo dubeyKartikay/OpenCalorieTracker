@@ -1,6 +1,6 @@
 import type { SqlDatabase } from './driver';
 
-export const USER_SCHEMA_VERSION = 2;
+export const USER_SCHEMA_VERSION = 3;
 const migrations = [String.raw`
 CREATE TABLE diary_days (date TEXT PRIMARY KEY, completeness TEXT NOT NULL CHECK(completeness IN ('complete','partial','none')), updated_at TEXT NOT NULL);
 CREATE TABLE diary_entries (id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE NOT NULL, date TEXT NOT NULL, occurred_at TEXT NOT NULL, time_zone TEXT NOT NULL, meal TEXT NOT NULL, draft_state TEXT NOT NULL CHECK(draft_state IN ('draft','confirmed')), snapshot_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -26,6 +26,12 @@ CREATE INDEX water_logs_date ON water_logs(date);
 CREATE TABLE health_sync_records (entry_id TEXT PRIMARY KEY, platform TEXT NOT NULL CHECK(platform IN ('apple_health','health_connect')), external_record_id TEXT NOT NULL, synced_at TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('synced','deleted')));
 CREATE TABLE offline_photo_drafts (id TEXT PRIMARY KEY, date TEXT NOT NULL, meal TEXT NOT NULL, note TEXT NOT NULL, image_data_url TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE INDEX offline_photo_drafts_created ON offline_photo_drafts(created_at DESC);
+`, String.raw`
+DELETE FROM goal_periods WHERE rowid NOT IN (
+  SELECT MAX(rowid) FROM goal_periods GROUP BY effective_from_date
+);
+DROP INDEX IF EXISTS goal_periods_date;
+CREATE UNIQUE INDEX goal_periods_date ON goal_periods(effective_from_date);
 `];
 
 export async function migrateDatabase(db: SqlDatabase): Promise<void> {

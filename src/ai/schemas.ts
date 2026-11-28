@@ -68,4 +68,6 @@ export const mealDraftProposalSchema = z.strictObject({
   /** Frozen starting point lets chips be changed or re-applied without compounding effects. */
   base_items: z.array(mealDraftItemSchema).min(1),
   answers: z.record(z.string(), z.string()),
+  /** User-edited portions applied after clarification replay so chips never re-multiply manual edits. */
+  manual_quantities: z.record(z.string(), quantitySchema).optional(),
 });

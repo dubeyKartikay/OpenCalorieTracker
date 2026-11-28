@@ -11,21 +11,24 @@ import type { SearchCandidate } from '../../catalog';
 import { foodKey } from '../../storage';
 import { hapticLight, hapticMedium, hapticSelection, hapticSuccess } from '../haptics';
 import { colors, fontFace, radius, tabularNums } from '../tokens';
-import { CUSTOM_FOOD_BASIS_OPTIONS, customFoodNutrientFields, parseCustomFoodNutrients, SegmentedSwitch, type CustomFoodBasis } from './capture';
+import { CUSTOM_FOOD_BASIS_OPTIONS, customFoodNutrientFields, parseCustomFoodNutrients, type CustomFoodBasis } from './capture/customFoodForm';
+import { SegmentedSwitch } from './capture/BarcodeCards';
 import {
   appendFallbackUnits,
   buildCustomFoodUnit,
   buildPortionCandidates,
+  formatAddToMealsLabel,
   formatQuantityLabel,
   kindOfFood,
   mergeSelectedPortion,
+  orderSelectedMeals,
   previewCustomUnitKcal,
   pricePortionCandidates,
   supportedBaseUnits,
+  toggleMealSelection,
   type CustomBaseUnit,
 } from './customUnitMath';
-import { EntryEditPopover, LearnedPortionChips, MacroProportionBar, MealDestinationPills, NumericEditor } from './doop';
-import { AnchoredPopover, measurePopoverAnchor, type PopoverAnchor } from './doop/HistoryControls';
+import { LearnedPortionChips, MacroProportionBar, MealDestinationPills, NumericEditor } from './doop';
 import { SwipeToPinRow } from './gestures';
 import { DoopIcon, inferFoodGlyph } from './DoopIcons';
 import { energy, energyValue, ErrorMessage, number } from './primitives';
@@ -261,17 +264,37 @@ interface PortionEditorProps {
   onFoodChange?: (food: FoodRecord) => void;
   onPreviewChange?: (live: { quantity: Quantity; nutrients: NutrientProfile | undefined } | null) => void;
   entries?: DiaryEntrySnapshot[]; entriesReady?: boolean; onClose?: () => void;
+  onAdded?: (meals: string[]) => void;
+  inCard?: boolean;
   onDetailHoldStart?: () => void; onDetailHoldEnd?: () => void; onDetailHoldOpen?: () => void;
   onEnsureVisible?: ((node: ComponentRef<typeof View> | null) => void) | undefined;
 }
-export function PortionEditor({ food: original, meal, date, quantity, onQuantityChange, onFoodChange, onPreviewChange, entries = [], entriesReady = true, onDetailHoldStart, onDetailHoldEnd, onDetailHoldOpen, onEnsureVisible }: PortionEditorProps) {
+export function PortionEditor({ food: original, meal, date, quantity, onQuantityChange, onFoodChange, onPreviewChange, entries = [], entriesReady = true, onAdded, inCard = false, onDetailHoldStart, onDetailHoldEnd, onDetailHoldOpen, onEnsureVisible }: PortionEditorProps) {
   const { controller } = useAppRuntime();
   const preferences = usePreferences();
   const energyUnit = preferences.value?.energyUnit ?? 'kcal';
   const meals = mealsForDay(preferences.value?.mealSections ?? [...MEALS], entries, [meal]);
+  const originalKey = foodKey(original);
   const [ownQuantity, setOwnQuantity] = useState(() => usualQuantity(original));
   const [customFoodOverride, setCustomFoodOverride] = useState<{ base: FoodRecord; food: FoodRecord } | null>(null);
   const food = customFoodOverride?.base === original ? customFoodOverride.food : original;
+  const [mealSelection, setMealSelection] = useState<{ defaultMeal: string; foodId: string; meals: string[] }>(() => ({
+    defaultMeal: meal,
+    foodId: originalKey,
+    meals: [meal],
+  }));
+  const rawSelectedMeals = useMemo(
+    () => (
+      mealSelection.defaultMeal === meal && mealSelection.foodId === originalKey
+        ? mealSelection.meals
+        : [meal]
+    ),
+    [meal, mealSelection, originalKey],
+  );
+  const orderedSelectedMeals = useMemo(
+    () => orderSelectedMeals(rawSelectedMeals, meals),
+    [meals, rawSelectedMeals],
+  );
   const validUnits = useMemo(() => availableUnits(food), [food]);
   const rawSelected = quantity ?? ownQuantity;
   const selected = useMemo(
@@ -288,6 +311,8 @@ export function PortionEditor({ food: original, meal, date, quantity, onQuantity
   const [addingUnit, setAddingUnit] = useState(false);
   const canAddCustomUnit = useMemo(() => supportedBaseUnits(food).length > 0, [food]);
   const action = useAction();
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
   const revision = controller.getRevision();
   const valid = Number.isFinite(current.amount) && current.amount > 0;
   const change = (next: Quantity) => { setOwnQuantity(next); onQuantityChange?.(next); };
@@ -335,13 +360,29 @@ export function PortionEditor({ food: original, meal, date, quantity, onQuantity
     const nextAmount = hasTyped ? (Number(typed) || 1) : (unit === 'g' || unit === 'ml' ? 100 : 1);
     change({ amount: nextAmount, unit });
   };
-  const toggleMeal = (destination: string) => void action.run(async () => {
+  const toggleSelectedMeal = (destination: string) => {
+    setMealSelection({
+      defaultMeal: meal,
+      foodId: originalKey,
+      meals: toggleMealSelection(rawSelectedMeals, destination),
+    });
+  };
+  const submitAdd = () => void action.run(async () => {
     if (!entriesReady) return;
-    const logged = entries.filter(entry => entry.meal === destination);
-    if (logged.length) { await controller.deleteEntries(logged.map(entry => entry.id)); return; }
     if (!valid) throw new Error('Enter an amount greater than zero.');
-    await controller.confirm({ food, quantity: current, meal: destination, ...(date ? { date } : {}), idempotencyKey: generateId() });
-    change(current); setTypedState(null); setAddingUnit(false);
+    if (orderedSelectedMeals.length === 0) throw new Error('Select at least one meal.');
+    await controller.confirmToMeals({
+      food,
+      quantity: current,
+      meals: orderedSelectedMeals,
+      ...(date ? { date } : {}),
+    });
+    hapticSuccess();
+    if (!mountedRef.current) return;
+    change(current);
+    setTypedState(null);
+    setAddingUnit(false);
+    onAdded?.(orderedSelectedMeals);
   });
   const basePortions = useMemo(() => {
     const validSet = new Set(validUnits);
@@ -354,8 +395,11 @@ export function PortionEditor({ food: original, meal, date, quantity, onQuantity
   );
   const partNames = data.value?.parts?.map(part => part.food.name).join(' · ') ?? '';
   const isRecipe = kindOf(food) === 'recipe';
+  const energyText = nutrients ? energy(nutrients.kcal, energyUnit) : null;
+  const addButtonLabel = formatAddToMealsLabel(orderedSelectedMeals, energyText);
+  const addDisabled = !valid || !entriesReady || orderedSelectedMeals.length === 0 || action.busy || preview.loading || addingUnit || !nutrients;
 
-  return <View style={styles.expanded}>
+  return <View style={inCard ? styles.expandedInCard : styles.expanded}>
     <LearnedPortionChips
       variant="calm"
       portions={displayedPortions.map(portion => ({
@@ -439,13 +483,28 @@ export function PortionEditor({ food: original, meal, date, quantity, onQuantity
       <MealDestinationPills
         variant="calm"
         meals={meals}
-        selectedMeals={entries.map(entry => entry.meal)}
-        suggestedMeal={meal}
-        mode="toggle"
-        disabled={!valid || !entriesReady || action.busy || preview.loading || addingUnit}
-        onPress={toggleMeal}
+        selectedMeals={orderedSelectedMeals}
+        mode="select"
+        disabled={action.busy || addingUnit}
+        onPress={toggleSelectedMeal}
       />
     </View>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={addButtonLabel}
+      accessibilityState={{ disabled: addDisabled }}
+      disabled={addDisabled}
+      onPress={submitAdd}
+      style={({ pressed }) => [
+        styles.addCta,
+        addDisabled && styles.addCtaDisabled,
+        pressed && !addDisabled && { opacity: 0.84 },
+      ]}
+    >
+      <Text numberOfLines={1} style={[styles.addCtaText, addDisabled && styles.addCtaTextDisabled]}>
+        {action.busy ? 'Adding…' : addButtonLabel}
+      </Text>
+    </Pressable>
     {partNames ? (
       <View style={styles.footerRow}>
         {isRecipe ? (
@@ -497,6 +556,7 @@ export function FoodRow({
   candidate,
   expanded,
   onToggle,
+  onClose,
   meal,
   date,
   searchResult = false,
@@ -506,6 +566,7 @@ export function FoodRow({
   candidate: SearchCandidate;
   expanded: boolean;
   onToggle: () => void;
+  onClose?: () => void;
   meal: string;
   date?: string;
   searchResult?: boolean;
@@ -523,13 +584,10 @@ export function FoodRow({
     hasShared ? 'shared-prefs' : 'row-prefs',
   );
   const energyUnit = shared?.energyUnit ?? ownPreferences.value?.energyUnit ?? 'kcal';
-  const meals = shared?.meals ?? ownPreferences.value?.mealSections ?? [...MEALS];
-  const [editAnchor, setEditAnchor] = useState<PopoverAnchor | null>(null);
   const [livePreview, setLivePreviewRaw] = useState<LivePreviewState>(null);
   const setLivePreview = useCallback((next: LivePreviewState) => {
     setLivePreviewRaw(prev => (sameLivePreview(prev, next) ? prev : next));
   }, []);
-  const addButtonRef = useRef<ComponentRef<typeof View> | null>(null);
   const [chosen, setChosen] = useState<Quantity | null>(null);
   const action = useAction();
   const revision = controller.getRevision();
@@ -583,10 +641,14 @@ export function FoodRow({
   }, [food, portion]);
 
   const metaReady = shared ? shared.ready : Boolean(rowMeta.value);
-  const entries = shared ? (shared.entriesByFoodKey.get(key) ?? []) : (rowMeta.value?.fallbackEntries ?? []);
-  const pickerMeals = mealsForDay(meals, entries, [meal]);
+  const sharedEntries = shared ? shared.entriesByFoodKey.get(key) : undefined;
+  const fallbackEntries = rowMeta.value?.fallbackEntries;
+  const entries = useMemo(
+    () => (shared ? (sharedEntries ?? []) : (fallbackEntries ?? [])),
+    [fallbackEntries, shared, sharedEntries],
+  );
+  const loggedMeals = useMemo(() => [...new Set(entries.map(entry => entry.meal))], [entries]);
   const logged = entries.find(entry => entry.meal === meal) ?? entries[0];
-  const activeQuantity = expanded && livePreview ? livePreview.quantity : portion;
   const display = expanded && livePreview ? livePreview.quantity : (logged?.quantity ?? portion);
   const nutrients = expanded && livePreview ? livePreview.nutrients : (logged?.nutrients ?? localNutrients);
   const pinned = shared
@@ -619,7 +681,6 @@ export function FoodRow({
   }, [detailCharge, detailScale, reducedMotion]);
   const handleSwipeStart = useCallback(() => {
     suppressTapUntilRef.current = Infinity;
-    setEditAnchor(null);
     cancelDetailHold();
   }, [cancelDetailHold]);
   const handleSwipeEnd = useCallback(() => {
@@ -629,7 +690,6 @@ export function FoodRow({
   }, []);
   const openFullDetail = useCallback(() => {
     if (Date.now() < suppressTapUntilRef.current) return;
-    setEditAnchor(null);
     hapticMedium();
     cancelAnimation(detailCharge);
     cancelAnimation(detailScale);
@@ -666,7 +726,7 @@ export function FoodRow({
     opacity: detailCharge.value > 0.01 ? 1 : 0,
     width: `${detailCharge.value * 100}%`,
   }));
-  return <View style={[styles.item, (Boolean(editAnchor) || expanded) && { zIndex: 10 }]}>
+  return <View style={[styles.item, expanded && { zIndex: 10 }]}>
     <SwipeToPinRow
       pinned={pinned}
       disabled={action.busy || !metaReady}
@@ -680,8 +740,8 @@ export function FoodRow({
           <View style={styles.row}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={expanded ? 'Collapse ' + food.name : 'Adjust ' + food.name}
-              accessibilityHint={`Tap to adjust portion, hold for full nutrition, or slide right to ${pinned ? 'unpin' : 'pin'}`}
+              accessibilityLabel={expanded ? 'Collapse ' + food.name : 'Add ' + food.name}
+              accessibilityHint={`Tap to choose portion and meal, hold for full nutrition, or slide right to ${pinned ? 'unpin' : 'pin'}`}
               accessibilityState={{ expanded }}
               accessibilityActions={[
                 { name: 'longpress', label: 'Open full nutrition and actions' },
@@ -701,7 +761,6 @@ export function FoodRow({
               onPress={() => {
                 if (Date.now() < suppressTapUntilRef.current) return;
                 hapticSelection();
-                setEditAnchor(null);
                 onToggle();
               }}
               style={styles.rowBody}
@@ -718,37 +777,16 @@ export function FoodRow({
               <View style={styles.rowCopy}>
                 <Text numberOfLines={1} style={styles.rowName}>{food.name}</Text>
                 <Text numberOfLines={1} style={styles.meta}>
-                  {searchResult && !logged ? `${kindOf(food) === 'meal' ? 'Saved meal' : candidate.sourceLabel} · ` : ''}
+                  {searchResult && !loggedMeals.length ? `${kindOf(food) === 'meal' ? 'Saved meal' : candidate.sourceLabel} · ` : ''}
                   {labelOf(display, food)}
-                  {logged ? <> · <Text style={styles.loggedMeal}>{logged.meal}</Text></> : null}
+                  {loggedMeals.length ? <> · <Text style={styles.loggedMeal}>In {loggedMeals.join(', ')}</Text></> : null}
                 </Text>
               </View>
               <Text style={styles.rowKcal}>{number(energyValue(nutrients?.kcal, energyUnit))}</Text>
+              <View style={[styles.rowChevron, expanded && styles.rowChevronExpanded]}>
+                <DoopIcon name="chevronRight" size={15} color={colors.muted} />
+              </View>
             </Pressable>
-            <View ref={addButtonRef} collapsable={false}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={logged ? 'Edit logged ' + food.name : 'Log ' + food.name + ' to ' + meal}
-                disabled={action.busy || !metaReady || (!logged && ((expanded && !livePreview) || !nutrients))}
-                onPress={() => {
-                  if (!metaReady || Date.now() < suppressTapUntilRef.current) return;
-                  if (logged) {
-                    hapticLight();
-                    measurePopoverAnchor(addButtonRef.current, setEditAnchor);
-                    return;
-                  }
-                  void action.run(async () => {
-                    await controller.confirm({ food, quantity: activeQuantity, meal, date: targetDate, idempotencyKey: generateId() });
-                    hapticSuccess();
-                  });
-                }}
-                style={styles.addHit}
-              >
-                <View style={[styles.addCircle, logged && styles.mealLogged]}>
-                  <DoopIcon name={logged ? 'check' : 'plus'} size={18} strokeWidth={logged ? 2.6 : 2} color={logged ? colors.onAccent : colors.muted} />
-                </View>
-              </Pressable>
-            </View>
             {!expanded && <View style={styles.rowRule} />}
           </View>
           <View pointerEvents="none" style={styles.holdTrack}>
@@ -768,7 +806,11 @@ export function FoodRow({
             onPreviewChange={setLivePreview}
             entries={entries}
             entriesReady={metaReady}
-            onClose={onToggle}
+            onClose={onClose ?? onToggle}
+            onAdded={() => {
+              if (onClose) onClose();
+              else if (expanded) onToggle();
+            }}
             onDetailHoldStart={startDetailHold}
             onDetailHoldEnd={cancelDetailHold}
             onDetailHoldOpen={openFullDetail}
@@ -777,40 +819,49 @@ export function FoodRow({
         ) : null
       }
     />
-    <AnchoredPopover anchor={logged ? editAnchor : null} onClose={() => setEditAnchor(null)} width={304} label="Edit entry">
-      {logged ? (
-        <EntryEditPopover
-          entry={logged}
-          meals={pickerMeals}
-          energyUnit={energyUnit}
-          busy={action.busy}
-          onUpdateQuantity={quantity => void action.run(() => controller.updateEntryQuantity(logged, quantity))}
-          onMoveMeal={destination => void action.run(async () => {
-            if (destination !== logged.meal) await controller.moveEntry(logged, destination);
-            setEditAnchor(null);
-          })}
-          onRemove={() => void action.run(async () => {
-            await controller.deleteEntry(logged.id);
-            setEditAnchor(null);
-          })}
-        />
-      ) : null}
-    </AnchoredPopover>
     <ErrorMessage message={action.error ?? rowMeta.error} />
   </View>;
 }
 
 export function NewCustomFood({
+  open: controlledOpen,
+  onOpenChange,
   onEnsureVisible,
 }: {
+  open?: boolean | undefined;
+  onOpenChange?: ((open: boolean) => void) | undefined;
   onEnsureVisible?: ((node: ComponentRef<typeof View> | null) => void) | undefined;
 } = {}) {
   const { controller } = useAppRuntime();
   const energyUnit = usePreferences().value?.energyUnit ?? 'kcal';
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = controlledOpen ?? localOpen;
+  const sessionRef = useRef(0);
+  const mountedRef = useRef(true);
+  const setOpen = (next: boolean) => {
+    sessionRef.current += 1;
+    if (controlledOpen === undefined) setLocalOpen(next);
+    onOpenChange?.(next);
+  };
   const [name, setName] = useState('');
   const [basis, setBasis] = useState<CustomFoodBasis>('per_100g');
   const [fields, setFields] = useState({ kcal: '', proteinG: '', carbsG: '', fatG: '', fiberG: '' });
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (!open) {
+      setName('');
+      setBasis('per_100g');
+      setFields({ kcal: '', proteinG: '', carbsG: '', fatG: '', fiberG: '' });
+    }
+  }
+  useEffect(() => {
+    sessionRef.current += 1;
+  }, [open]);
+  useEffect(() => () => {
+    mountedRef.current = false;
+    sessionRef.current += 1;
+  }, []);
   const formRef = useRef<ComponentRef<typeof View> | null>(null);
   const action = useAction();
   const nutrientFields = customFoodNutrientFields(energyUnit, false);
@@ -818,7 +869,7 @@ export function NewCustomFood({
     if (open) onEnsureVisible?.(formRef.current);
   }, [onEnsureVisible, open]);
   return <View>
-    <Pressable accessibilityRole="button" onPress={() => setOpen(value => !value)} style={styles.recipeLink}>
+    <Pressable accessibilityRole="button" onPress={() => setOpen(!open)} style={styles.recipeLink}>
       <Text style={styles.recipeText}>{open ? 'Close custom food' : '+ New custom food'}</Text>
     </Pressable>
     {open && <View ref={formRef} collapsable={false} style={styles.customForm}>
@@ -840,13 +891,18 @@ export function NewCustomFood({
         ))}
       </View>
       <ErrorMessage message={action.error} />
-      <Pressable accessibilityRole="button" disabled={action.busy} onPress={() => void action.run(async () => {
-        if (!name.trim()) throw new Error('Enter a food name before saving.');
-        const nutrients = parseCustomFoodNutrients(fields, energyUnit);
-        await controller.saveCustomFood({ id: generateId(), name: name.trim(), basis, prep_state: 'unknown', provenance_kind: 'user', nutrients });
-        hapticSuccess();
-        setName(''); setFields({ kcal: '', proteinG: '', carbsG: '', fatG: '', fiberG: '' }); setOpen(false);
-      })} style={[styles.customSave, action.busy && { opacity: 0.45 }]}>
+      <Pressable accessibilityRole="button" disabled={action.busy} onPress={() => {
+        const activeSession = sessionRef.current;
+        void action.run(async () => {
+          if (!name.trim()) throw new Error('Enter a food name before saving.');
+          const nutrients = parseCustomFoodNutrients(fields, energyUnit);
+          await controller.saveCustomFood({ id: generateId(), name: name.trim(), basis, prep_state: 'unknown', provenance_kind: 'user', nutrients });
+          hapticSuccess();
+          if (mountedRef.current && sessionRef.current === activeSession) {
+            setName(''); setFields({ kcal: '', proteinG: '', carbsG: '', fatG: '', fiberG: '' }); setOpen(false);
+          }
+        });
+      }} style={[styles.customSave, action.busy && { opacity: 0.45 }]}>
         <Text style={styles.customSaveText}>Save food</Text>
       </Pressable>
     </View>}
@@ -869,23 +925,27 @@ const styles = StyleSheet.create({
   rowName: { ...fontFace('semibold'), color: colors.ink, fontSize: 17, lineHeight: 21 },
   meta: { ...fontFace('medium'), ...tabularNums, color: colors.muted, fontSize: 14, lineHeight: 18, marginTop: 3 },
   loggedMeal: { ...fontFace('medium'), color: colors.success },
-  rowKcal: { marginHorizontal: 14, textAlign: 'right', color: colors.ink, ...fontFace('semibold'), ...tabularNums, fontSize: 17 },
-  addHit: { width: 44, height: 44, marginRight: -2, alignItems: 'center', justifyContent: 'center' },
-  addCircle: { width: 40, height: 40, borderRadius: 20, borderWidth: 1.5, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  rowKcal: { marginLeft: 12, marginRight: 6, textAlign: 'right', color: colors.ink, ...fontFace('semibold'), ...tabularNums, fontSize: 17 },
+  rowChevron: { width: 20, alignItems: 'center', justifyContent: 'center', opacity: 0.55 },
+  rowChevronExpanded: { transform: [{ rotate: '90deg' }], opacity: 0.85 },
   rowRule: { position: 'absolute', bottom: 0, left: 38, right: 0, height: 1, backgroundColor: colors.hairline },
   expanded: { position: 'relative', marginLeft: 38, paddingTop: 2, paddingBottom: 18, borderBottomWidth: 1, borderBottomColor: colors.hairline },
-  macroBar: { marginTop: 16 },
-  macroWordsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 9 },
+  expandedInCard: { position: 'relative', paddingTop: 12 },
+  macroBar: { marginTop: 14 },
+  macroWordsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
   macroWords: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 4 },
   macroWord: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   macroDot: { width: 7, height: 7, borderRadius: 3.5 },
   macroWordText: { ...fontFace('medium'), ...tabularNums, fontSize: 13, color: colors.muted },
   mealGap: { marginTop: 14 },
+  addCta: { marginTop: 14, minHeight: 44, paddingHorizontal: 14, borderRadius: radius.r12, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
+  addCtaDisabled: { backgroundColor: colors.raised, borderWidth: 1, borderColor: colors.hairline, opacity: 0.6 },
+  addCtaText: { ...fontFace('bold'), ...tabularNums, fontSize: 14, color: colors.onAccent },
+  addCtaTextDisabled: { color: colors.muted },
   footerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 10 },
   partsLink: { flex: 1, minWidth: 0, minHeight: 44, marginVertical: -10, flexDirection: 'row', alignItems: 'center', gap: 4 },
   partsSaved: { flex: 1, minWidth: 0 },
   partsText: { ...fontFace('medium'), fontSize: 14, color: colors.muted, flexShrink: 1 },
-  mealLogged: { backgroundColor: colors.accent, borderColor: colors.accent },
   onAccent: { color: colors.onAccent },
   accent: { color: colors.accent },
   unitForm: { gap: 10 },

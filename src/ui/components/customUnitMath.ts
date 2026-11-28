@@ -232,3 +232,57 @@ export function mergeSelectedPortion(
   }
   return [{ ...selected, kcal }, ...portions].slice(0, 3);
 }
+
+/** Toggles a meal in a multi-select destination list, preserving order for remaining items. */
+export function toggleMealSelection(selectedMeals: readonly string[], meal: string): string[] {
+  return selectedMeals.includes(meal)
+    ? selectedMeals.filter(item => item !== meal)
+    : [...selectedMeals, meal];
+}
+
+/** Orders selected meals according to the day's meal list, preserving any extra meals at the end. */
+export function orderSelectedMeals(
+  selectedMeals: readonly string[],
+  availableMeals: readonly string[],
+): string[] {
+  const unique = [...new Set(selectedMeals.map(meal => meal.trim()).filter(Boolean))];
+  const selectedSet = new Set(unique);
+  const ordered = availableMeals.filter(meal => selectedSet.has(meal));
+  const orderedSet = new Set(ordered);
+  for (const meal of unique) {
+    if (!orderedSet.has(meal)) ordered.push(meal);
+  }
+  return ordered;
+}
+
+/** Formats the primary Add CTA label for one or more selected meal destinations. */
+export function formatAddToMealsLabel(
+  selectedMeals: readonly string[],
+  energyText?: string | null,
+): string {
+  if (selectedMeals.length === 0) return 'Select a meal';
+  const suffix = energyText ? ` · ${energyText}` : '';
+  if (selectedMeals.length === 1) {
+    return `Add to ${selectedMeals[0]}${suffix}`;
+  }
+  if (selectedMeals.length === 2) {
+    return `Add to ${selectedMeals[0]} & ${selectedMeals[1]}${suffix}`;
+  }
+  return `Add to ${selectedMeals.length} meals${energyText ? ` · ${energyText} each` : ''}`;
+}
+
+/** Computes how many search result rows fit cleanly inside an available results tray height. */
+export function computeResultsPerPage(
+  containerHeight: number,
+  rowHeight = 56,
+  footerHeight = 36,
+  minRows = 4,
+  maxRows = 12,
+): number {
+  if (!Number.isFinite(containerHeight) || containerHeight <= 0 || rowHeight <= 0) {
+    return minRows;
+  }
+  const bodyHeight = Math.max(0, containerHeight - footerHeight);
+  const fit = Math.floor(bodyHeight / rowHeight);
+  return Math.max(minRows, Math.min(maxRows, fit));
+}

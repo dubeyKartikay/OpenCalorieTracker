@@ -24,10 +24,21 @@ export async function bootstrap(): Promise<AppRuntime> {
     await migrateDatabase(userDb);
     offCacheDb = await createWebSqliteDriver({ name: 'off_cache.sqlite' }); await initOffCache(offCacheDb);
     const packs = new PacksRepo(userDb);
+    const resolveBundledPack = async (packId: string) => {
+      const entry = packId === 'usda-fdc-starter'
+        ? { module: usda, filePath: 'bundled:usda' }
+        : packId === 'custom-home-pack'
+          ? { module: custom, filePath: 'bundled:custom' }
+          : null;
+      if (!entry) return null;
+      const asset = await Asset.fromModule(entry.module).downloadAsync();
+      const db = await createWebSqliteDriver({ bytes: await fetchBytes(asset.localUri ?? asset.uri), readOnly: true });
+      return { db, filePath: entry.filePath };
+    };
     app = new AppController({ userDb, offCacheDb, credentials: createCredentialStore(), catalog: new FoodSourceRegistry(userDb),
       diary: new DiaryRepo(userDb), library: new LibraryRepo(userDb), goals: new GoalsRepo(userDb), packs,
       water: new WaterRepo(userDb), healthSync: new HealthSyncRepo(userDb), photoDrafts: new PhotoDraftRepo(userDb),
-      healthPort: createUnavailableHealthPort('web') });
+      healthPort: createUnavailableHealthPort('web'), resolveBundledPack });
     const controller = app;
     const notices: string[] = [];
     const installBytes = async (bytes: Uint8Array, path: string, priority: number) => {
@@ -47,9 +58,11 @@ export async function bootstrap(): Promise<AppRuntime> {
     let usdaMounted = false;
     for (const pack of installed) {
       try {
-        if (pack.file_path === 'bundled:usda') await installAsset(usda, pack.file_path, pack.priority);
-        else if (pack.file_path === 'bundled:custom') await installAsset(custom, pack.file_path, pack.priority);
-        else {
+        if (pack.file_path === 'bundled:usda' || (!pack.file_path && pack.pack_id === 'usda-fdc-starter')) {
+          await installAsset(usda, 'bundled:usda', pack.priority);
+        } else if (pack.file_path === 'bundled:custom' || (!pack.file_path && pack.pack_id === 'custom-home-pack')) {
+          await installAsset(custom, 'bundled:custom', pack.priority);
+        } else {
           const bytes = pack.file_path ? await readWebDatabase(pack.file_path) : null;
           if (!bytes) throw new Error('Pack file is missing. Import it again.');
           await installBytes(bytes, pack.file_path!, pack.priority);

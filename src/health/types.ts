@@ -61,6 +61,7 @@ export interface HealthSyncRecordPort {
   getRecord(entryId: string): Promise<HealthSyncRecord | null>;
   upsertRecord(record: HealthSyncRecord): Promise<void>;
   deleteRecord(entryId: string): Promise<void>;
+  listRecords?(platform?: HealthPlatformKind): Promise<HealthSyncRecord[]>;
 }
 
 export interface HealthWeightStorePort {

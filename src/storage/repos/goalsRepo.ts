@@ -7,8 +7,14 @@ export class GoalsRepo {
   constructor(private readonly db: SqlDatabase) {}
   async upsertGoalPeriod(input: GoalPeriod): Promise<GoalPeriod> {
     const goal = goalPeriodSchema.parse(input);
-    await this.db.runAsync('INSERT INTO goal_periods VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET effective_from_date=excluded.effective_from_date,goal_json=excluded.goal_json', goal.id, goal.effective_from_date, JSON.stringify(goal));
-    return goal;
+    return this.db.withTransactionAsync(async (tx) => {
+      await tx.runAsync('DELETE FROM goal_periods WHERE effective_from_date=? AND id<>?', goal.effective_from_date, goal.id);
+      await tx.runAsync(
+        'INSERT INTO goal_periods VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET effective_from_date=excluded.effective_from_date,goal_json=excluded.goal_json',
+        goal.id, goal.effective_from_date, JSON.stringify(goal),
+      );
+      return goal;
+    });
   }
   async listGoalPeriods(): Promise<GoalPeriod[]> {
     return (await this.db.getAllAsync<{ goal_json: string }>('SELECT goal_json FROM goal_periods ORDER BY effective_from_date,id')).map((row) => parseJson(row.goal_json, goalPeriodSchema));

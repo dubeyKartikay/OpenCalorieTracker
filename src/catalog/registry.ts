@@ -57,8 +57,18 @@ export class FoodSourceRegistry {
     return { ...food, units: mergeFoodUnits(food.units, await this.library.listUserFoodUnits(foodKey(food))) };
   }
   async search(query: string, options: SearchOptions = {}): Promise<{ yours: SearchCandidate[]; database: SearchCandidate[] }> {
-    const sources = [this.userLibrary, ...[...this.packs.values()].filter((pack) => pack.enabled).map((pack) => pack.adapter)];
-    const results = (await Promise.all(sources.map((source) => source.search(query, options)))).flat();
+    const enabledPacks = [...this.packs.values()].filter((pack) => pack.enabled).map((pack) => pack.adapter);
+    const [userResults, ...packOutcomes] = await Promise.all([
+      this.userLibrary.search(query, options),
+      ...enabledPacks.map(async (source) => {
+        try {
+          return await source.search(query, options);
+        } catch {
+          return [] as SearchCandidate[];
+        }
+      }),
+    ]);
+    const results = [...userResults, ...packOutcomes.flat()];
     const databaseFoods = results.filter((candidate) => candidate.bucket === 'database').map((candidate) => candidate.food);
     const unitsByKey = await this.library.listUserFoodUnitsForKeys(databaseFoods.map((food) => foodKey(food)));
     const merged = results.map((candidate) => {
@@ -77,8 +87,10 @@ export class FoodSourceRegistry {
     if (custom) return custom;
     const packs = [...this.packs.values()].filter((pack) => pack.enabled).sort((a, b) => a.adapter.priority - b.adapter.priority || a.adapter.sourceId.localeCompare(b.adapter.sourceId));
     for (const pack of packs) {
-      const food = await pack.adapter.lookupBarcode(code);
-      if (food) return this.personalUnits(food);
+      try {
+        const food = await pack.adapter.lookupBarcode(code);
+        if (food) return this.personalUnits(food);
+      } catch { /* Isolate individual pack query failures so remaining sources still work. */ }
     }
     return null;
   }
@@ -86,8 +98,12 @@ export class FoodSourceRegistry {
     if (packId === null || packId === this.userLibrary.sourceId) return this.userLibrary.getById(foodId);
     const pack = this.packs.get(packId);
     if (!pack?.enabled) return null;
-    const food = await pack.adapter.getById(foodId);
-    return food ? this.personalUnits(food) : null;
+    try {
+      const food = await pack.adapter.getById(foodId);
+      return food ? this.personalUnits(food) : null;
+    } catch {
+      return null;
+    }
   }
   async close(): Promise<void> { for (const id of [...this.packs.keys()]) await this.unmountPack(id); }
 }

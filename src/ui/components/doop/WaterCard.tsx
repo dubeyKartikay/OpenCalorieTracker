@@ -17,6 +17,7 @@ export interface WaterCardProps {
   lastAmountMl?: number | undefined;
   showCustomAmount?: boolean | undefined;
   disabled?: boolean | undefined;
+  expanded?: boolean | undefined;
   onOpenChange?: ((open: boolean) => void) | undefined;
   style?: StyleProp<ViewStyle> | undefined;
 }
@@ -31,17 +32,27 @@ export function WaterCard({
   lastAmountMl,
   showCustomAmount = true,
   disabled = false,
+  expanded: controlledExpanded,
   onOpenChange,
   style,
 }: WaterCardProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [localExpanded, setLocalExpanded] = useState(false);
+  const expanded = controlledExpanded ?? localExpanded;
   const [customAmount, setCustomAmount] = useState('');
+  const [prevExpanded, setPrevExpanded] = useState(expanded);
+  if (expanded !== prevExpanded) {
+    setPrevExpanded(expanded);
+    if (!expanded && customAmount !== '') {
+      setCustomAmount('');
+    }
+  }
   const amount = Number(customAmount.trim());
   const canAdd = !disabled && customAmount.trim() !== '' && Number.isFinite(amount) && amount > 0;
 
   const setOpen = (next: boolean) => {
     if (next) Keyboard.dismiss();
-    setExpanded(next);
+    else setCustomAmount('');
+    if (controlledExpanded === undefined) setLocalExpanded(next);
     onOpenChange?.(next);
   };
 

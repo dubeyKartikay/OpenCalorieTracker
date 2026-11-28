@@ -51,7 +51,7 @@ describe('Slice 1 backend using real read-only pack files and persistent user.db
     await diary.upsertDraft(snapshot);
     expect(await diary.confirmEntry(snapshot)).toEqual(snapshot);
     expect(await diary.confirmEntry({ ...snapshot, id: generateId() })).toEqual(snapshot);
-    expect((await diary.getDiaryDay(snapshot.date))?.completeness).toBe('partial');
+    expect((await diary.getDiaryDay(snapshot.date))?.completeness).toBe('complete');
     await catalog.close();
     await user.closeAsync();
 

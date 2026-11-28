@@ -1,10 +1,11 @@
+import { createSign, generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FoodSourceRegistry } from '../../catalog';
-import { AIError } from '../../ai';
-import type { AIProvider, MealExtraction } from '../../ai';
+import { AIError, clearOAuthJwksCache, OPENAI_ISSUER, OPENAI_JWKS_URI, OPENAI_REQUIRED_PLAN_SCOPE, OPENAI_REVOKE_ENDPOINT, OPENAI_TOKEN_ENDPOINT } from '../../ai';
+import type { AIProvider, LoopbackAuthPort, MealExtraction } from '../../ai';
 import { calculateNutrition, foodRecordSchema, generateId } from '../../domain';
 import { DiaryRepo, GoalsRepo, LibraryRepo, migrateDatabase, PacksRepo } from '../../storage';
 import { createNodeSqliteDriver } from '../../storage/nodeDriver';
@@ -12,7 +13,15 @@ import { AppController } from '../controller';
 import type { ControllerDependencies } from '../controller';
 import { createMemoryCredentialStore, maskSecretKey } from '../credentials';
 
+let onOpenBrowserUrl: ((url: string) => void) | null = null;
 vi.mock('@sqlite.org/sqlite-wasm/sqlite3.wasm', () => ({ default: 1 }));
+vi.mock('expo-web-browser', () => ({
+  openBrowserAsync: async (url: string) => {
+    onOpenBrowserUrl?.(url);
+    return { type: 'opened' };
+  },
+  dismissBrowser: () => {},
+}));
 vi.mock('expo-asset', () => ({ Asset: { fromModule: () => ({
   uri: resolve('node_modules/@sqlite.org/sqlite-wasm/dist/sqlite3.wasm'),
   async downloadAsync() {},
@@ -275,5 +284,347 @@ describe('Slice 3 against real SQLite and compiled packs', () => {
     ai.completeJson.mockResolvedValueOnce(label);
     expect(await app.extractLabelFromImage('data:image/png;base64,aGVsbG8=')).toEqual(label);
     expect(app.getActiveDraft()).toBeNull(); expect((await app.day(DATE)).totals.entryCount).toBe(0);
+  });
+
+  it('prevents an in-flight OAuth refresh from restoring credentials after sign-out or switching to an API key', async () => {
+    let resolveRefresh!: (response: Response) => void;
+    const aiFetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async url => {
+      if (url === OPENAI_TOKEN_ENDPOINT) {
+        return new Promise<Response>(resolve => { resolveRefresh = resolve; });
+      }
+      if (url === OPENAI_REVOKE_ENDPOINT) {
+        return new Response(null, { status: 200 });
+      }
+      throw new Error(`Unexpected fetch URL: ${String(url)}`);
+    });
+    const { app, credentials } = await open({ aiFetch, aiProviderFactory: undefined });
+    await app.setAIConsent(true);
+    await credentials.setOAuthSession!({
+      accessToken: 'expired-oauth-token',
+      refreshToken: 'refresh-old',
+      clientId: 'oaiapp_test',
+      expiresAtMs: Date.now() - 10_000,
+    });
+
+    // Start capture while OAuth token needs refresh -> refresh hangs in flight
+    const pendingCapture = capture(app);
+    await vi.waitFor(() => expect(aiFetch).toHaveBeenCalledWith(OPENAI_TOKEN_ENDPOINT, expect.anything()));
+
+    // User switches to an API key before refresh resolves
+    await app.saveApiKey('sk-proj-fresh-api-key-9999');
+
+    // Release delayed refresh response
+    resolveRefresh(Response.json({
+      access_token: 'stale-refreshed-oauth',
+      token_type: 'Bearer',
+      expires_in: 3600,
+      refresh_token: 'refresh-stale-2',
+    }));
+
+    await expect(pendingCapture).rejects.toMatchObject({ code: 'not_connected' });
+    expect(await credentials.getOAuthSession!()).toBeNull();
+    expect(await app.getAIStatus()).toMatchObject({ mode: 'api_key', maskedKey: 'sk-proj-••••9999' });
+  });
+
+  it('clears local credentials even when remote OAuth revocation fails', async () => {
+    const aiFetch = vi.fn<typeof globalThis.fetch>().mockRejectedValue(new Error('offline'));
+    const { app, credentials } = await open({ aiFetch, aiProviderFactory: undefined });
+    await credentials.setOAuthSession!({
+      accessToken: 'active-oauth',
+      refreshToken: 'refresh-1',
+      clientId: 'oaiapp_test',
+      expiresAtMs: Date.now() + 600_000,
+    });
+    const result = await app.disconnectAI();
+    expect(result).toEqual({ revokedRemote: false });
+    expect(await credentials.getOAuthSession!()).toBeNull();
+    expect((await app.getAIStatus()).mode).toBe('disconnected');
+  });
+
+  it('verifies ID token, required plan scope, client ID, and account subject before replacing credentials', async () => {
+    clearOAuthJwksCache();
+    const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'k-e2e', alg: 'RS256', use: 'sig' };
+    const encodePart = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const signIdToken = (claims: Record<string, unknown>) => {
+      const signingInput = `${encodePart({ alg: 'RS256', typ: 'JWT', kid: 'k-e2e' })}.${encodePart(claims)}`;
+      const sig = createSign('RSA-SHA256').update(signingInput).sign(privateKey).toString('base64url');
+      return `${signingInput}.${sig}`;
+    };
+
+    let lastNonce = '';
+    let callbackClientId = 'oaiapp_registered';
+    let tokenScope = `openid profile email ${OPENAI_REQUIRED_PLAN_SCOPE} offline_access`;
+    let tokenSubject = 'acct-primary';
+    let resolveCallback: ((result: { code: string; state: string; clientId?: string }) => void) | null = null;
+    let currentState = '';
+
+    const loopbackAuth: LoopbackAuthPort = {
+      listen: async ({ expectedState }) => {
+        currentState = expectedState;
+        return {
+          port: 49152,
+          callback: new Promise(resolve => { resolveCallback = resolve; }),
+          close: async () => {},
+        };
+      },
+    };
+    const aiFetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async url => {
+      if (url === OPENAI_JWKS_URI) return Response.json({ keys: [jwk] });
+      if (url === OPENAI_TOKEN_ENDPOINT) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        return Response.json({
+          access_token: 'oauth-access-1',
+          refresh_token: 'oauth-refresh-1',
+          token_type: 'Bearer',
+          expires_in: 3600,
+          scope: tokenScope,
+          id_token: signIdToken({
+            iss: OPENAI_ISSUER,
+            aud: callbackClientId,
+            sub: tokenSubject,
+            nonce: lastNonce,
+            iat: nowSec - 5,
+            exp: nowSec + 600,
+          }),
+        });
+      }
+      throw new Error(`Unexpected fetch URL: ${String(url)}`);
+    });
+
+    const { app, credentials } = await open({ loopbackAuth, aiFetch });
+    await connect(app); // Start with an existing API key
+    onOpenBrowserUrl = (url: string) => {
+      lastNonce = new URL(url).searchParams.get('nonce') ?? '';
+      queueMicrotask(() => {
+        resolveCallback?.({ code: 'auth-code-1', state: currentState, clientId: callbackClientId });
+      });
+    };
+
+    try {
+      // 1. Missing required plan-sharing scope must fail without clearing the existing API key
+      tokenScope = 'openid profile email';
+      const missingScope = await app.connectChatGPTOAuth();
+      expect(missingScope.ok).toBe(false);
+      expect(await credentials.getApiKey()).toBe('sk-proj-test-secret-9d3f');
+      expect(await credentials.getOAuthSession!()).toBeNull();
+
+      // 2. Valid sign-in succeeds, saves accountSubject, and replaces API key
+      tokenScope = `openid profile email ${OPENAI_REQUIRED_PLAN_SCOPE} offline_access`;
+      const connected = await app.connectChatGPTOAuth();
+      expect(connected.ok).toBe(true);
+      expect(await credentials.getApiKey()).toBeNull();
+      expect(await credentials.getOAuthSession!()).toMatchObject({
+        clientId: 'oaiapp_registered',
+        accountSubject: 'acct-primary',
+      });
+
+      // 3. Re-auth returning a different client_id must be rejected without clobbering the active session
+      callbackClientId = 'oaiapp_impostor';
+      const wrongClient = await app.connectChatGPTOAuth();
+      expect(wrongClient.ok).toBe(false);
+      expect(await credentials.getOAuthSession!()).toMatchObject({
+        clientId: 'oaiapp_registered',
+        accountSubject: 'acct-primary',
+      });
+
+      // 4. Re-auth returning a different account subject for the same client must be rejected
+      callbackClientId = 'oaiapp_registered';
+      tokenSubject = 'acct-different-user';
+      const wrongSubject = await app.connectChatGPTOAuth();
+      expect(wrongSubject.ok).toBe(false);
+      expect(await credentials.getOAuthSession!()).toMatchObject({
+        clientId: 'oaiapp_registered',
+        accountSubject: 'acct-primary',
+      });
+
+      // 5. Sign-out retains the registered clientId so re-signing in reuses it instead of dynamic_agent_client
+      let seenAuthClientId = '';
+      onOpenBrowserUrl = (url: string) => {
+        const parsed = new URL(url);
+        lastNonce = parsed.searchParams.get('nonce') ?? '';
+        seenAuthClientId = parsed.searchParams.get('client_id') ?? '';
+        queueMicrotask(() => {
+          resolveCallback?.({ code: 'auth-code-2', state: currentState, clientId: 'oaiapp_registered' });
+        });
+      };
+      await app.disconnectAI();
+      tokenSubject = 'acct-primary';
+      const reconnected = await app.connectChatGPTOAuth();
+      expect(reconnected.ok).toBe(true);
+      expect(seenAuthClientId).toBe('oaiapp_registered');
+    } finally {
+      onOpenBrowserUrl = null;
+    }
+  });
+
+  it('prevents an in-flight OAuth sign-in from overwriting a newer API key choice', async () => {
+    clearOAuthJwksCache();
+    const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'k-race', alg: 'RS256', use: 'sig' };
+    const encodePart = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const signIdToken = (claims: Record<string, unknown>) => {
+      const signingInput = `${encodePart({ alg: 'RS256', typ: 'JWT', kid: 'k-race' })}.${encodePart(claims)}`;
+      const sig = createSign('RSA-SHA256').update(signingInput).sign(privateKey).toString('base64url');
+      return `${signingInput}.${sig}`;
+    };
+
+    let lastNonce = '';
+    let currentState = '';
+    let resolveCallback: ((result: { code: string; state: string; clientId?: string }) => void) | null = null;
+    let releaseTokenExchange!: (response: Response) => void;
+
+    const loopbackAuth: LoopbackAuthPort = {
+      listen: async ({ expectedState }) => {
+        currentState = expectedState;
+        return {
+          port: 49152,
+          callback: new Promise(resolve => { resolveCallback = resolve; }),
+          close: async () => {},
+        };
+      },
+    };
+    const aiFetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async url => {
+      if (url === OPENAI_JWKS_URI) return Response.json({ keys: [jwk] });
+      if (url === OPENAI_TOKEN_ENDPOINT) {
+        return new Promise<Response>(resolve => { releaseTokenExchange = resolve; });
+      }
+      throw new Error(`Unexpected fetch URL: ${String(url)}`);
+    });
+
+    const { app, credentials } = await open({ loopbackAuth, aiFetch });
+    onOpenBrowserUrl = (url: string) => {
+      lastNonce = new URL(url).searchParams.get('nonce') ?? '';
+      queueMicrotask(() => {
+        resolveCallback?.({ code: 'auth-code-race', state: currentState, clientId: 'oaiapp_race' });
+      });
+    };
+
+    try {
+      const pendingSignIn = app.connectChatGPTOAuth();
+      await vi.waitFor(() => expect(aiFetch).toHaveBeenCalledWith(OPENAI_TOKEN_ENDPOINT, expect.anything()));
+
+      // User saves an API key while OAuth exchange is still in flight
+      await app.saveApiKey('sk-proj-winner-key-4321');
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      releaseTokenExchange(Response.json({
+        access_token: 'late-oauth-token',
+        refresh_token: 'late-oauth-refresh',
+        token_type: 'Bearer',
+        expires_in: 3600,
+        scope: `openid ${OPENAI_REQUIRED_PLAN_SCOPE}`,
+        id_token: signIdToken({
+          iss: OPENAI_ISSUER,
+          aud: 'oaiapp_race',
+          sub: 'acct-race',
+          nonce: lastNonce,
+          iat: nowSec - 5,
+          exp: nowSec + 600,
+        }),
+      }));
+
+      const outcome = await pendingSignIn;
+      expect(outcome.ok).toBe(false);
+      expect(await credentials.getApiKey()).toBe('sk-proj-winner-key-4321');
+      expect(await credentials.getOAuthSession!()).toBeNull();
+    } finally {
+      onOpenBrowserUrl = null;
+    }
+  });
+
+  it('prevents a delayed API-key read from sending an OpenAI POST after sign-out', async () => {
+    const aiFetch = vi.fn<typeof globalThis.fetch>();
+    let releaseKeyRead!: (value: string | null) => void;
+    const baseStore = createMemoryCredentialStore();
+    let delayReads = false;
+    const credentials = {
+      ...baseStore,
+      getApiKey: async () => {
+        if (!delayReads) return baseStore.getApiKey();
+        delayReads = false;
+        return new Promise<string | null>(resolve => { releaseKeyRead = resolve; });
+      },
+    };
+    const { app } = await open({ credentials, aiFetch, aiProviderFactory: undefined });
+    await app.setAIConsent(true);
+    await app.saveApiKey('sk-proj-test-key-1111');
+
+    // connectedProvider() reads key once via aiConnection(); next read inside OpenAIResponsesProvider hangs
+    const origGetApiKey = credentials.getApiKey;
+    let callCount = 0;
+    credentials.getApiKey = async () => {
+      callCount += 1;
+      if (callCount === 2) {
+        delayReads = true;
+      }
+      return origGetApiKey();
+    };
+
+    const pendingCapture = capture(app);
+    await vi.waitFor(() => expect(callCount).toBe(2));
+
+    await app.disconnectAI();
+    releaseKeyRead('sk-proj-test-key-1111');
+
+    await expect(pendingCapture).rejects.toMatchObject({ code: 'not_connected' });
+    expect(aiFetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps manual AI draft quantity edits intact when subsequent clarifications are replayed', async () => {
+    const scaleQuestion: MealExtraction['clarifying_questions'][number] = {
+      id: 'size',
+      topic: 'portion',
+      label: 'Portion size?',
+      options: [
+        { id: 'double', label: 'Double', effect: { kind: 'scale_item', targetItemIndex: 0, multiplier: 2 } },
+        { id: 'normal', label: 'Normal', effect: { kind: 'none' } },
+      ],
+    };
+    const customAi = {
+      completeJson: vi.fn<AIProvider['completeJson']>().mockResolvedValue({
+        items: [{ query: 'roti', display_name: 'Roti', prep_state: 'cooked', amount: 2, unit: 'roti', portion_certainty: 'stated' }],
+        clarifying_questions: [scaleQuestion, question],
+      }),
+    };
+    const { app } = await open({ aiProviderFactory: () => customAi });
+    await connect(app);
+    await capture(app);
+
+    await app.answerDraftQuestion('size', 'double');
+    expect(app.getActiveDraft()?.proposal.items[0]?.quantity.amount).toBe(4);
+
+    // User manually corrects roti to 3
+    const rotiUnit = app.getActiveDraft()!.proposal.items[0]!.quantity.unit;
+    app.updateDraftItemQuantity(0, { amount: 3, unit: rotiUnit });
+    expect(app.getActiveDraft()?.proposal.items[0]?.quantity.amount).toBe(3);
+
+    // Answering another clarification must NOT re-multiply 3 into 6
+    await app.answerDraftQuestion('fat', 'ghee');
+    expect(app.getActiveDraft()?.proposal.items[0]?.quantity.amount).toBe(3);
+  });
+
+  it('blocks new AI captures while disconnectAI credential deletion is still in flight', async () => {
+    const aiFetch = vi.fn<typeof globalThis.fetch>();
+    let releaseClear!: () => void;
+    const baseStore = createMemoryCredentialStore();
+    const credentials = {
+      ...baseStore,
+      clearApiKey: async () => {
+        await new Promise<void>(resolve => { releaseClear = resolve; });
+        await baseStore.clearApiKey();
+      },
+    };
+    const { app } = await open({ credentials, aiFetch, aiProviderFactory: undefined });
+    await app.setAIConsent(true);
+    await app.saveApiKey('sk-proj-pending-signout-8888');
+
+    const pendingSignOut = app.disconnectAI();
+    // Capture while clearApiKey() is still suspended must be rejected without sending a POST
+    await expect(capture(app)).rejects.toMatchObject({ code: 'not_connected' });
+    expect(aiFetch).not.toHaveBeenCalled();
+
+    releaseClear();
+    await pendingSignOut;
   });
 });

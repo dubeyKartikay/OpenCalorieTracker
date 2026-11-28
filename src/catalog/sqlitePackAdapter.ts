@@ -16,11 +16,11 @@ export async function validatePackDatabase(db: SqlDatabase): Promise<PackMeta> {
   const fts = await db.getFirstAsync<{ sql: string }>("SELECT sql FROM sqlite_master WHERE name='foods_fts'");
   if (!fts || !/USING\s+fts5\s*\(/i.test(fts.sql)) throw new Error('Invalid pack: foods_fts must use FTS5');
   await db.getAllAsync("SELECT food_id,bm25(foods_fts) FROM foods_fts WHERE foods_fts MATCH ? LIMIT 1", '"octpackvalidationprobe"*');
-  // Verify the columns needed by the reader before mounting.
-  await db.getAllAsync(`SELECT id,name,brand,category,prep_state,basis,serving_g,serving_ml,${nutrientKeys.join(',')} FROM foods LIMIT 0`);
-  await db.getAllAsync('SELECT food_id,alias,lang FROM food_aliases LIMIT 0');
-  await db.getAllAsync('SELECT food_id,label,grams,ml FROM food_units LIMIT 0');
-  await db.getAllAsync('SELECT food_id,raw_code,symbology,gtin14 FROM food_barcodes LIMIT 0');
+  // Verify the exact columns and ordering queries needed by the reader before mounting.
+  await db.getAllAsync(`SELECT id,name,brand,category,prep_state,basis,serving_g,serving_ml,${nutrientKeys.join(',')} FROM foods ORDER BY id LIMIT 0`);
+  await db.getAllAsync('SELECT id,food_id,alias,lang FROM food_aliases ORDER BY id LIMIT 0');
+  await db.getAllAsync('SELECT id,food_id,label,grams,ml FROM food_units ORDER BY id LIMIT 0');
+  await db.getAllAsync('SELECT id,food_id,raw_code,symbology,gtin14 FROM food_barcodes ORDER BY id LIMIT 0');
   return meta;
 }
 

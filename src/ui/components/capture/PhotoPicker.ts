@@ -7,6 +7,19 @@ export interface PickedMealImage {
   height?: number;
 }
 
+const SUPPORTED_IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
+function detectBase64ImageMime(base64: string, reportedMime?: string | null): string {
+  const head = base64.slice(0, 16);
+  if (head.startsWith('/9j/')) return 'image/jpeg';
+  if (head.startsWith('iVBORw0KGgo')) return 'image/png';
+  if (head.startsWith('R0lGOD')) return 'image/gif';
+  if (head.startsWith('UklGR')) return 'image/webp';
+  const normalized = reportedMime?.trim().toLowerCase();
+  if (normalized && SUPPORTED_IMAGE_MIMES.has(normalized)) return normalized;
+  return 'image/jpeg';
+}
+
 /** Permissions are requested only after the user chooses camera or library. */
 export async function pickMealImage(source: 'camera' | 'library'): Promise<PickedMealImage | null> {
   const permission = source === 'camera'
@@ -26,8 +39,7 @@ export async function pickMealImage(source: 'camera' | 'library'): Promise<Picke
   if (!asset?.base64) {
     throw new Error('This photo could not be loaded. Try another image, or enter your meal manually.');
   }
-  // Expo ImagePicker returns JPEG bytes for base64 when no MIME type is supplied.
-  const mimeType = asset.mimeType || 'image/jpeg';
+  const mimeType = detectBase64ImageMime(asset.base64, asset.mimeType);
   return {
     uri: asset.uri, imageDataUrl: `data:${mimeType};base64,${asset.base64}`,
     width: asset.width, height: asset.height,

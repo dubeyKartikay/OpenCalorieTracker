@@ -33,16 +33,16 @@ describe('real user SQLite migrations and transaction isolation', () => {
     const snapshot = await diary.confirmEntry(entry());
     await migrateDatabase(db);
     expect(await diary.getEntry(snapshot.id)).toEqual(snapshot);
-    expect(await db.getFirstAsync('PRAGMA user_version')).toEqual({ user_version: 2 });
+    expect(await db.getFirstAsync('PRAGMA user_version')).toEqual({ user_version: 3 });
     expect(await db.getFirstAsync('PRAGMA foreign_keys')).toEqual({ foreign_keys: 1 });
     await expect(db.runAsync('INSERT INTO diary_days VALUES(?,?,?)', '2026-01-01', 'invalid', at)).rejects.toThrow();
     await expect(db.runAsync('INSERT INTO user_food_units VALUES(?,?,?,?)', 'rice', 'cup', null, null)).rejects.toThrow();
   });
   it('rejects future migrations without changing their version', async () => {
     const db = scope.open();
-    await db.execAsync('PRAGMA user_version=3');
+    await db.execAsync('PRAGMA user_version=4');
     await expect(migrateDatabase(db)).rejects.toThrow('Unsupported');
-    expect(await db.getFirstAsync('PRAGMA user_version')).toEqual({ user_version: 3 });
+    expect(await db.getFirstAsync('PRAGMA user_version')).toEqual({ user_version: 4 });
   });
   it('upgrades a persisted v1 database to v2 while preserving historical data', async () => {
     const path = join(await scope.directory(), 'user.db');
@@ -60,7 +60,7 @@ describe('real user SQLite migrations and transaction isolation', () => {
     const upgraded = scope.open(path);
     await migrateDatabase(upgraded);
     await migrateDatabase(upgraded);
-    expect(await upgraded.getFirstAsync('PRAGMA user_version')).toEqual({ user_version: 2 });
+    expect(await upgraded.getFirstAsync('PRAGMA user_version')).toEqual({ user_version: 3 });
     expect(await new DiaryRepo(upgraded).getEntry(snapshot.id)).toEqual(snapshot);
     expect(await new LibraryRepo(upgraded).getCustomFood('v1-custom')).toEqual(food({ id: 'v1-custom' }));
     expect(await upgraded.getFirstAsync('SELECT value_json FROM preferences WHERE key=?', 'theme')).toEqual({ value_json: '"dark"' });
@@ -96,17 +96,18 @@ describe('diary commits, Undo and immutable snapshots', () => {
     const results = await Promise.all([diary.confirmEntry(draft.id), diary.confirmEntry({ ...draft, id: generateId() }), diary.confirmEntry(draft)]);
     expect(results.every((result) => result.id === draft.id)).toBe(true);
     expect((await diary.getDiaryDay(draft.date))?.entries).toEqual([results[0]]);
-    expect((await diary.getDiaryDay(draft.date))?.completeness).toBe('partial');
+    expect((await diary.getDiaryDay(draft.date))?.completeness).toBe('complete');
     expect((await new LibraryRepo(db).listLearnedPortions('usda:rice'))[0]?.use_count).toBe(1);
     expect(await diary.upsertDraft({ ...draft, meal: 'Edited draft retry' })).toEqual(results[0]);
     expect(await diary.confirmEntry({ ...draft, meal: 'Edited confirm retry' })).toEqual(results[0]);
   });
-  it('does not downgrade a complete day when adding an entry', async () => {
+  it('marks any day with confirmed entries complete and reverts to none when emptied', async () => {
     const db = await scope.user();
     const diary = new DiaryRepo(db);
-    await diary.setDayCompleteness('2026-11-23', 'complete');
-    await diary.confirmEntry(entry());
+    const saved = await diary.confirmEntry(entry());
     expect((await diary.getDiaryDay('2026-11-23'))?.completeness).toBe('complete');
+    await diary.deleteEntry(saved.id);
+    expect((await diary.getDiaryDay('2026-11-23'))?.completeness).toBe('none');
   });
   it('deletes with a full Undo payload and restores without learning twice', async () => {
     const db = await scope.user();
@@ -389,5 +390,35 @@ describe('validated atomic export/restore', () => {
     expect(await exportBundleV1(db, at)).toEqual(before);
     expect(await new HealthSyncRepo(db).listRecords()).toEqual([sync]);
     expect(await new PhotoDraftRepo(db).listDrafts()).toEqual([draft]);
+  });
+
+  it('prevents duplicate goal dates on merge and round-trips saved meals, personal units, learned portions, and barcode links', async () => {
+    const db = await scope.user();
+    const library = new LibraryRepo(db);
+    const goals = new GoalsRepo(db);
+    const customFood = food({ id: 'custom-barcoded', source_pack_id: null, provenance_kind: 'user' });
+    await library.upsertCustomFood(customFood, { rawCode: '4006381333931', symbology: 'ean_13' });
+    const meal = await library.upsertSavedMeal({ id: generateId(), name: 'Oats combo', items: [{ food: customFood, quantity: { amount: 100, unit: 'g' } }], pinned: true, use_count: 3, last_used_at: at });
+    await library.upsertUserFoodUnit('custom-barcoded', { label: 'scoop', grams: 30, ml: null });
+    await library.recordLearnedPortion('custom-barcoded', { amount: 2, unit: 'scoop' }, at);
+    await goals.upsertGoalPeriod({ id: generateId(), effective_from_date: '2026-11-01', mode: 'maintain', target_kcal: 2100, protein_g: null, carbs_g: null, fat_g: null, fiber_g: null });
+
+    const bundle = await exportBundleV1(db, at);
+    const fresh = await scope.user();
+    await restoreBundleV1(fresh, JSON.parse(JSON.stringify(bundle)), { mode: 'replace' });
+    expect(await new LibraryRepo(fresh).listSavedMeals()).toEqual([meal]);
+    expect(await new LibraryRepo(fresh).listUserFoodUnits('custom-barcoded')).toEqual([{ label: 'scoop', grams: 30, ml: null }]);
+    expect(await new LibraryRepo(fresh).listLearnedPortions('custom-barcoded')).toHaveLength(1);
+    expect((await new LibraryRepo(fresh).findCustomFoodByBarcode({ rawCode: '4006381333931', symbology: 'ean_13', gtin14: '04006381333931' }))?.id).toBe('custom-barcoded');
+
+    // Merging a goal with a different ID on the same effective date keeps the local goal cleanly
+    const conflictingBundle = {
+      ...bundle,
+      goal_periods: [{ id: generateId(), effective_from_date: '2026-11-01', mode: 'lose' as const, target_kcal: 1700, protein_g: null, carbs_g: null, fat_g: null, fiber_g: null }],
+    };
+    await restoreBundleV1(fresh, conflictingBundle, { mode: 'merge' });
+    const mergedGoals = await new GoalsRepo(fresh).listGoalPeriods();
+    expect(mergedGoals).toHaveLength(1);
+    expect(mergedGoals[0]?.target_kcal).toBe(2100);
   });
 });

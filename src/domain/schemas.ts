@@ -125,6 +125,20 @@ export const healthSyncRecordSchema = z.strictObject({
   external_record_id: z.string().min(1), synced_at: isoDateTimeSchema,
   status: z.enum(['synced', 'deleted']),
 });
+export const savedMealExportSchema = z.strictObject({
+  id, name: text, items: z.array(recipeIngredientSchema).min(1),
+  pinned: z.boolean().default(false), use_count: z.int().nonnegative().default(0),
+  last_used_at: isoDateTimeSchema.nullable().default(null),
+});
+export const userFoodUnitExportSchema = z.strictObject({
+  food_key: text, label: text, grams: positive.nullable(), ml: positive.nullable(),
+}).refine((unit) => unit.grams !== null || unit.ml !== null, 'Food unit needs grams or ml');
+export const customFoodBarcodeExportSchema = z.strictObject({
+  food_id: text, raw_code: text, symbology: text, gtin14: text.nullable(),
+});
+export const learnedPortionExportSchema = z.strictObject({
+  food_key: text, unit: text, amount: positive, use_count: z.int().positive(), last_used_at: isoDateTimeSchema,
+});
 export const exportBundleV1Schema = z.strictObject({
   schema_version: z.literal(1), exported_at: z.iso.datetime({ offset: true }),
   diary_days: z.array(diaryDaySchema), custom_foods: z.array(foodRecordSchema),
@@ -132,4 +146,8 @@ export const exportBundleV1Schema = z.strictObject({
   goal_periods: z.array(goalPeriodSchema), weigh_ins: z.array(weighInSchema),
   packs: z.array(packMetaSchema),
   water_logs: z.array(waterLogSchema).default([]),
+  saved_meals: z.array(savedMealExportSchema).optional(),
+  user_food_units: z.array(userFoodUnitExportSchema).optional(),
+  custom_food_barcodes: z.array(customFoodBarcodeExportSchema).optional(),
+  learned_portions: z.array(learnedPortionExportSchema).optional(),
 });

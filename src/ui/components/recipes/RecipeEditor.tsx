@@ -283,7 +283,10 @@ export function RecIngredientRow({
   const [editing, setEditing] = useState(false);
   const [amount, setAmount] = useState(String(ingredient.quantity.amount));
   const [unit, setUnit] = useState(ingredient.quantity.unit);
-  const kcal = calculateNutrition(ingredient.food, ingredient.quantity).kcal;
+  const kcal = (() => {
+    try { return calculateNutrition(ingredient.food, ingredient.quantity).kcal; }
+    catch { return null; }
+  })();
   const valid = amount.trim() !== '' && Number.isFinite(Number(amount)) && Number(amount) > 0;
   const delta = formatIngredientDelta(ingredient, original);
   const canEdit = Boolean(onChange && !disabled);
@@ -441,6 +444,7 @@ function IngredientSearch({
         energyUnit={energyUnit}
         disabled={disabled}
         emptyMessage="No matches"
+        trailingIcon="plus"
         addLabel={food => `Add ${food.name}`}
         onAdd={food => {
           hapticLight();

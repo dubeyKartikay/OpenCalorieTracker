@@ -125,7 +125,7 @@ describe('Slice 4 against real Node SQLite', () => {
     const nutrients = calculateNutrition(edited.items[0]!.food, quantity);
     expect(edited.items[0]).toMatchObject({ quantity, nutrients, unknownCount: sumNutrients([nutrients]).unknownCount,
       portion_certainty: 'stated', estimate_range: null });
-    expect(edited.base_items[0]).toEqual(edited.items[0]);
+    expect(edited.manual_quantities?.['0']).toEqual(quantity);
     expect(edited.totals).toEqual(sumNutrients([nutrients])); expect(app.getRevision()).toBeGreaterThan(revision);
     for (const index of [-1, 1, 0.5]) expect(() => app.updateDraftItemQuantity(index, quantity)).toThrow();
     for (const amount of [0, -1, NaN, Infinity]) expect(() => app.updateDraftItemQuantity(0, { amount, unit: 'g' })).toThrow();

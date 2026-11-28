@@ -14,6 +14,7 @@ import type { PopoverAnchor } from '../../src/ui/components/doop/HistoryControls
 import { RailMonthSheet, shortRailDate, weekEndForDate } from '../../src/ui/components/doop/WeekDateRail';
 import { DoopIcon } from '../../src/ui/components/DoopIcons';
 import { energyValue, ErrorMessage, number, Page } from '../../src/ui/components/primitives';
+import { useAbandonOnTabPress } from '../../src/ui/components/tabAbandon';
 import { hapticLight, hapticSelection, hapticSuccess } from '../../src/ui/haptics';
 import { colors, fontFace, macroColors, radius, tabularNums, TwoPane } from '../../src/ui/tokens';
 
@@ -69,12 +70,38 @@ export default function Progress() {
   useEffect(() => {
     if (loggingWeight) Keyboard.dismiss();
   }, [loggingWeight]);
-  const saveWeight = () => { if (canSave) void action.run(async () => {
-    await controller.weighIn(numericWeight / (entryUnit === 'lb' ? KG_TO_LB : 1), statsEnd);
-    if (entryUnit !== unit) await controller.updatePreferences({ weightUnit: entryUnit });
-    hapticSuccess();
-    setWeight(''); setLoggingWeight(false);
-  }); };
+  const weighInSessionRef = useRef(0);
+  const openWeighIn = () => {
+    weighInSessionRef.current += 1;
+    hapticLight();
+    Keyboard.dismiss();
+    setEntryUnit(unit);
+    setWeight('');
+    setLoggingWeight(true);
+  };
+  const closeWeighIn = () => {
+    weighInSessionRef.current += 1;
+    setWeight('');
+    setLoggingWeight(false);
+  };
+  useAbandonOnTabPress(() => {
+    closeWeighIn();
+    setCalendarAnchor(null);
+    setInfoAnchor(null);
+    setSelectedDay(null);
+  });
+  const saveWeight = () => {
+    if (!canSave) return;
+    const activeSession = weighInSessionRef.current;
+    void action.run(async () => {
+      await controller.weighIn(numericWeight / (entryUnit === 'lb' ? KG_TO_LB : 1), statsEnd);
+      if (entryUnit !== unit) await controller.updatePreferences({ weightUnit: entryUnit });
+      hapticSuccess();
+      if (weighInSessionRef.current === activeSession) {
+        closeWeighIn();
+      }
+    });
+  };
   const changeEntryUnit = (next: 'kg' | 'lb') => {
     if (entryUnit === next) return;
     if (weight.trim() && Number.isFinite(numericWeight) && numericWeight > 0) {
@@ -85,24 +112,38 @@ export default function Progress() {
   const error = result.error ?? action.error ?? preferences.error;
   return <Page><View>
     <View style={styles.header}>
-      <Pressable ref={rangeRef} accessibilityRole="button" accessibilityLabel="Choose date range" accessibilityState={{ expanded: !!calendarAnchor }} onPress={() => measurePopoverAnchor(rangeRef.current, setCalendarAnchor)} style={styles.rangeButton}><Text numberOfLines={1} style={styles.rangeLabel}>{`${shortRailDate(start)} – ${shortRailDate(end)}`}</Text><DoopIcon name="chevronDown" size={14} color={colors.muted} /></Pressable>
-      <View accessibilityLabel="Chart range" style={styles.rangeTrack}>{RANGES.map(item => <Pressable key={item.days} accessibilityRole="button" accessibilityLabel={item.days === 7 ? 'Week' : item.days === 30 ? 'Month' : item.days === 90 ? 'Three months' : 'Year'} accessibilityState={{ selected: range === item.days }} onPress={() => { if (range !== item.days) hapticSelection(); setRange(item.days); setSelectedDay(null); }} style={[styles.rangeSegment, range === item.days && styles.rangeActive]}><Text style={[styles.rangeSegmentText, range === item.days && styles.rangeActiveText]}>{item.label}</Text></Pressable>)}</View>
+      <Pressable ref={rangeRef} accessibilityRole="button" accessibilityLabel="Choose date range" accessibilityState={{ expanded: !!calendarAnchor }} onPress={() => { closeWeighIn(); measurePopoverAnchor(rangeRef.current, setCalendarAnchor); }} style={styles.rangeButton}><Text numberOfLines={1} style={styles.rangeLabel}>{`${shortRailDate(start)} – ${shortRailDate(end)}`}</Text><DoopIcon name="chevronDown" size={14} color={colors.muted} /></Pressable>
+      <View accessibilityLabel="Chart range" style={styles.rangeTrack}>{RANGES.map(item => <Pressable key={item.days} accessibilityRole="button" accessibilityLabel={item.days === 7 ? 'Week' : item.days === 30 ? 'Month' : item.days === 90 ? 'Three months' : 'Year'} accessibilityState={{ selected: range === item.days }} onPress={() => { if (range !== item.days) hapticSelection(); setRange(item.days); setSelectedDay(null); closeWeighIn(); }} style={[styles.rangeSegment, range === item.days && styles.rangeActive]}><Text style={[styles.rangeSegmentText, range === item.days && styles.rangeActiveText]}>{item.label}</Text></Pressable>)}</View>
     </View>
     {error ? <View style={{ marginVertical: 8 }}><ErrorMessage message={error} /></View> : null}
     <TwoPane gap={30} primary={<View>
-      <View style={styles.calorieHeader}>
+      <Pressable
+        disabled={!loggingWeight}
+        accessibilityRole={loggingWeight ? 'button' : undefined}
+        accessibilityLabel={loggingWeight ? 'Cancel weigh-in' : undefined}
+        onPress={closeWeighIn}
+        style={styles.calorieHeader}
+      >
         <View><View style={styles.figures}><Text style={styles.largeValue}>{number(energyValue(value?.averages?.kcal, energyUnit))}</Text><Text style={styles.energyUnit}>{`${energyUnit}/day`}</Text></View><Text style={styles.coverage}>{`${value?.completeDays ?? 0} of ${elapsedDays} days`}</Text></View>
         <View style={styles.targetLegend}><Svg width={14} height={4} accessible={false}><Line x1={0} y1={2} x2={14} y2={2} stroke={colors.muted} strokeDasharray="3 3" strokeOpacity={0.7} /></Svg><Text style={styles.targetLabel}>{targetGoal?.target_kcal == null ? 'No target' : `${number(energyValue(targetGoal.target_kcal, energyUnit))} target`}</Text></View>
-      </View>
-      <CalorieBarChart key={`${range}-${end}`} days={dailyDays} selectedDate={selectedDay} onSelectDay={setSelectedDay} energyUnit={energyUnit} style={{ marginTop: 10 }} onOpenHistory={date => router.push({ pathname: '/(tabs)/history', params: { date, selection: String(Date.now()) } })} />
-      <View style={styles.macroSection}>{([
-        ['Protein', 'protein_g', macroColors.protein], ['Carbs', 'carbs_g', macroColors.carbs], ['Fat', 'fat_g', macroColors.fat],
-      ] as const).map(([label, key, color], index) => <MacroAverageRow key={key} label={label} average={value?.averages?.[key]} target={targetGoal?.[key]} color={color} first={index === 0} />)}</View>
+      </Pressable>
+      <CalorieBarChart key={`${range}-${end}`} days={dailyDays} selectedDate={selectedDay} onSelectDay={day => { closeWeighIn(); setSelectedDay(day); }} energyUnit={energyUnit} style={{ marginTop: 10 }} onOpenHistory={date => router.push({ pathname: '/(tabs)/history', params: { date, selection: String(Date.now()) } })} />
+      <Pressable
+        disabled={!loggingWeight}
+        accessibilityRole={loggingWeight ? 'button' : undefined}
+        accessibilityLabel={loggingWeight ? 'Cancel weigh-in' : undefined}
+        onPress={closeWeighIn}
+        style={styles.macroSection}
+      >
+        {([
+          ['Protein', 'protein_g', macroColors.protein], ['Carbs', 'carbs_g', macroColors.carbs], ['Fat', 'fat_g', macroColors.fat],
+        ] as const).map(([label, key, color], index) => <MacroAverageRow key={key} label={label} average={value?.averages?.[key]} target={targetGoal?.[key]} color={color} first={index === 0} />)}
+      </Pressable>
     </View>} secondary={<View>
       {!loggingWeight ? (
         <View style={styles.weightHeader}>
           <View><View style={styles.figures}><Text style={styles.largeValue}>{weightFigure(latest ? latest.trendKg * factor : null)}</Text><Text style={styles.energyUnit}>{unit}</Text></View><Text style={styles.weeklyRate}>{`${weeklyRate != null && weeklyRate > 0 ? '+' : ''}${weightFigure(weeklyRate === null ? null : weeklyRate * factor)} ${unit}/wk`}</Text></View>
-          <View style={styles.weightActions}><Pressable accessibilityRole="button" accessibilityLabel="Log a weigh-in" onPress={() => { hapticLight(); Keyboard.dismiss(); setEntryUnit(unit); setWeight(''); setLoggingWeight(true); }} style={[styles.weightButton, { backgroundColor: colors.surface, borderColor: colors.border }]}><DoopIcon name="plus" size={17} color={colors.ink} /></Pressable>
+          <View style={styles.weightActions}><Pressable accessibilityRole="button" accessibilityLabel="Log a weigh-in" onPress={openWeighIn} style={[styles.weightButton, { backgroundColor: colors.surface, borderColor: colors.border }]}><DoopIcon name="plus" size={17} color={colors.ink} /></Pressable>
             <Pressable ref={infoRef} accessibilityRole="button" accessibilityLabel="How the trend is smoothed" accessibilityState={{ expanded: !!infoAnchor }} onPress={() => measurePopoverAnchor(infoRef.current, setInfoAnchor)} style={styles.weightButton}><DoopIcon name="info" size={16} color={colors.muted} /></Pressable>
           </View>
         </View>
@@ -120,7 +161,7 @@ export default function Progress() {
           confirmLabel="Record weigh-in"
           cancelLabel="Cancel weigh-in"
           onConfirm={saveWeight}
-          onCancel={() => { setWeight(''); setLoggingWeight(false); }}
+          onCancel={closeWeighIn}
           headerRight={
             <View style={styles.unitSwitchWrap}>
               <SegmentedSwitch
@@ -135,6 +176,14 @@ export default function Progress() {
       </RevealPanel>
       {!loggingWeight ? <WeightTrendChart points={visibleTrend.map(point => ({ date: point.weighIn.date, shortLabel: point.weighIn.date.slice(5), rawKg: point.weighIn.weight_kg, trendKg: point.trendKg }))} unit={unit} startDate={start} endDate={end} style={{ marginTop: 8 }} /> : null}
       <MicronutrientsCard averages={value?.averages ?? null} unknownCount={value?.unknownCount ?? ZERO_UNKNOWN} style={{ marginTop: 30 }} />
+      {loggingWeight ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Cancel weigh-in"
+          onPress={closeWeighIn}
+          style={styles.weighInTapOff}
+        />
+      ) : null}
     </View>} />
     <AnchoredPopover anchor={calendarAnchor} onClose={() => setCalendarAnchor(null)} width={350} label="Choose date" surface><RailMonthSheet selectedDate={anchorDate} maxDate={today} days={dailyDays} loadMonth={loadCalendar} onSelectDate={date => { setAnchorDate(date); setSelectedDay(null); setCalendarAnchor(null); }} onClose={() => setCalendarAnchor(null)} /></AnchoredPopover>
     <AnchoredPopover anchor={infoAnchor} onClose={() => setInfoAnchor(null)} width={312} label="How the trend is smoothed"><ProgTrendPop /></AnchoredPopover>
@@ -172,5 +221,6 @@ const styles = StyleSheet.create({
   weightActions: { flexDirection: 'row', gap: 6 },
   weightButton: { width: 40, height: 40, borderRadius: radius.r12, borderWidth: 1, borderColor: colors.hairline, alignItems: 'center', justifyContent: 'center' },
   weighInPanel: { gap: 8 },
+  weighInTapOff: { height: 72 },
   unitSwitchWrap: { width: 92 },
 });

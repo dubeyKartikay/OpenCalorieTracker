@@ -75,29 +75,37 @@ export function Page({
   action,
   footer,
   overlay,
+  stage,
   children,
   compact = false,
   scrollRef,
   scrollEnabled = true,
+  contentPointerEvents = 'auto',
   onScroll,
 }: React.PropsWithChildren<{
   title?: string;
   action?: React.ReactNode;
   footer?: React.ReactNode;
   overlay?: React.ReactNode;
+  stage?: React.ReactNode;
   compact?: boolean;
   scrollRef?: React.RefObject<React.ComponentRef<typeof ScrollView> | null>;
   scrollEnabled?: boolean;
+  contentPointerEvents?: 'auto' | 'none';
   onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
 }>) {
   const { isExpanded } = useLayoutClass();
   const maxWidth = isExpanded ? 1080 : 540;
   const keyboardHeight = useKeyboardHeight();
+  const contentHidden = contentPointerEvents === 'none';
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={ui.screen}>
       <ScrollView
         ref={scrollRef}
         scrollEnabled={scrollEnabled}
+        pointerEvents={contentPointerEvents}
+        importantForAccessibility={contentHidden ? 'no-hide-descendants' : 'auto'}
+        accessibilityElementsHidden={contentHidden}
         onScroll={onScroll}
         scrollEventThrottle={16}
         keyboardShouldPersistTaps="handled"
@@ -134,6 +142,7 @@ export function Page({
           {footer}
         </View>
       )}
+      {stage}
       {overlay && (
         <View
           pointerEvents="box-none"

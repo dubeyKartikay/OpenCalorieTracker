@@ -38,6 +38,7 @@ async function* chunks(input: Exclude<ResponsesSseInput, string>): AsyncGenerato
 export async function parseResponsesSseStream(input: ResponsesSseInput): Promise<string> {
   let output = '';
   let completedText: string | undefined;
+  let completed = false;
   let buffer = '';
   let event = '';
   let data: string[] = [];
@@ -59,6 +60,7 @@ export async function parseResponsesSseStream(input: ResponsesSseInput): Promise
       const response = object(value.response);
       if (response.status === 'failed' || response.error) throw mapProviderError(response);
       if (response.status === 'incomplete') throw new AIError('malformed_output');
+      completed = true;
       const text: string[] = [];
       if (Array.isArray(response.output)) for (const rawItem of response.output) {
         const item = object(rawItem);
@@ -94,6 +96,10 @@ export async function parseResponsesSseStream(input: ResponsesSseInput): Promise
     if (done) break;
   }
   if (!done) { if (buffer) line(buffer.replace(/\r$/, '')); frame(); }
+  if (!completed && !done) {
+    if (output.trim()) throw new AIError('network');
+    throw new AIError('malformed_output');
+  }
   const result = completedText ?? output;
   if (!result.trim()) throw new AIError('malformed_output');
   return result;

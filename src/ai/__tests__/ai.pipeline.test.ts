@@ -1,13 +1,15 @@
-import { createHash } from 'node:crypto';
+import { createHash, createSign, generateKeyPairSync } from 'node:crypto';
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { FoodSourceRegistry } from '../../catalog';
 import { calculateNutrition, generateId } from '../../domain';
 import { exportBundleV1, LibraryRepo } from '../../storage';
 import { food, resources } from '../../storage/__tests__/fixtures';
-import { AIError, AI_MODEL_OPTIONS, applyClarifyingAnswer, buildAuthorizationUrl, captureMealDraft, DEFAULT_AI_MODEL,
-  exchangeAuthorizationCode, extractNutritionLabel, generatePkcePair, looksLikeMultiFoodCapture, loopbackRedirectUri,
-  mealExtractionSchema, OpenAIResponsesProvider, parseResponsesSseStream, unavailableLoopbackAuthPort } from '..';
+import { AIError, AI_MODEL_OPTIONS, applyClarifyingAnswer, buildAuthorizationUrl, captureMealDraft, clearOAuthJwksCache, DEFAULT_AGENT_NAME_HINT,
+  DEFAULT_AI_MODEL, exchangeAuthorizationCode, extractNutritionLabel, generatePkcePair, hasRequiredOAuthScope, looksLikeMultiFoodCapture, loopbackRedirectUri,
+  mealExtractionSchema, OPENAI_API_RESOURCE, OPENAI_AUTHORIZE_ENDPOINT, OPENAI_DYNAMIC_CLIENT_ID, OPENAI_ISSUER, OPENAI_REQUIRED_PLAN_SCOPE, OPENAI_REVOKE_ENDPOINT,
+  OPENAI_TOKEN_ENDPOINT, OpenAIResponsesProvider, parseResponsesSseStream, refreshAccessToken, revokeOAuthToken,
+  unavailableLoopbackAuthPort, verifyOAuthIdToken } from '..';
 import type { AIAuthMode, AIProvider, ExtractedMealItem, MealExtraction } from '..';
 
 const scope = resources();
@@ -55,10 +57,13 @@ describe('Responses SSE framing', () => {
     for (const width of [1, 2, 3, 7, 31]) expect(await parseResponsesSseStream(fragment(text.replace(/(?<!\r)\n/g, '\r\n'), width))).toBe('{"name":"café"}');
   });
   it('accepts data-only event types and a final frame without a newline', async () => {
-    expect(await parseResponsesSseStream('data: {"type":"response.output_text.delta","delta":"{}"}')).toBe('{}');
+    expect(await parseResponsesSseStream('data: {"type":"response.completed","response":{"status":"completed","output_text":"{}"}}')).toBe('{}');
   });
   it('joins multiline data and ignores unrelated event fields', async () => {
-    expect(await parseResponsesSseStream('id: 1\nretry: 10\nevent: response.output_text.delta\ndata: {"delta":\ndata: "{}"}\n\n')).toBe('{}');
+    expect(await parseResponsesSseStream('id: 1\nretry: 10\nevent: response.completed\ndata: {"response":\ndata: {"status":"completed","output_text":"{}"}}\n\n')).toBe('{}');
+  });
+  it('rejects a truncated stream that ends after a delta without a terminal event', async () => {
+    await expect(parseResponsesSseStream('data: {"type":"response.output_text.delta","delta":"{\\"ok\\":true}"}\n\n')).rejects.toMatchObject({ code: 'network' });
   });
   it('extracts final content and avoids duplicating earlier deltas', async () => {
     const text = event('response.output_text.delta', { delta: '{"x":' }) + final('{"x":1}') + 'data: [DONE]\n\n';
@@ -331,30 +336,177 @@ describe('label extraction, validation, search heuristic and PKCE', () => {
     expect(pair.codeVerifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(pair.codeChallenge).toBe(createHash('sha256').update(pair.codeVerifier).digest('base64url'));
     expect(pair.state).not.toBe(other.state); expect(pair.codeVerifier).not.toBe(other.codeVerifier);
-    const url = new URL(buildAuthorizationUrl({ clientId: 'registered-client', port: 49152, ...pair }));
-    expect(url.origin).toBe('https://auth.openai.com');
+    expect(pair.nonce).toBeTruthy(); expect(pair.nonce).not.toBe(other.nonce);
+    const url = new URL(buildAuthorizationUrl({ clientId: 'oaiapp_test', port: 49152, ...pair }));
+    expect(`${url.origin}${url.pathname}`).toBe(OPENAI_AUTHORIZE_ENDPOINT);
     expect(url.searchParams.get('redirect_uri')).toBe('http://127.0.0.1:49152/callback');
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
     expect(url.searchParams.get('state')).toBe(pair.state);
+    expect(url.searchParams.get('nonce')).toBe(pair.nonce);
+    expect(url.searchParams.get('resource')).toBe(OPENAI_API_RESOURCE);
+    expect(url.searchParams.get('scope')).toContain('resource.invoke');
     expect(url.searchParams.get('scope')).toContain('chatgpt.tokens.use.direct');
     expect(url.toString()).not.toContain(pair.codeVerifier);
   });
-  it('exchanges a code with PKCE and validates state before contacting the token endpoint', async () => {
+  it('sends ext_agent_host_id and agent_name_hint on dynamic registration, and omits agent_name_hint on re-auth', async () => {
     const pair = await generatePkcePair();
-    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(Response.json({ access_token: 'test-token', token_type: 'Bearer', expires_in: 3600, refresh_token: 'refresh' }));
-    const options = { clientId: 'registered-client', port: 49152, code: 'test-code', codeVerifier: pair.codeVerifier, state: pair.state, expectedState: pair.state, fetch };
-    expect(await exchangeAuthorizationCode(options)).toMatchObject({ access_token: 'test-token' });
+    const hostId = 'urn:uuid:11111111-2222-4333-8444-555555555555';
+    const dynamicUrl = new URL(buildAuthorizationUrl({
+      clientId: OPENAI_DYNAMIC_CLIENT_ID,
+      port: 49152,
+      ...pair,
+      extAgentHostId: hostId,
+      agentNameHint: DEFAULT_AGENT_NAME_HINT,
+    }));
+    expect(dynamicUrl.searchParams.get('client_id')).toBe(OPENAI_DYNAMIC_CLIENT_ID);
+    expect(dynamicUrl.searchParams.get('ext_agent_host_id')).toBe(hostId);
+    expect(dynamicUrl.searchParams.get('agent_name_hint')).toBe(DEFAULT_AGENT_NAME_HINT);
+
+    const reauthUrl = new URL(buildAuthorizationUrl({
+      clientId: 'oaiapp_issued_123',
+      port: 49152,
+      ...pair,
+      extAgentHostId: hostId,
+      agentNameHint: DEFAULT_AGENT_NAME_HINT,
+    }));
+    expect(reauthUrl.searchParams.get('client_id')).toBe('oaiapp_issued_123');
+    expect(reauthUrl.searchParams.get('ext_agent_host_id')).toBe(hostId);
+    expect(reauthUrl.searchParams.has('agent_name_hint')).toBe(false);
+  });
+  it('supports an injected native PKCE crypto provider for Hermes runtimes without WebCrypto', async () => {
+    const provider = {
+      getRandomBytes: async (count: number) => new Uint8Array(Array.from({ length: count }, (_, index) => (index * 17 + 3) & 0xff)),
+      sha256: async (data: Uint8Array) => new Uint8Array(createHash('sha256').update(data).digest()),
+    };
+    const pair = await generatePkcePair(provider);
+    expect(pair.codeChallenge).toBe(createHash('sha256').update(pair.codeVerifier).digest('base64url'));
+  });
+  it('exchanges a code with PKCE, refreshes expired tokens, and revokes on disconnect', async () => {
+    const pair = await generatePkcePair();
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({ access_token: 'test-token', token_type: 'Bearer', expires_in: 3600, refresh_token: 'refresh-1' }))
+      .mockResolvedValueOnce(Response.json({ access_token: 'fresh-token', token_type: 'Bearer', expires_in: 3600, refresh_token: 'refresh-2' }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    const options = { clientId: 'oaiapp_test', port: 49152, code: 'test-code', codeVerifier: pair.codeVerifier, state: pair.state, expectedState: pair.state, fetch };
+    expect(await exchangeAuthorizationCode(options)).toMatchObject({ access_token: 'test-token', refresh_token: 'refresh-1' });
     const [url, init] = fetch.mock.calls[0]!;
-    expect(url).toBe('https://auth.openai.com/oauth/token');
+    expect(url).toBe(OPENAI_TOKEN_ENDPOINT);
     const body = new URLSearchParams(init!.body as string);
     expect(body.get('code_verifier')).toBe(pair.codeVerifier);
     expect(body.get('redirect_uri')).toBe('http://127.0.0.1:49152/callback');
+    expect(body.get('resource')).toBe(OPENAI_API_RESOURCE);
     expect(body.has('client_secret')).toBe(false);
     await expect(exchangeAuthorizationCode({ ...options, state: 'forged-state' })).rejects.toMatchObject({ code: 'auth_expired' });
-    expect(fetch).toHaveBeenCalledOnce();
+    expect(await refreshAccessToken({ clientId: 'oaiapp_test', refreshToken: 'refresh-1', fetch })).toMatchObject({ access_token: 'fresh-token', refresh_token: 'refresh-2' });
+    const [refreshUrl, refreshInit] = fetch.mock.calls[1]!;
+    expect(refreshUrl).toBe(OPENAI_TOKEN_ENDPOINT);
+    expect(new URLSearchParams(refreshInit!.body as string).get('grant_type')).toBe('refresh_token');
+    expect(await revokeOAuthToken({ clientId: 'oaiapp_test', token: 'refresh-2', fetch })).toBe(true);
+    expect(fetch.mock.calls[2]![0]).toBe(OPENAI_REVOKE_ENDPOINT);
+  });
+  it('retries once with a refreshed OAuth token on 401 and falls back to response.text() when response.body is absent', async () => {
+    const ssePayload = 'event: response.completed\ndata: {"type":"response.completed","response":{"status":"completed","output_text":"{\\"ok\\":true}"}}\n\n';
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        body: null,
+        text: async () => ssePayload,
+      } as unknown as Response);
+    const onAuthExpiredRetry = vi.fn(async () => 'refreshed-oauth-token');
+    const provider = new OpenAIResponsesProvider({
+      authMode: 'chatgpt_oauth',
+      getAccessToken: () => 'stale-oauth-token',
+      onAuthExpiredRetry,
+      fetch,
+    });
+    expect(await provider.completeJson({ instructions: 'Return JSON', userText: 'hi' })).toEqual({ ok: true });
+    expect(onAuthExpiredRetry).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect((fetch.mock.calls[1]![1]!.headers as Record<string, string>).Authorization).toBe('Bearer refreshed-oauth-token');
   });
   it.each([0, -1, 65536, 1.5])('rejects invalid loopback port %s', port => { expect(() => loopbackRedirectUri(port)).toThrow('Invalid loopback port'); });
   it('clearly surfaces the native listener requirement', async () => {
     await expect(unavailableLoopbackAuthPort.listen({ host: '127.0.0.1', path: '/callback', expectedState: 'state' })).rejects.toThrow('Loopback listener requires mobile dev build');
+  });
+  it('checks exact plan-sharing scope tokens', () => {
+    expect(hasRequiredOAuthScope(`openid profile ${OPENAI_REQUIRED_PLAN_SCOPE} offline_access`)).toBe(true);
+    expect(hasRequiredOAuthScope('openid profile email')).toBe(false);
+    expect(hasRequiredOAuthScope(`${OPENAI_REQUIRED_PLAN_SCOPE}.extra`)).toBe(false);
+    expect(hasRequiredOAuthScope(undefined)).toBe(false);
+  });
+  it('verifies RS256 OAuth ID tokens against JWKS, nonce, audience, issuer, and expiry', async () => {
+    clearOAuthJwksCache();
+    const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'test-rsa-key-1', alg: 'RS256', use: 'sig' };
+    const encodePart = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const signToken = (payload: Record<string, unknown>, headerOverrides: Record<string, unknown> = {}) => {
+      const header = { alg: 'RS256', typ: 'JWT', kid: 'test-rsa-key-1', ...headerOverrides };
+      const signingInput = `${encodePart(header)}.${encodePart(payload)}`;
+      const signature = createSign('RSA-SHA256').update(signingInput).sign(privateKey).toString('base64url');
+      return `${signingInput}.${signature}`;
+    };
+    const nowSec = Math.floor(Date.now() / 1000);
+    const validPayload = {
+      iss: OPENAI_ISSUER,
+      aud: 'oaiapp_test',
+      sub: 'user-subject-42',
+      nonce: 'expected-nonce',
+      iat: nowSec - 10,
+      exp: nowSec + 600,
+    };
+    const validToken = signToken(validPayload);
+    const jwksFetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => Response.json({ keys: [jwk] }));
+    const nativeCrypto = {
+      getRandomBytes: async (count: number) => new Uint8Array(count),
+      sha256: async (data: Uint8Array) => new Uint8Array(createHash('sha256').update(data).digest()),
+    };
+
+    const claims = await verifyOAuthIdToken({
+      idToken: validToken,
+      expectedAudience: 'oaiapp_test',
+      expectedNonce: 'expected-nonce',
+      fetch: jwksFetch,
+      pkceCrypto: nativeCrypto,
+    });
+    expect(claims).toMatchObject({ sub: 'user-subject-42', aud: 'oaiapp_test', iss: OPENAI_ISSUER, nonce: 'expected-nonce' });
+
+    const [h, p, s] = validToken.split('.');
+    const tamperedSig = `${s!.startsWith('A') ? 'B' : 'A'}${s!.slice(1)}`;
+    await expect(verifyOAuthIdToken({
+      idToken: `${h}.${p}.${tamperedSig}`,
+      expectedAudience: 'oaiapp_test',
+      expectedNonce: 'expected-nonce',
+      fetch: jwksFetch,
+    })).rejects.toMatchObject({ code: 'auth_expired' });
+
+    await expect(verifyOAuthIdToken({
+      idToken: signToken({ ...validPayload, nonce: 'wrong-nonce' }),
+      expectedAudience: 'oaiapp_test',
+      expectedNonce: 'expected-nonce',
+      fetch: jwksFetch,
+    })).rejects.toMatchObject({ code: 'auth_expired' });
+
+    await expect(verifyOAuthIdToken({
+      idToken: signToken({ ...validPayload, aud: 'other-client' }),
+      expectedAudience: 'oaiapp_test',
+      expectedNonce: 'expected-nonce',
+      fetch: jwksFetch,
+    })).rejects.toMatchObject({ code: 'auth_expired' });
+
+    await expect(verifyOAuthIdToken({
+      idToken: signToken({ ...validPayload, iss: 'https://evil.example' }),
+      expectedAudience: 'oaiapp_test',
+      expectedNonce: 'expected-nonce',
+      fetch: jwksFetch,
+    })).rejects.toMatchObject({ code: 'auth_expired' });
+
+    await expect(verifyOAuthIdToken({
+      idToken: signToken({ ...validPayload, exp: nowSec - 120 }),
+      expectedAudience: 'oaiapp_test',
+      expectedNonce: 'expected-nonce',
+      fetch: jwksFetch,
+    })).rejects.toMatchObject({ code: 'auth_expired' });
   });
 });

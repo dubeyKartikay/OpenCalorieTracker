@@ -20,6 +20,7 @@ export function calculateBatchServing(batchInput: RecipeBatch, amountGramsOrFrac
   let fraction: number;
   if ('grams' in portion) {
     if (batch.cooked_weight_g === null) throw new RangeError('Cooked batch weight is required for a gram portion');
+    if (amount > batch.cooked_weight_g) throw new RangeError('Batch portion cannot exceed cooked batch weight');
     fraction = amount / batch.cooked_weight_g;
   } else {
     if (amount > MAX_BATCH_FRACTION) throw new RangeError('Batch fraction must be between zero and one');

@@ -227,7 +227,6 @@ describe('Slice 2 against real SQLite and compiled packs', () => {
     await app.saveGoal(goal, DATE);
     const entry = await confirm(app, oats, 100);
     await app.deps.diary.upsertDraft({ ...entry, id: generateId(), idempotency_key: generateId() });
-    await app.setCompleteness(DATE, 'complete'); await app.setCompleteness(shiftDate(DATE, -1), 'none');
     const week = await app.getWeekSummary(DATE);
     expect(week).toHaveLength(7);
     expect(week[0]).toEqual({ date: shiftDate(DATE, -6), completeness: 'none', kcal: null, entryCount: 0, targetKcal: 2000 });

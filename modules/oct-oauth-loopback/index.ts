@@ -3,7 +3,7 @@ import type { LoopbackAuthPort } from '../../src/ai/oauth';
 
 interface NativeLoopbackModule {
   startSessionAsync(expectedState: string, path: string): Promise<{ sessionId: string; port: number }>;
-  awaitCallbackAsync(sessionId: string, timeoutMs: number): Promise<{ code: string; state: string }>;
+  awaitCallbackAsync(sessionId: string, timeoutMs: number): Promise<{ code: string; state: string; clientId?: string }>;
   closeSessionAsync(sessionId: string): Promise<void>;
 }
 
@@ -55,10 +55,17 @@ export function createNativeLoopbackAuthPort(): LoopbackAuthPort | null {
       };
       const onAbort = (): void => { void close().catch(() => {}); };
 
-      const callback = new Promise<{ code: string; state: string }>((resolve, reject) => {
+      const callback = new Promise<{ code: string; state: string; clientId?: string | undefined }>((resolve, reject) => {
         rejectCallback = reject;
         native.awaitCallbackAsync(sessionId, CALLBACK_TIMEOUT_MS).then(
-          (result) => { settled = true; resolve(result); },
+          (result) => {
+            settled = true;
+            resolve({
+              code: result.code,
+              state: result.state,
+              ...(typeof result.clientId === 'string' && result.clientId.trim() ? { clientId: result.clientId.trim() } : {}),
+            });
+          },
           (error: unknown) => { settled = true; reject(error); },
         );
       }).finally(() => {

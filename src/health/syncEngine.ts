@@ -78,15 +78,47 @@ export class HealthSyncEngine {
     try {
       const { port, records, isNutritionWriteEnabled } = this.options;
       const record = await records.getRecord(entryId);
-      if (!record || record.status === 'deleted') return { synced: false };
+      if (!record) return { synced: false };
+      if (record.status !== 'deleted') {
+        await records.upsertRecord({ ...record, status: 'deleted' }).catch(() => undefined);
+      }
       const { available, platform } = port.getCapability();
-      if (!available || platform !== record.platform || !await isNutritionWriteEnabled()) return { synced: false };
-      if (!(await port.getPermissions()).nutritionWrite) return { synced: false };
-      await port.deleteNutrition(record.external_record_id);
+      if (!available || platform !== record.platform || !await isNutritionWriteEnabled()) {
+        return { synced: false };
+      }
+      if (!(await port.getPermissions()).nutritionWrite) {
+        return { synced: false };
+      }
+      try {
+        await port.deleteNutrition(record.external_record_id);
+      } catch (error) {
+        return { synced: false, error: errorMessage(error) };
+      }
       await records.deleteRecord(entryId);
       return { synced: true };
     } catch (error) {
       return { synced: false, error: errorMessage(error) };
+    }
+  }
+
+  async flushPendingDeletes(
+    schedule?: (entryId: string, run: () => Promise<HealthSyncResult>) => Promise<HealthSyncResult>,
+  ): Promise<number> {
+    if (!this.options.records.listRecords) return 0;
+    try {
+      const { available, platform } = this.options.port.getCapability();
+      if (!available || platform === null) return 0;
+      const all = await this.options.records.listRecords(platform);
+      const pending = all.filter(record => record.status === 'deleted');
+      const results = await Promise.all(
+        pending.map(record => {
+          const run = () => this.syncEntryDeleted(record.entry_id);
+          return schedule ? schedule(record.entry_id, run) : run();
+        }),
+      );
+      return results.filter(result => result.synced).length;
+    } catch {
+      return 0;
     }
   }
 

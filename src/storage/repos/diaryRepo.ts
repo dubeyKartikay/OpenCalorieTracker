@@ -25,10 +25,18 @@ export class DiaryRepo {
     entry.id, entry.idempotency_key, entry.date, entry.occurred_at, entry.time_zone, entry.meal,
     entry.draft_state, JSON.stringify(entry), now, now);
   }
-  private async ensureDay(date: string, confirmed: boolean): Promise<void> {
-    await this.db.runAsync(`INSERT INTO diary_days VALUES(?,?,?) ON CONFLICT(date) DO UPDATE SET
-      completeness=CASE WHEN diary_days.completeness='none' AND excluded.completeness='partial' THEN 'partial' ELSE diary_days.completeness END,
-      updated_at=excluded.updated_at`, date, confirmed ? 'partial' : 'none', nowIso());
+  private async syncDayCompleteness(date: string): Promise<void> {
+    const row = await this.db.getFirstAsync<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM diary_entries WHERE date=? AND draft_state='confirmed'",
+      date,
+    );
+    const status: DiaryDay['completeness'] = (row?.count ?? 0) > 0 ? 'complete' : 'none';
+    await this.db.runAsync(
+      'INSERT INTO diary_days VALUES(?,?,?) ON CONFLICT(date) DO UPDATE SET completeness=excluded.completeness,updated_at=excluded.updated_at',
+      date,
+      status,
+      nowIso(),
+    );
   }
   async upsertDraft(input: DiaryEntrySnapshot): Promise<DiaryEntrySnapshot> {
     const draft = diaryEntrySnapshotSchema.parse({ ...input, draft_state: 'draft' });
@@ -38,7 +46,7 @@ export class DiaryRepo {
       if (existing?.draft_state === 'confirmed') return existing;
       const value = { ...draft, id: existing?.id ?? draft.id };
       await repo.writeSnapshot(value);
-      await repo.ensureDay(value.date, false);
+      await repo.syncDayCompleteness(value.date);
       return value;
     });
   }
@@ -49,12 +57,14 @@ export class DiaryRepo {
       if (!candidate) throw new Error('Diary draft not found');
       const parsed = diaryEntrySnapshotSchema.parse(candidate);
       const byKey = await repo.findKey(parsed.idempotency_key);
-      if (byKey?.draft_state === 'confirmed') return { entry: byKey, changed: false };
+      if (byKey?.draft_state === 'confirmed') {
+        return { entry: byKey, changed: false };
+      }
       const byId = await repo.getEntry(parsed.id);
       if (byId && byId.idempotency_key !== parsed.idempotency_key) throw new Error('Diary id already belongs to a different operation');
       const entry = { ...parsed, id: byKey?.id ?? parsed.id, draft_state: 'confirmed' as const };
       await repo.writeSnapshot(entry);
-      await repo.ensureDay(entry.date, true);
+      await repo.syncDayCompleteness(entry.date);
       await tx.runAsync(`INSERT INTO learned_portions(food_key,unit,amount,last_used_at) VALUES(?,?,?,?)
         ON CONFLICT(food_key,unit,amount) DO UPDATE SET use_count=use_count+1,last_used_at=excluded.last_used_at`,
       foodKey(entry.food), entry.quantity.unit, entry.quantity.amount, nowIso());
@@ -68,16 +78,22 @@ export class DiaryRepo {
     const entry = diaryEntrySnapshotSchema.parse(input);
     return this.db.withTransactionAsync(async (tx) => {
       const repo = new DiaryRepo(tx);
-      if (!await repo.getEntry(entry.id)) throw new Error('Diary entry not found');
+      const previous = await repo.getEntry(entry.id);
+      if (!previous) throw new Error('Diary entry not found');
       await repo.writeSnapshot(entry);
-      await repo.ensureDay(entry.date, entry.draft_state === 'confirmed');
+      await repo.syncDayCompleteness(entry.date);
+      if (previous.date !== entry.date) {
+        await repo.syncDayCompleteness(previous.date);
+      }
       return entry;
     });
   }
   async deleteEntry(id: string): Promise<DiaryEntrySnapshot | null> {
     return this.db.withTransactionAsync(async (tx) => {
-      const entry = await new DiaryRepo(tx).getEntry(id);
+      const repo = new DiaryRepo(tx);
+      const entry = await repo.getEntry(id);
       await tx.runAsync('DELETE FROM diary_entries WHERE id=?', id);
+      if (entry) await repo.syncDayCompleteness(entry.date);
       return entry;
     });
   }
@@ -88,7 +104,7 @@ export class DiaryRepo {
       const existing = await repo.findKey(entry.idempotency_key) ?? await repo.getEntry(entry.id);
       if (existing) return existing;
       await repo.writeSnapshot(entry);
-      await repo.ensureDay(entry.date, entry.draft_state === 'confirmed');
+      await repo.syncDayCompleteness(entry.date);
       return entry;
     });
   }
@@ -98,7 +114,8 @@ export class DiaryRepo {
       const repo = new DiaryRepo(tx);
       const entry = await repo.getEntry(id);
       if (!entry) throw new Error('Diary entry not found');
-      return repo.updateEntry({ ...entry, date, meal: meal ?? entry.meal });
+      const occurred_at = date !== entry.date ? new Date(`${date}T12:00:00`).toISOString() : entry.occurred_at;
+      return repo.updateEntry({ ...entry, date, occurred_at, meal: meal ?? entry.meal });
     });
   }
   async setDayCompleteness(date: string, completeness: DiaryDay['completeness']): Promise<void> {
@@ -111,8 +128,10 @@ export class DiaryRepo {
     return this.db.withTransactionAsync(async (tx) => {
       const row = await tx.getFirstAsync<{ completeness: DiaryDay['completeness'] }>('SELECT completeness FROM diary_days WHERE date=?', date);
       if (!row) return null;
-      const entries = await tx.getAllAsync<{ snapshot_json: string }>('SELECT snapshot_json FROM diary_entries WHERE date=? ORDER BY occurred_at,id', date);
-      return { date, completeness: row.completeness, entries: entries.map((item) => parseJson(item.snapshot_json, diaryEntrySnapshotSchema)) };
+      const entries = (await tx.getAllAsync<{ snapshot_json: string }>('SELECT snapshot_json FROM diary_entries WHERE date=? ORDER BY occurred_at,id', date))
+        .map((item) => parseJson(item.snapshot_json, diaryEntrySnapshotSchema));
+      const completeness: DiaryDay['completeness'] = entries.some((entry) => entry.draft_state === 'confirmed') ? 'complete' : 'none';
+      return { date, completeness, entries };
     });
   }
   async listDiaryDays(from?: string, to?: string): Promise<DiaryDay[]> {
@@ -135,11 +154,15 @@ export class DiaryRepo {
         if (list) list.push(entry);
         else byDate.set(row.date, [entry]);
       }
-      return dayRows.map((row) => ({
-        date: row.date,
-        completeness: row.completeness,
-        entries: byDate.get(row.date) ?? [],
-      }));
+      return dayRows.map((row) => {
+        const entries = byDate.get(row.date) ?? [];
+        const completeness: DiaryDay['completeness'] = entries.some((entry) => entry.draft_state === 'confirmed') ? 'complete' : 'none';
+        return {
+          date: row.date,
+          completeness,
+          entries,
+        };
+      });
     });
   }
 }

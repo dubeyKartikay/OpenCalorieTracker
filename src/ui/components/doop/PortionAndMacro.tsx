@@ -122,7 +122,7 @@ export interface MealDestinationPillsProps {
   meals: string[];
   selectedMeals?: string[] | undefined;
   suggestedMeal?: string | undefined;
-  mode?: 'log' | 'toggle' | 'move' | undefined;
+  mode?: 'log' | 'toggle' | 'move' | 'select' | undefined;
   disabled?: boolean | undefined;
   wrap?: boolean | undefined;
   variant?: 'default' | 'calm' | undefined;
@@ -143,13 +143,23 @@ export function MealDestinationPills({
   style,
 }: MealDestinationPillsProps) {
   const calm = variant === 'calm';
+  const selectMode = mode === 'select';
   const shouldWrap = calm || wrap || meals.length > 4;
   return (
     <View style={[calm ? styles.mealRowCalm : styles.mealRow, shouldWrap && styles.mealWrap, style]}>
       {meals.map(meal => {
         const selected = selectedMeals.includes(meal);
         const suggested = !selected && meal === suggestedMeal;
-        const actionPrefix = mode === 'move' ? 'Move to ' : mode === 'toggle' && selected ? 'Remove from ' : 'Add to ';
+        const actionPrefix =
+          mode === 'move'
+            ? 'Move to '
+            : selectMode
+              ? selected
+                ? 'Deselect '
+                : 'Select '
+              : mode === 'toggle' && selected
+                ? 'Remove from '
+                : 'Add to ';
         return (
           <Pressable
             key={meal}
@@ -159,7 +169,8 @@ export function MealDestinationPills({
             accessibilityState={{ selected, disabled }}
             disabled={disabled}
             onPress={() => {
-              if (mode === 'toggle' && selected) hapticLight();
+              if (selectMode) hapticSelection();
+              else if (mode === 'toggle' && selected) hapticLight();
               else hapticMedium();
               onPress(meal);
             }}
@@ -172,7 +183,9 @@ export function MealDestinationPills({
               pressed && styles.pressed,
             ]}
           >
-            {!calm ? <DoopIcon name={selected ? 'check' : 'plus'} size={11} color={selected ? colors.onAccent : colors.muted} /> : null}
+            {!calm ? (
+              <DoopIcon name={selected ? 'check' : 'plus'} size={11} color={selected ? colors.onAccent : colors.muted} />
+            ) : null}
             <Text
               numberOfLines={calm ? 2 : 1}
               style={[
@@ -308,7 +321,7 @@ const styles = StyleSheet.create({
   moreChip: { height: 48, flex: 1, minWidth: 0, alignItems: 'center', justifyContent: 'center', borderRadius: radius.r12, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, backgroundColor: colors.ground },
   moreChipCalm: { height: 36, paddingHorizontal: 11, flexShrink: 0, borderRadius: radius.full, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, backgroundColor: 'transparent', alignItems: 'center', justifyContent: 'center' },
   mealRow: { flexDirection: 'row', gap: 6 },
-  mealRowCalm: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  mealRowCalm: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   mealWrap: { flexWrap: 'wrap' },
   mealPill: { flex: 1, minWidth: 68, height: 44, paddingHorizontal: 6, borderRadius: radius.full, borderWidth: 1, borderColor: colors.hairline, backgroundColor: colors.ground, flexDirection: 'row', gap: 3, alignItems: 'center', justifyContent: 'center' },
   mealPillCalm: { minHeight: 36, maxWidth: '100%', paddingHorizontal: 11, paddingVertical: 6, borderRadius: radius.full, borderWidth: 1, borderColor: colors.border, backgroundColor: 'transparent', alignItems: 'center', justifyContent: 'center' },

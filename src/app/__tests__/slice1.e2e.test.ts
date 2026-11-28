@@ -1,23 +1,24 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FoodSourceRegistry } from '../../catalog';
 import { calculateNutrition, generateId, nutrientProfileSchema } from '../../domain';
+import type { HealthPlatformPort } from '../../health';
 import { DiaryRepo, GoalsRepo, LibraryRepo, migrateDatabase, PacksRepo } from '../../storage';
 import { createNodeSqliteDriver } from '../../storage/nodeDriver';
-import { AppController, availableUnits } from '../controller';
+import { AppController, availableUnits, type ControllerDependencies } from '../controller';
 
 const PACK1 = resolve('assets/packs/usda-fdc-starter.octpack.sqlite');
 const PACK2 = resolve('assets/packs/custom-home-pack.octpack.sqlite');
 const DATE = '2026-11-23';
 const tempDirs: string[] = [];
 const controllers = new Set<AppController>();
-async function open(path: string) {
+async function open(path: string, extra: Partial<ControllerDependencies> = {}) {
   const userDb = createNodeSqliteDriver(path);
   await migrateDatabase(userDb);
   const controller = new AppController({ userDb, catalog: new FoodSourceRegistry(userDb), diary: new DiaryRepo(userDb),
-    goals: new GoalsRepo(userDb), library: new LibraryRepo(userDb), packs: new PacksRepo(userDb) });
+    goals: new GoalsRepo(userDb), library: new LibraryRepo(userDb), packs: new PacksRepo(userDb), ...extra });
   controllers.add(controller); return controller;
 }
 async function close(controller: AppController) { await controller.close(); controllers.delete(controller); }
@@ -51,7 +52,7 @@ describe('Slice 1 against real SQLite and both compiled starter packs', () => {
     await app.confirm({ food: egg, quantity: { amount: 50, unit: 'g' }, meal: 'Breakfast', date: DATE, idempotencyKey: 'egg-operation' });
     const originalDay = await app.day(DATE);
     expect(originalDay.totals.entryCount).toBe(2); expect(originalDay.totals.unknownCount.fiber_g).toBe(0);
-    await app.setCompleteness(DATE, 'complete');
+    expect(originalDay.day?.completeness).toBe('complete');
     await close(app); app = await open(path);
     expect((await app.day(DATE)).day?.entries).toEqual(originalDay.day?.entries);
     expect((await app.day(DATE)).totals).toEqual(originalDay.totals);
@@ -108,8 +109,6 @@ describe('Slice 1 against real SQLite and both compiled starter packs', () => {
     await app.saveGoal(targets, '2026-11-22'); await app.saveGoal({ ...targets, target_kcal: 2200 }, DATE);
     await app.saveGoal({ ...targets, target_kcal: 2100 }, DATE);
     expect((await app.day('2026-11-22')).goal?.target_kcal).toBe(2000); expect((await app.day(DATE)).goal?.target_kcal).toBe(2100);
-    expect((await app.progress(7, DATE)).averages).toBeNull();
-    await app.setCompleteness(DATE, 'complete'); await app.setCompleteness('2026-11-22', 'complete');
     expect((await app.progress(7, DATE)).completeDays).toBe(1);
     expect((await app.progress(7, DATE)).averages).toEqual(entry.nutrients);
     await app.weighIn(80, DATE); expect((await app.progress(7, DATE)).trend[0]?.trendKg).toBe(80);
@@ -125,5 +124,176 @@ describe('Slice 1 against real SQLite and both compiled starter packs', () => {
     await app.restoreJson(json, 'replace'); expect(app.deps.catalog.listMountedPacks()).toEqual([]);
     expect((await app.listPacks())[0]?.enabled).toBe(false);
     expect((await app.day(DATE)).day?.entries[0]?.nutrients).toEqual(nutrientProfileSchema.parse(calculateNutrition(food, { amount: 50, unit: 'g' })));
+  });
+  it('logs a food across multiple selected meals atomically with a single Undo action', async () => {
+    const app = await open(join(directory(), 'user.db')); await pack(app);
+    const egg = (await app.search('egg')).database[0]!.food;
+    await expect(app.confirmToMeals({ food: egg, quantity: { amount: 50, unit: 'g' }, meals: [], date: DATE })).rejects.toThrow(/Select at least one meal/i);
+
+    const added = await app.confirmToMeals({
+      food: egg,
+      quantity: { amount: 100, unit: 'g' },
+      meals: ['Breakfast', 'Snack', 'Breakfast'],
+      date: DATE,
+    });
+    expect(added.map(entry => entry.meal)).toEqual(['Breakfast', 'Snack']);
+    expect(app.undoAction?.label).toBe('Added to Breakfast & Snack');
+    expect((await app.day(DATE)).totals.entryCount).toBe(2);
+
+    await app.undo();
+    expect((await app.day(DATE)).totals.entryCount).toBe(0);
+
+    const threeMeals = await app.confirmToMeals({
+      food: egg,
+      quantity: { amount: 50, unit: 'g' },
+      meals: ['Breakfast', 'Lunch', 'Dinner'],
+      date: DATE,
+    });
+    expect(threeMeals).toHaveLength(3);
+    expect(app.undoAction?.label).toBe('Added to 3 meals');
+    await app.undo();
+    expect((await app.day(DATE)).totals.entryCount).toBe(0);
+  });
+
+  it('validates idempotency keys per meal in confirmToMeals and rejects cross-meal collisions', async () => {
+    const app = await open(join(directory(), 'user.db')); await pack(app);
+    const egg = (await app.search('egg')).database[0]!.food;
+
+    await expect(app.confirmToMeals({
+      food: egg,
+      quantity: { amount: 50, unit: 'g' },
+      meals: ['Breakfast', 'Breakfast'],
+      idempotencyKeys: ['k1', 'k2'],
+      date: DATE,
+    })).rejects.toThrow(/Conflicting idempotency keys/i);
+
+    await expect(app.confirmToMeals({
+      food: egg,
+      quantity: { amount: 50, unit: 'g' },
+      meals: ['Breakfast', 'Lunch'],
+      idempotencyKeys: ['same', 'same'],
+      date: DATE,
+    })).rejects.toThrow(/unique idempotency key/i);
+
+    // Deduplicated meal keeps exact (meal, key) alignment
+    const aligned = await app.confirmToMeals({
+      food: egg,
+      quantity: { amount: 50, unit: 'g' },
+      meals: ['Breakfast', 'Breakfast', 'Lunch'],
+      idempotencyKeys: ['k-breakfast', 'k-breakfast', 'k-lunch'],
+      date: DATE,
+    });
+    expect(aligned.map(entry => entry.meal)).toEqual(['Breakfast', 'Lunch']);
+
+    // Duplicate meal rows with empty first key still preserve the later explicit key
+    const preserved = await app.confirmToMeals({
+      food: egg,
+      quantity: { amount: 50, unit: 'g' },
+      meals: ['Dinner', ' Dinner '],
+      idempotencyKeys: ['', 'dinner-explicit-key'],
+      date: DATE,
+    });
+    expect(preserved).toHaveLength(1);
+    const replayed = await app.confirmToMeals({
+      food: egg,
+      quantity: { amount: 50, unit: 'g' },
+      meals: ['Dinner', ' Dinner '],
+      idempotencyKeys: ['', 'dinner-explicit-key'],
+      date: DATE,
+    });
+    expect(replayed[0]?.id).toBe(preserved[0]?.id);
+    expect((await app.day(DATE)).totals.entryCount).toBe(3);
+
+    // Replaying Breakfast's idempotency key for Lunch must fail cleanly without mutating the diary
+    await expect(app.confirmToMeals({
+      food: egg,
+      quantity: { amount: 50, unit: 'g' },
+      meals: ['Lunch'],
+      idempotencyKeys: ['k-breakfast'],
+      date: DATE,
+    })).rejects.toThrow(/different meal or date/i);
+    expect((await app.day(DATE)).totals.entryCount).toBe(3);
+  });
+
+  it('serializes delete behind an in-flight Health write so no external record is orphaned', async () => {
+    let releaseWrite!: () => void;
+    const written = new Set<string>();
+    const healthPort: HealthPlatformPort = {
+      getCapability: () => ({ platform: 'health_connect', available: true, label: 'Health Connect', description: 'Test' }),
+      getPermissions: async () => ({ nutritionWrite: true, weightRead: false }),
+      requestPermissions: async () => ({ nutritionWrite: true, weightRead: false }),
+      writeNutrition: vi.fn(async payload => {
+        await new Promise<void>(resolve => { releaseWrite = resolve; });
+        const extId = `ext-${payload.entryId}`;
+        written.add(extId);
+        return { externalRecordId: extId };
+      }),
+      deleteNutrition: vi.fn(async extId => {
+        written.delete(extId);
+      }),
+      readWeightSamples: async () => [],
+    };
+    const app = await open(join(directory(), 'user.db'), { healthPort });
+    await pack(app);
+    await app.updatePreferences({ healthNutritionWriteEnabled: true });
+    const egg = (await app.search('egg')).database[0]!.food;
+
+    const pendingConfirm = app.confirm({ food: egg, quantity: { amount: 50, unit: 'g' }, meal: 'Breakfast', date: DATE, idempotencyKey: 'race-del-1' });
+    await vi.waitFor(() => expect(healthPort.writeNutrition).toHaveBeenCalledTimes(1));
+    const localEntries = (await app.day(DATE)).day?.entries ?? [];
+    expect(localEntries).toHaveLength(1);
+
+    // Delete while the Health write is still in flight
+    const pendingDelete = app.deleteEntry(localEntries[0]!.id);
+    releaseWrite();
+    await Promise.all([pendingConfirm, pendingDelete]);
+
+    expect((await app.day(DATE)).totals.entryCount).toBe(0);
+    expect(written.size).toBe(0);
+  });
+
+  it('derives realistic weekly weight rates for backdated weigh-ins', async () => {
+    const app = await open(join(directory(), 'user.db'));
+    await app.weighIn(70, '2026-11-01');
+    await app.weighIn(71, '2026-11-08');
+    const prog = await app.progress(30, '2026-11-08');
+    expect(prog.trend).toHaveLength(2);
+    const elapsedMs = Date.parse(prog.trend[1]!.weighIn.measured_at) - Date.parse(prog.trend[0]!.weighIn.measured_at);
+    expect(Math.round(elapsedMs / 86_400_000)).toBe(7);
+  });
+
+  it('keeps the newer Undo action intact when an earlier Health sync completes later', async () => {
+    let releaseFirstSync!: () => void;
+    let calls = 0;
+    const healthPort: HealthPlatformPort = {
+      getCapability: () => ({ platform: 'health_connect', available: true, label: 'Health Connect', description: 'Test' }),
+      getPermissions: async () => ({ nutritionWrite: true, weightRead: false }),
+      requestPermissions: async () => ({ nutritionWrite: true, weightRead: false }),
+      writeNutrition: vi.fn(async payload => {
+        calls += 1;
+        if (calls === 1) {
+          await new Promise<void>(resolve => { releaseFirstSync = resolve; });
+        }
+        return { externalRecordId: `ext-${payload.entryId}` };
+      }),
+      deleteNutrition: vi.fn(async () => {}),
+      readWeightSamples: async () => [],
+    };
+    const app = await open(join(directory(), 'user.db'), { healthPort });
+    await pack(app);
+    await app.updatePreferences({ healthNutritionWriteEnabled: true });
+    const egg = (await app.search('egg')).database[0]!.food;
+
+    const firstConfirm = app.confirm({ food: egg, quantity: { amount: 50, unit: 'g' }, meal: 'Breakfast', date: DATE, idempotencyKey: 'slow-1' });
+    await vi.waitFor(() => expect(calls).toBe(1));
+    expect(app.undoAction?.meal).toBe('Breakfast');
+
+    await app.confirm({ food: egg, quantity: { amount: 50, unit: 'g' }, meal: 'Lunch', date: DATE, idempotencyKey: 'fast-2' });
+    expect(app.undoAction?.meal).toBe('Lunch');
+
+    releaseFirstSync();
+    await firstConfirm;
+    // The earlier slow Health sync finishing must NOT overwrite the newer Lunch Undo action
+    expect(app.undoAction?.meal).toBe('Lunch');
   });
 });

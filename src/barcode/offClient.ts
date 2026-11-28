@@ -25,9 +25,12 @@ function mapProduct(value: unknown, normalized: NormalizedBarcode): OffProduct {
   const product = object(value);
   const nutriments = object(product.nutriments);
   const declaration = text(product.nutrition_data_per)?.toLowerCase().replace(/\s/g, '') ?? '';
-  // OFF uses the _100g suffix for both mass and volume products. Explicit ml
-  // declarations or volume-only packaging identify volume without assuming density.
-  const volume = declaration.includes('100ml') || (!declaration.includes('serving') && /\b\d+(?:[.,]\d+)?\s*(?:ml|cl|l)\b/i.test(text(product.quantity) ?? ''));
+  // OFF uses the _100g suffix for both mass and volume products. Explicit declarations
+  // always take precedence; package volume is only a fallback when nutrition_data_per is absent.
+  const explicitMass = /(?:^|[^a-z])100g\b/.test(declaration);
+  const explicitVolume = /(?:^|[^a-z])100ml\b/.test(declaration);
+  const volume = explicitVolume
+    || (!explicitMass && !declaration.includes('serving') && /\b\d+(?:[.,]\d+)?\s*(?:ml|cl|l)\b/i.test(text(product.quantity) ?? ''));
   const hasServing = ['energy-kcal', 'energy-kj', 'energy', 'proteins', 'carbohydrates', 'fat'].some((key) => number(nutriments[`${key}_serving`]) !== null);
   const hasHundred = ['energy-kcal', 'energy-kj', 'energy', 'proteins', 'carbohydrates', 'fat'].some((key) => number(nutriments[`${key}_100g`]) !== null);
   const perServing = (declaration.includes('serving') && hasServing) || (!hasHundred && hasServing);

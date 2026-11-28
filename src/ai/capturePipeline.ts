@@ -209,8 +209,25 @@ export async function applyClarifyingAnswer(proposalInput: MealDraftProposal, qu
       items[index] = draftItem(candidate.food, { ...input, prep_state: effect.prep_state! }, candidates, candidate.sourceLabel);
     }
   }
+  const manualQuantities = proposal.manual_quantities ?? {};
+  for (const [key, quantity] of Object.entries(manualQuantities)) {
+    const idx = Number(key);
+    const target = Number.isInteger(idx) ? items[idx] : undefined;
+    if (!target) continue;
+    try {
+      const nutrients = calculateNutrition(target.food, quantity);
+      const { unknownCount } = sumNutrients([nutrients]);
+      items[idx] = { ...target, quantity, nutrients, unknownCount, portion_certainty: 'stated', estimate_range: null };
+    } catch { /* Unit may no longer apply after a prep-state food swap; keep the replayed portion. */ }
+  }
   const enriched = await preserveCompositeCoverage(items, catalog);
-  return mealDraftProposalSchema.parse({ ...proposal, items: enriched, answers, totals: totals(enriched) });
+  return mealDraftProposalSchema.parse({
+    ...proposal,
+    items: enriched,
+    answers,
+    ...(Object.keys(manualQuantities).length ? { manual_quantities: manualQuantities } : {}),
+    totals: totals(enriched),
+  });
 }
 export async function extractNutritionLabel(options: { provider: AIProvider; imageDataUrl: string; model?: string; signal?: AbortSignal }): Promise<NutritionLabelExtraction> {
   const model = options.model ?? DEFAULT_AI_MODEL;

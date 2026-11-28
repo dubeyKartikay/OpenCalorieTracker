@@ -5,13 +5,13 @@ import type { DiaryEntrySnapshot, GoalPeriod, NutrientAggregate } from '../../do
 import { sumNutrients } from '../../domain';
 import { useAction, useAppRuntime, usePreferences } from '../../app/AppRuntimeContext';
 import { MEALS } from '../../app/controller';
-import { hapticLight, hapticSelection, hapticSuccess, hapticWarning } from '../haptics';
+import { hapticLight, hapticSelection, hapticWarning } from '../haptics';
 import { colors, fontFace, macroColors, radius, tabularNums } from '../tokens';
 import { AnchoredPopover, EntryEditPopover, measurePopoverAnchor, type PopoverAnchor } from './doop/HistoryControls';
-import type { CompletenessStatus } from './doop/CompletenessMark';
 import { RevealPanel } from './doop/Motion';
 import { DraggableEntryRow, MealDropBadge, MealDropHighlight, mealDropStyles, useMealEntryDrag } from './gestures';
 import { DoopIcon, mealDaypartGlyph } from './DoopIcons';
+import { formatQuantityLabel } from './customUnitMath';
 import { energyValue, ErrorMessage, number } from './primitives';
 
 export function MacroRow({ totals, goal }: { totals: NutrientAggregate; goal?: GoalPeriod | null }) {
@@ -319,7 +319,7 @@ function TodayEntryItem({
           onPress={() => onEdit(rowRef.current)}
         >
           <Text style={styles.entryName}>{entry.food.name}</Text>
-          <Text style={styles.preview}>{number(entry.quantity.amount, 2)} {entry.quantity.unit}</Text>
+          <Text style={styles.preview}>{formatQuantityLabel(entry.quantity, entry.food)}</Text>
         </Pressable>
         <Text style={styles.entryName}>{number(energyValue(entry.nutrients.kcal, unit))}</Text>
         <Pressable
@@ -333,47 +333,6 @@ function TodayEntryItem({
         </Pressable>
       </View>
     </DraggableEntryRow>
-  );
-}
-
-export function DayCompletenessToggle({
-  status,
-  disabled = false,
-  onToggle,
-}: {
-  status: CompletenessStatus;
-  disabled?: boolean | undefined;
-  onToggle: (next: 'complete' | 'partial') => void;
-}) {
-  const isComplete = status === 'complete';
-  const nextStatus: 'complete' | 'partial' = isComplete ? 'partial' : 'complete';
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={isComplete ? 'Day complete' : 'Mark day complete'}
-      accessibilityHint={isComplete ? 'Tap to revert day to draft' : 'Tap to mark day complete'}
-      accessibilityState={{ selected: isComplete, disabled }}
-      disabled={disabled}
-      onPress={() => {
-        if (nextStatus === 'complete') hapticSuccess();
-        else hapticSelection();
-        onToggle(nextStatus);
-      }}
-      style={({ pressed }) => [
-        styles.completenessHit,
-        disabled && { opacity: 0.45 },
-        pressed && { opacity: 0.7 },
-      ]}
-    >
-      <View style={[styles.completenessCircle, isComplete && styles.completenessCircleComplete]}>
-        <DoopIcon
-          name="check"
-          size={16}
-          strokeWidth={isComplete ? 2.2 : 1.7}
-          color={isComplete ? colors.success : colors.muted}
-        />
-      </View>
-    </Pressable>
   );
 }
 
@@ -431,21 +390,4 @@ const styles = StyleSheet.create({
   iconButton: { width: 40, height: 44, alignItems: 'center', justifyContent: 'center' },
   undo: { borderRadius: radius.r12, backgroundColor: colors.surface, paddingLeft: 12 },
   undoLine: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  completenessHit: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  completenessCircle: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    borderWidth: 1.25,
-    borderStyle: 'dashed',
-    borderColor: colors.border,
-    backgroundColor: 'transparent',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  completenessCircleComplete: {
-    borderStyle: 'solid',
-    borderColor: 'rgba(158, 206, 106, 0.52)',
-    backgroundColor: 'rgba(158, 206, 106, 0.16)',
-  },
 });

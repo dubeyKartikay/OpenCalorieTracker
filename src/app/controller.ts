@@ -1,18 +1,18 @@
 import { z } from 'zod';
-import { calculateBatchServing, calculateNutrition, calculateRecipeTotal, calculateWeightTrend, estimateDailyTarget, exportBundleV1Schema, foodRecordSchema, formatDiaryCsv, formatWeightTrendsCsv, generateId, getActiveGoalForDate, isoDateSchema, nutrientKeys, resolveQuantityToBasis, scaleNutrients, sumNutrients } from '../domain';
+import { calculateBatchServing, calculateNutrition, calculateRecipeTotal, calculateWeightTrend, estimateDailyTarget, exportBundleV1Schema, foodRecordSchema, formatDiaryCsv, formatWeightTrendsCsv, generateId, getActiveGoalForDate, isoDateSchema, MAX_BATCH_FRACTION, nutrientKeys, resolveQuantityToBasis, scaleNutrients, sumNutrients } from '../domain';
 import type { DiaryDay, DiaryEntrySnapshot, FoodRecord, FoodUnit, GoalPeriod, NutrientAggregate, OfflinePhotoDraft, Quantity, RecipeBatch, RecipeIngredient, TargetInputs, WaterLog } from '../domain';
 import { UserLibraryAdapter, validatePackDatabase } from '../catalog';
 import type { FoodSourceRegistry } from '../catalog';
-import { DiaryRepo, GoalsRepo, HealthSyncRepo, LibraryRepo, PhotoDraftRepo, WaterRepo, exportBundleV1, foodKey, restoreBundleV1 } from '../storage';
+import { DiaryRepo, GoalsRepo, HealthSyncRepo, LibraryRepo, PhotoDraftRepo, WaterRepo, deduplicateGoalPeriods, exportBundleV1, foodKey, restoreBundleV1 } from '../storage';
 import type { PacksRepo, SavedMeal, SqlDatabase } from '../storage';
 import { createUnavailableHealthPort, HealthSyncEngine } from '../health';
 import type { HealthCapability, HealthPermissionsState, HealthPermissionScope, HealthPlatformPort, HealthWeightImportResult } from '../health';
 import { BarcodeResolver, parseNutritionLabelText } from '../barcode';
 import type { BarcodeResolution } from '../barcode';
-import { AIError, OpenAIResponsesProvider, applyClarifyingAnswer, buildAuthorizationUrl, captureMealDraft, exchangeAuthorizationCode, extractNutritionLabel, generatePkcePair } from '../ai';
-import type { AIAuthMode, AIProvider, LoopbackAuthPort, MealDraftProposal, NutritionLabelExtraction } from '../ai';
+import { AIError, DEFAULT_AGENT_NAME_HINT, OPENAI_DYNAMIC_CLIENT_ID, OpenAIResponsesProvider, applyClarifyingAnswer, buildAuthorizationUrl, captureMealDraft, exchangeAuthorizationCode, extractNutritionLabel, generatePkcePair, hasRequiredOAuthScope, refreshAccessToken, revokeOAuthToken, verifyOAuthIdToken } from '../ai';
+import type { AIAuthMode, AIProvider, LoopbackAuthPort, MealDraftProposal, NutritionLabelExtraction, PkceCryptoProvider } from '../ai';
 import { createMemoryCredentialStore, maskSecretKey } from './credentials';
-import type { CredentialStore } from './credentials';
+import type { CredentialStore, OAuthSession } from './credentials';
 
 export const MEALS = ['Breakfast', 'Lunch', 'Snack', 'Dinner'] as const;
 export const UNDO_TIMEOUT_MS = 5000;
@@ -82,12 +82,15 @@ export interface ControllerDependencies {
   offCacheDb?: SqlDatabase | null;
   barcodeResolver?: BarcodeResolver;
   credentials?: CredentialStore;
-  aiProviderFactory?: (token: string, mode: 'chatgpt_oauth' | 'api_key') => AIProvider;
+  aiProviderFactory?: ((token: string, mode: 'chatgpt_oauth' | 'api_key') => AIProvider) | undefined;
   loopbackAuth?: LoopbackAuthPort | null;
+  pkceCrypto?: PkceCryptoProvider | null;
+  aiFetch?: typeof globalThis.fetch | undefined;
   water?: WaterRepo;
   healthSync?: HealthSyncRepo;
   photoDrafts?: PhotoDraftRepo;
   healthPort?: HealthPlatformPort;
+  resolveBundledPack?: ((packId: string) => Promise<{ db: SqlDatabase; filePath: string } | null>) | undefined;
 }
 export interface UndoAction {
   label: string;
@@ -156,7 +159,31 @@ export class AppController {
   private readonly healthEngine: HealthSyncEngine;
   private activeDraft: { proposal: MealDraftProposal; meal: string; date: string } | null = null;
   private draftGeneration = 0;
+  private credentialGeneration = 0;
+  private pendingCredentialMutations = 0;
+  private aiConsentGeneration = 0;
+  private credentialAbortController = new AbortController();
+  private credentialOpChain: Promise<void> = Promise.resolve();
+  private oauthConnectAttempt = 0;
+  private activeOAuthCancel: (() => void) | null = null;
+  private activeOAuthCallbackCancel: (() => void) | null = null;
   private confirmingDraft: Promise<DiaryEntrySnapshot[]> | null = null;
+  private refreshingOAuth: { gen: number; promise: Promise<string | null> } | null = null;
+  private entryHealthChains = new Map<string, Promise<void>>();
+  private abortActiveAIRequests() {
+    this.credentialAbortController.abort();
+    this.credentialAbortController = new AbortController();
+  }
+  private invalidateCredentials() {
+    this.credentialGeneration++;
+    this.abortActiveAIRequests();
+    this.refreshingOAuth = null;
+  }
+  private invalidateAIConsent() {
+    this.aiConsentGeneration++;
+    this.draftGeneration++;
+    this.abortActiveAIRequests();
+  }
   private undoTimer: ReturnType<typeof setTimeout> | null = null;
   undoAction: UndoAction | null = null;
   constructor(deps: ControllerDependencies) {
@@ -219,12 +246,16 @@ export class AppController {
     }
     return sumNutrients([calculateNutrition(food, quantity)]);
   }
+  private occurredAtForDate(date: string): string {
+    return date === localDate() ? new Date().toISOString() : new Date(`${date}T12:00:00`).toISOString();
+  }
   private snapshot(input: { food: FoodRecord; quantity: Quantity; meal: string; date?: string; idempotencyKey: string }, preview: NutrientAggregate): DiaryEntrySnapshot {
     if (input.quantity.amount <= 0) throw new Error('Enter an amount greater than zero');
     if (!preview?.nutrients) throw new Error('This portion has no nutrition');
+    const date = input.date ?? localDate();
     return {
-      id: generateId(), idempotency_key: input.idempotencyKey, date: input.date ?? localDate(),
-      occurred_at: new Date().toISOString(), time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      id: generateId(), idempotency_key: input.idempotencyKey, date,
+      occurred_at: this.occurredAtForDate(date), time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       meal: input.meal, food: input.food, quantity: input.quantity, nutrients: preview.nutrients,
       unknown_nutrient_counts: preview.unknownCount, provenance_kind: input.food.provenance_kind,
       portion_certainty: 'stated', estimate_range: null, draft_state: 'confirmed',
@@ -239,10 +270,32 @@ export class AppController {
     }
     return result;
   }
+  private withCredentialLock<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.credentialOpChain.then(operation, operation);
+    this.credentialOpChain = next.then(() => undefined, () => undefined);
+    return next;
+  }
+  private enqueueEntryHealthSync<T>(entryId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.entryHealthChains.get(entryId) ?? Promise.resolve();
+    const next = previous.then(operation, operation);
+    const cleanup = next.then(
+      () => { if (this.entryHealthChains.get(entryId) === cleanup) this.entryHealthChains.delete(entryId); },
+      () => { if (this.entryHealthChains.get(entryId) === cleanup) this.entryHealthChains.delete(entryId); },
+    );
+    this.entryHealthChains.set(entryId, cleanup);
+    return next;
+  }
+  private flushPendingHealthDeletes(): Promise<number> {
+    return this.healthEngine.flushPendingDeletes((entryId, run) =>
+      this.enqueueEntryHealthSync(entryId, async () => {
+        if (await this.deps.diary.getEntry(entryId)) return { synced: false };
+        return run();
+      }),
+    );
+  }
   private async added(result: { entry: DiaryEntrySnapshot; changed: boolean }) {
     if (!result.changed) return result.entry;
     const { entry } = result;
-    await this.healthEngine.syncEntryConfirmed(entry);
     this.setUndoAction({
       label: `Added to ${entry.meal}`,
       kind: 'add',
@@ -250,10 +303,11 @@ export class AppController {
       meal: entry.meal,
       run: async () => {
         await this.deps.diary.deleteEntry(entry.id);
-        await this.healthEngine.syncEntryDeleted(entry.id);
+        await this.enqueueEntryHealthSync(entry.id, () => this.healthEngine.syncEntryDeleted(entry.id));
       },
     });
     this.refresh();
+    await this.enqueueEntryHealthSync(entry.id, () => this.healthEngine.syncEntryConfirmed(entry));
     return entry;
   }
   async confirm(input: { food: FoodRecord; quantity: Quantity; meal: string; date?: string; idempotencyKey: string }) {
@@ -276,6 +330,111 @@ export class AppController {
       return this.added(confirmed);
     }
     return this.added(await this.deps.diary.confirmEntryWithStatus(candidate));
+  }
+  async confirmToMeals(input: {
+    food: FoodRecord;
+    quantity: Quantity;
+    meals: readonly string[];
+    date?: string;
+    idempotencyKeys?: readonly string[];
+  }): Promise<DiaryEntrySnapshot[]> {
+    const mealKeys = new Map<string, string | undefined>();
+    for (let index = 0; index < input.meals.length; index++) {
+      const meal = input.meals[index]?.trim() ?? '';
+      if (!meal) continue;
+      const explicitKey = input.idempotencyKeys?.[index]?.trim() || undefined;
+      if (mealKeys.has(meal)) {
+        const priorKey = mealKeys.get(meal);
+        if (explicitKey && priorKey && explicitKey !== priorKey) {
+          throw new Error(`Conflicting idempotency keys for ${meal}`);
+        }
+        if (explicitKey && !priorKey) {
+          mealKeys.set(meal, explicitKey);
+        }
+        continue;
+      }
+      mealKeys.set(meal, explicitKey);
+    }
+    const targets: { meal: string; idempotencyKey: string }[] = [];
+    const seenKeys = new Set<string>();
+    for (const [meal, explicitKey] of mealKeys.entries()) {
+      const key = explicitKey ?? generateId();
+      if (seenKeys.has(key)) {
+        throw new Error('Each meal requires a unique idempotency key');
+      }
+      seenKeys.add(key);
+      targets.push({ meal, idempotencyKey: key });
+    }
+    if (targets.length === 0) throw new Error('Select at least one meal');
+    const isComposite = !input.food.source_pack_id && /^(recipe:|meal:)/.test(input.food.id);
+    let resolvedFood = input.food;
+    let preview: NutrientAggregate | null;
+    if (isComposite) {
+      const resolved = await this.deps.catalog.userLibrary.resolveForQuantity(input.food.id, input.quantity, input.food.units);
+      if (!resolved) throw new Error('This portion has no nutrition');
+      resolvedFood = resolved.food;
+      preview = resolved.aggregate;
+    } else {
+      preview = await this.preview(input.food, input.quantity);
+    }
+    if (!preview) throw new Error('This portion has no nutrition');
+    const savedMealId = !resolvedFood.source_pack_id && resolvedFood.id.startsWith('meal:') ? resolvedFood.id.slice(5) : null;
+    const candidates = targets.map(target =>
+      this.snapshot(
+        {
+          food: resolvedFood,
+          quantity: input.quantity,
+          meal: target.meal,
+          ...(input.date ? { date: input.date } : {}),
+          idempotencyKey: target.idempotencyKey,
+        },
+        preview,
+      ),
+    );
+    const results = await this.deps.userDb.withTransactionAsync(async tx => {
+      const confirmed: { entry: DiaryEntrySnapshot; changed: boolean }[] = [];
+      for (const candidate of candidates) {
+        const res = await this.confirmEntryInTx(tx, candidate, savedMealId);
+        if (res.entry.meal !== candidate.meal || res.entry.date !== candidate.date) {
+          throw new Error('Idempotency key already belongs to a different meal or date');
+        }
+        confirmed.push(res);
+      }
+      return confirmed;
+    });
+    const addedEntries = results.filter(result => result.changed).map(result => result.entry);
+    if (addedEntries.length > 0) {
+      const addedMeals = addedEntries.map(entry => entry.meal);
+      const label =
+        addedMeals.length === 1
+          ? `Added to ${addedMeals[0]}`
+          : addedMeals.length === 2
+            ? `Added to ${addedMeals[0]} & ${addedMeals[1]}`
+            : `Added to ${addedMeals.length} meals`;
+      const addedIds = addedEntries.map(entry => entry.id);
+      this.setUndoAction({
+        label,
+        kind: 'add',
+        ...(addedEntries[0]?.date ? { date: addedEntries[0].date } : {}),
+        ...(addedMeals.length === 1 && addedMeals[0] ? { meal: addedMeals[0] } : {}),
+        run: async () => {
+          await this.deps.userDb.withTransactionAsync(async tx => {
+            const diary = new DiaryRepo(tx);
+            for (const id of addedIds) {
+              await diary.deleteEntry(id);
+            }
+          });
+          await Promise.all(
+            addedIds.map(id => this.enqueueEntryHealthSync(id, () => this.healthEngine.syncEntryDeleted(id))),
+          );
+        },
+      });
+      this.refresh();
+      await Promise.all(
+        addedEntries.map(entry => this.enqueueEntryHealthSync(entry.id, () => this.healthEngine.syncEntryConfirmed(entry))),
+      );
+    }
+    return results.map(result => result.entry);
   }
   getPreferences() { return readPreferences(this.deps.userDb); }
   async addWater(amountMl: number, date = localDate()): Promise<WaterLog> {
@@ -309,15 +468,22 @@ export class AppController {
       nutritionWriteEnabled: preferences.healthNutritionWriteEnabled, weightReadEnabled: preferences.healthWeightReadEnabled };
   }
   async requestHealthPermissions(scopes: HealthPermissionScope[]): Promise<HealthPermissionsState> {
-    const permissions = await this.healthPort.requestPermissions(scopes); this.refresh(); return permissions;
+    const permissions = await this.healthPort.requestPermissions(scopes);
+    if (permissions.nutritionWrite) await this.flushPendingHealthDeletes();
+    this.refresh(); return permissions;
   }
   async syncWeightFromHealth(sinceIsoDate?: string): Promise<HealthWeightImportResult> {
+    await this.flushPendingHealthDeletes();
     const result = await this.healthEngine.importWeightSamples(sinceIsoDate);
     if (result.imported > 0) this.refresh();
     return result;
   }
   async updatePreferences(patch: Partial<AppPreferences>) {
+    if (patch.aiConsentAccepted === false) {
+      this.invalidateAIConsent();
+    }
     const value = await this.deps.userDb.withTransactionAsync(tx => writePreferences(tx, patch));
+    if (patch.healthNutritionWriteEnabled) await this.flushPendingHealthDeletes();
     this.refresh(); return value;
   }
   async completeOnboarding(input: { ageConfirmed18Plus: true; goal: Omit<GoalPeriod, 'id' | 'effective_from_date'>; energyUnit?: AppPreferences['energyUnit']; weightUnit?: AppPreferences['weightUnit'] }) {
@@ -503,13 +669,15 @@ export class AppController {
   async deleteEntry(id: string) {
     const snapshot = await this.deps.diary.deleteEntry(id);
     if (snapshot) {
-      await this.healthEngine.syncEntryDeleted(id);
       this.setUndoAction({ label: 'Entry deleted', kind: 'delete', run: async () => {
         const restored = await this.deps.diary.restoreEntry(snapshot);
-        await this.healthEngine.syncEntryConfirmed(restored);
+        await this.enqueueEntryHealthSync(restored.id, () => this.healthEngine.syncEntryConfirmed(restored));
       } });
+      this.refresh();
+      await this.enqueueEntryHealthSync(id, () => this.healthEngine.syncEntryDeleted(id));
+    } else {
+      this.refresh();
     }
-    this.refresh();
     return snapshot;
   }
   async moveEntry(entry: DiaryEntrySnapshot, meal: string) {
@@ -533,12 +701,11 @@ export class AppController {
           idempotency_key: generateId(),
           date: toDate,
           meal: toMeal ?? entry.meal,
-          occurred_at: new Date().toISOString(),
+          occurred_at: this.occurredAtForDate(toDate),
         }));
       }
       return created;
     });
-    for (const entry of copies) await this.healthEngine.syncEntryConfirmed(entry);
     if (copies.length) {
       this.setUndoAction({
         label: toMeal ? `Copied to ${toMeal}` : `Copied ${copies.length} ${copies.length === 1 ? 'entry' : 'entries'}`,
@@ -548,11 +715,18 @@ export class AppController {
             const diary = new DiaryRepo(tx);
             for (const entry of copies) await diary.deleteEntry(entry.id);
           });
-          for (const entry of copies) await this.healthEngine.syncEntryDeleted(entry.id);
+          await Promise.all(
+            copies.map(entry => this.enqueueEntryHealthSync(entry.id, () => this.healthEngine.syncEntryDeleted(entry.id))),
+          );
         },
       });
+      this.refresh();
+      await Promise.all(
+        copies.map(entry => this.enqueueEntryHealthSync(entry.id, () => this.healthEngine.syncEntryConfirmed(entry))),
+      );
+    } else {
+      this.refresh();
     }
-    this.refresh();
     return copies;
   }
   async copyEntries(ids: string[], toDate: string, toMeal?: string) {
@@ -573,7 +747,7 @@ export class AppController {
     return Array.from({ length: 7 }, (_, index) => {
       const date = shiftDate(endDate, index - 6); const day = days.find(item => item.date === date);
       const totals = sumNutrients(day?.entries ?? []);
-      return { date, completeness: day?.completeness ?? 'none', kcal: totals.nutrients?.kcal ?? null,
+      return { date, completeness: totals.entryCount > 0 ? ('complete' as const) : ('none' as const), kcal: totals.nutrients?.kcal ?? null,
         entryCount: totals.entryCount, targetKcal: getActiveGoalForDate(goals, date)?.target_kcal ?? null };
     });
   }
@@ -590,16 +764,25 @@ export class AppController {
       for (const id of new Set(ids)) { const entry = await diary.deleteEntry(id); if (entry) deleted.push(entry); }
       return deleted;
     });
-    for (const snapshot of snapshots) await this.healthEngine.syncEntryDeleted(snapshot.id);
-    if (snapshots.length) this.setUndoAction({ label: 'Entries deleted', kind: 'delete', run: async () => {
-      const restored = await this.deps.userDb.withTransactionAsync(async tx => {
-        const diary = new DiaryRepo(tx); const entries: DiaryEntrySnapshot[] = [];
-        for (const snapshot of snapshots) entries.push(await diary.restoreEntry(snapshot));
-        return entries;
-      });
-      for (const entry of restored) await this.healthEngine.syncEntryConfirmed(entry);
-    } });
-    this.refresh(); return snapshots;
+    if (snapshots.length) {
+      this.setUndoAction({ label: 'Entries deleted', kind: 'delete', run: async () => {
+        const restored = await this.deps.userDb.withTransactionAsync(async tx => {
+          const diary = new DiaryRepo(tx); const entries: DiaryEntrySnapshot[] = [];
+          for (const snapshot of snapshots) entries.push(await diary.restoreEntry(snapshot));
+          return entries;
+        });
+        await Promise.all(
+          restored.map(entry => this.enqueueEntryHealthSync(entry.id, () => this.healthEngine.syncEntryConfirmed(entry))),
+        );
+      } });
+      this.refresh();
+      await Promise.all(
+        snapshots.map(snapshot => this.enqueueEntryHealthSync(snapshot.id, () => this.healthEngine.syncEntryDeleted(snapshot.id))),
+      );
+    } else {
+      this.refresh();
+    }
+    return snapshots;
   }
   async moveEntries(ids: string[], toDate: string, toMeal: string) {
     isoDateSchema.parse(toDate);
@@ -611,37 +794,54 @@ export class AppController {
       }
       return { originals, moved };
     });
-    for (const entry of result.moved) await this.healthEngine.syncEntryConfirmed(entry);
-    if (result.originals.length) this.setUndoAction({
-      label: result.originals.length === 1
-        ? `Moved ${result.originals[0]!.food.name} to ${toMeal}`
-        : `Moved ${result.originals.length} entries to ${toMeal}`,
-      kind: 'move',
-      run: async () => {
-      await this.deps.userDb.withTransactionAsync(async tx => {
-        const diary = new DiaryRepo(tx); for (const entry of result.originals) await diary.updateEntry(entry);
+    if (result.originals.length) {
+      this.setUndoAction({
+        label: result.originals.length === 1
+          ? `Moved ${result.originals[0]!.food.name} to ${toMeal}`
+          : `Moved ${result.originals.length} entries to ${toMeal}`,
+        kind: 'move',
+        run: async () => {
+          await this.deps.userDb.withTransactionAsync(async tx => {
+            const diary = new DiaryRepo(tx); for (const entry of result.originals) await diary.updateEntry(entry);
+          });
+          await Promise.all(
+            result.originals.map(entry => this.enqueueEntryHealthSync(entry.id, () => this.healthEngine.syncEntryConfirmed(entry))),
+          );
+        },
       });
-      for (const entry of result.originals) await this.healthEngine.syncEntryConfirmed(entry);
-    } });
-    this.refresh(); return result.moved;
+      this.refresh();
+      await Promise.all(
+        result.moved.map(entry => this.enqueueEntryHealthSync(entry.id, () => this.healthEngine.syncEntryConfirmed(entry))),
+      );
+    } else {
+      this.refresh();
+    }
+    return result.moved;
   }
   async updateEntryQuantity(entry: DiaryEntrySnapshot, newQuantity: Quantity) {
     if (newQuantity.amount <= 0) throw new Error('Enter an amount greater than zero');
     const { original, updated } = await this.deps.userDb.withTransactionAsync(async tx => {
       const diary = new DiaryRepo(tx); const original = await diary.getEntry(entry.id);
       if (!original) throw new Error('Diary entry not found');
+      if (original.provenance_kind === 'recipe_batch') {
+        const resolved = resolveQuantityToBasis(original.food, newQuantity);
+        if (resolved.factor > MAX_BATCH_FRACTION + 1e-9) {
+          throw new Error('Batch portion cannot exceed the cooked batch');
+        }
+      }
       // Recalculate from the frozen basis, never today's recipe or catalog record.
       const nutrients = calculateNutrition(original.food, newQuantity);
       const updated = await diary.updateEntry({ ...original, quantity: newQuantity, nutrients,
         unknown_nutrient_counts: original.unknown_nutrient_counts ?? sumNutrients([nutrients]).unknownCount });
       return { original, updated };
     });
-    await this.healthEngine.syncEntryConfirmed(updated);
     this.setUndoAction({ label: 'Portion updated', kind: 'update', run: async () => {
       await this.deps.diary.updateEntry(original);
-      await this.healthEngine.syncEntryConfirmed(original);
+      await this.enqueueEntryHealthSync(original.id, () => this.healthEngine.syncEntryConfirmed(original));
     } });
-    this.refresh(); return updated;
+    this.refresh();
+    await this.enqueueEntryHealthSync(updated.id, () => this.healthEngine.syncEntryConfirmed(updated));
+    return updated;
   }
   async day(date: string) {
     const [day, goals] = await Promise.all([this.deps.diary.getDiaryDay(date), this.deps.goals.listGoalPeriods()]);
@@ -659,7 +859,7 @@ export class AppController {
         shortLabel: date.slice(8),
         kcal: totals.nutrients?.kcal ?? 0,
         targetKcal: goal?.target_kcal ?? null,
-        completeness: day?.completeness ?? ('none' as const),
+        completeness: totals.entryCount > 0 ? ('complete' as const) : ('none' as const),
         proteinG: totals.nutrients?.protein_g,
         carbsG: totals.nutrients?.carbs_g,
         fatG: totals.nutrients?.fat_g,
@@ -675,9 +875,6 @@ export class AppController {
       this.deps.goals.listGoalPeriods(),
     ]);
     return this.buildDailySeries(start, safeCount, days, goals);
-  }
-  async setCompleteness(date: string, completeness: DiaryDay['completeness']) {
-    await this.deps.diary.setDayCompleteness(date, completeness); this.refresh();
   }
   async saveCustomFood(input: unknown, options?: { undoLabel?: string }) {
     const food = foodRecordSchema.parse(input);
@@ -724,9 +921,131 @@ export class AppController {
     await this.deps.library.upsertCustomFood(food, barcode); this.refresh(); return food;
   }
   parseLabelText(text: string) { return parseNutritionLabelText(text); }
+  private async readOAuthSession(): Promise<OAuthSession | null> {
+    if (this.credentials.getOAuthSession) return this.credentials.getOAuthSession();
+    const token = await this.credentials.getOAuthToken();
+    return token ? { accessToken: token } : null;
+  }
+  private async saveOAuthSession(session: OAuthSession): Promise<void> {
+    if (this.credentials.setOAuthSession) await this.credentials.setOAuthSession(session);
+    else await this.credentials.setOAuthToken(session.accessToken);
+  }
+  private async resolveValidOAuthAccessToken(
+    forceRefresh = false,
+    expectedGen = this.credentialGeneration,
+    callerSignal?: AbortSignal,
+  ): Promise<string | null> {
+    if (callerSignal?.aborted) throw new AIError('timeout');
+    if (this.credentialGeneration !== expectedGen) return null;
+    const session = await this.readOAuthSession();
+    if (!session || this.credentialGeneration !== expectedGen) return null;
+    const expiringSoon = session.expiresAtMs !== undefined && Date.now() >= session.expiresAtMs - 60_000;
+    if (!forceRefresh && !expiringSoon) return session.accessToken;
+    const clientId = session.clientId ?? process.env.EXPO_PUBLIC_OPENAI_OAUTH_CLIENT_ID?.trim();
+    if (!session.refreshToken || !clientId) {
+      if (forceRefresh) {
+        await this.withCredentialLock(async () => {
+          if (this.credentialGeneration !== expectedGen) return;
+          this.invalidateCredentials();
+          await this.credentials.clearOAuthToken();
+          this.refresh();
+        });
+        return null;
+      }
+      return session.accessToken;
+    }
+    if (!this.refreshingOAuth || this.refreshingOAuth.gen !== expectedGen) {
+      const refreshGen = expectedGen;
+      const attemptedRefreshToken = session.refreshToken!;
+      const refreshAbort = new AbortController();
+      const refreshTimer = setTimeout(() => refreshAbort.abort(), 15_000);
+      let promise: Promise<string | null> | undefined;
+      promise = (async () => {
+        try {
+          // Re-check latest stored session before hitting the token endpoint in case a peer just rotated the refresh token.
+          const latest = await this.readOAuthSession();
+          if (this.credentialGeneration !== refreshGen || !latest) return null;
+          if (latest.refreshToken && latest.refreshToken !== attemptedRefreshToken) {
+            const stillFresh = latest.expiresAtMs === undefined || Date.now() < latest.expiresAtMs - 60_000;
+            if (!forceRefresh && stillFresh) return latest.accessToken;
+          }
+          const activeRefreshToken = latest.refreshToken ?? attemptedRefreshToken;
+          const tokens = await refreshAccessToken({
+            clientId,
+            refreshToken: activeRefreshToken,
+            fetch: this.deps.aiFetch,
+            signal: refreshAbort.signal,
+          });
+          if (tokens.scope !== undefined && !hasRequiredOAuthScope(tokens.scope)) {
+            throw new AIError('auth_expired');
+          }
+          const next: OAuthSession = {
+            accessToken: tokens.access_token,
+            refreshToken: tokens.refresh_token ?? activeRefreshToken,
+            expiresAtMs: tokens.expires_in ? Date.now() + tokens.expires_in * 1000 : undefined,
+            clientId,
+            ...(latest.accountSubject ?? session.accountSubject ? { accountSubject: latest.accountSubject ?? session.accountSubject } : {}),
+          };
+          let saved = false;
+          await this.withCredentialLock(async () => {
+            if (this.credentialGeneration !== refreshGen) return;
+            await this.saveOAuthSession(next);
+            saved = true;
+          });
+          return saved ? next.accessToken : null;
+        } catch (error) {
+          if (error instanceof AIError && error.code === 'auth_expired') {
+            await this.withCredentialLock(async () => {
+              if (this.credentialGeneration !== refreshGen) return;
+              const current = await this.readOAuthSession();
+              if (current?.refreshToken && current.refreshToken !== attemptedRefreshToken) return;
+              this.invalidateCredentials();
+              await this.credentials.clearOAuthToken();
+              this.refresh();
+            });
+          }
+          throw error;
+        } finally {
+          clearTimeout(refreshTimer);
+          if (this.refreshingOAuth?.promise === promise) {
+            this.refreshingOAuth = null;
+          }
+        }
+      })();
+      this.refreshingOAuth = { gen: refreshGen, promise };
+    }
+    const inflight = this.refreshingOAuth.promise;
+    const waitResult = callerSignal
+      ? new Promise<string | null>((resolve, reject) => {
+          if (callerSignal.aborted) {
+            reject(new AIError('timeout'));
+            return;
+          }
+          const onAbort = () => reject(new AIError('timeout'));
+          callerSignal.addEventListener('abort', onAbort, { once: true });
+          inflight.then(
+            value => { callerSignal.removeEventListener('abort', onAbort); resolve(value); },
+            error => { callerSignal.removeEventListener('abort', onAbort); reject(error); },
+          );
+        })
+      : inflight;
+    try {
+      return await waitResult;
+    } catch (error) {
+      if (
+        !forceRefresh &&
+        !(error instanceof AIError && error.code === 'auth_expired') &&
+        !callerSignal?.aborted &&
+        this.credentialGeneration === expectedGen
+      ) {
+        return session.accessToken;
+      }
+      throw error;
+    }
+  }
   private async aiConnection() {
-    const oauth = await this.credentials.getOAuthToken();
-    if (oauth) return { mode: 'chatgpt_oauth' as const, token: oauth };
+    const oauth = await this.readOAuthSession();
+    if (oauth?.accessToken) return { mode: 'chatgpt_oauth' as const, token: oauth.accessToken };
     const key = await this.credentials.getApiKey();
     return key ? { mode: 'api_key' as const, token: key } : null;
   }
@@ -740,22 +1059,87 @@ export class AppController {
   async setAIModel(model: string): Promise<void> { await this.updatePreferences({ aiModel: model }); }
   async saveApiKey(apiKey: string): Promise<void> {
     const key = apiKey.trim(); if (!key) throw new Error('Enter an OpenAI API key');
-    await this.credentials.setApiKey(key); await this.credentials.clearOAuthToken(); this.draftGeneration++; this.refresh();
+    this.pendingCredentialMutations++;
+    this.invalidateCredentials();
+    try {
+      await this.withCredentialLock(async () => {
+        this.invalidateCredentials();
+        await this.credentials.setApiKey(key);
+        await this.credentials.clearOAuthToken();
+        this.draftGeneration++;
+        this.refresh();
+      });
+    } finally {
+      this.pendingCredentialMutations--;
+    }
+  }
+  cancelChatGPTOAuth(): void {
+    this.activeOAuthCancel?.();
+  }
+  cancelPendingOAuthCallback(): void {
+    this.activeOAuthCallbackCancel?.();
+  }
+  private oauthHostId: string | null = null;
+  private async getOrCreateOAuthHostId(): Promise<string> {
+    const stored = (await this.credentials.getOAuthHostId?.())?.trim();
+    if (stored) {
+      this.oauthHostId = stored;
+      return stored;
+    }
+    if (this.oauthHostId) return this.oauthHostId;
+    const hostId = `urn:uuid:${generateId()}`;
+    this.oauthHostId = hostId;
+    await this.credentials.setOAuthHostId?.(hostId);
+    return hostId;
   }
   async connectChatGPTOAuth(): Promise<{ ok: boolean; message: string }> {
     if (!this.deps.loopbackAuth) return { ok: false, message: 'Sign in with ChatGPT requires a native mobile dev build with the 127.0.0.1 loopback listener. You can connect an OpenAI API key right now, or keep tracking manually.' };
-    const clientId = process.env.EXPO_PUBLIC_OPENAI_OAUTH_CLIENT_ID;
-    if (!clientId) return { ok: false, message: 'ChatGPT sign-in is not configured in this build. You can connect an OpenAI API key or keep tracking manually.' };
+    const attemptId = ++this.oauthConnectAttempt;
+    const startGen = this.credentialGeneration;
     let session: Awaited<ReturnType<LoopbackAuthPort['listen']>> | undefined;
     let cancelledByUser = false;
+    let callbackReceived = false;
     const timeout = new AbortController(); const timer = setTimeout(() => timeout.abort(), 120_000);
+    const cancelAttempt = () => {
+      cancelledByUser = true;
+      timeout.abort();
+    };
+    const cancelIfAwaitingCallback = () => {
+      if (!callbackReceived) cancelAttempt();
+    };
+    this.activeOAuthCancel = cancelAttempt;
+    this.activeOAuthCallbackCancel = cancelIfAwaitingCallback;
     try {
-      const pkce = await generatePkcePair();
+      const envClientId = process.env.EXPO_PUBLIC_OPENAI_OAUTH_CLIENT_ID?.trim();
+      const [existingSession, storedRegistration] = await Promise.all([
+        this.readOAuthSession(),
+        this.credentials.getOAuthRegistration?.() ?? Promise.resolve(null),
+      ]);
+      if (cancelledByUser || timeout.signal.aborted) {
+        throw new AIError('timeout');
+      }
+      const requestedClientId = envClientId || existingSession?.clientId?.trim() || storedRegistration?.clientId?.trim() || OPENAI_DYNAMIC_CLIENT_ID;
+      const extAgentHostId = envClientId ? undefined : await this.getOrCreateOAuthHostId();
+      if (cancelledByUser || timeout.signal.aborted) {
+        throw new AIError('timeout');
+      }
+      const pkce = await generatePkcePair(this.deps.pkceCrypto ?? undefined);
+      if (cancelledByUser || timeout.signal.aborted) {
+        throw new AIError('timeout');
+      }
       session = await this.deps.loopbackAuth.listen({ host: '127.0.0.1', path: '/callback', expectedState: pkce.state, signal: timeout.signal });
       const callback = session.callback;
       // Attach a handler before opening the browser so cancellation cannot reject unobserved.
       void callback.catch(() => undefined);
-      const authUrl = buildAuthorizationUrl({ clientId, port: session.port, codeChallenge: pkce.codeChallenge, state: pkce.state });
+      const authUrl = buildAuthorizationUrl({
+        clientId: requestedClientId,
+        port: session.port,
+        codeChallenge: pkce.codeChallenge,
+        state: pkce.state,
+        nonce: pkce.nonce,
+        extAgentHostId,
+        agentNameHint: requestedClientId === OPENAI_DYNAMIC_CLIENT_ID ? DEFAULT_AGENT_NAME_HINT : undefined,
+      });
       let dismissBrowser: (() => void) | undefined;
       let browserOutcome: Promise<never> | null = null;
       try {
@@ -793,25 +1177,167 @@ export class AppController {
         timeoutPromise,
         ...(browserOutcome ? [browserOutcome] : []),
       ]).finally(() => { dismissBrowser?.(); });
-      const tokens = await exchangeAuthorizationCode({ clientId, port: session.port, ...response, codeVerifier: pkce.codeVerifier, expectedState: pkce.state, signal: timeout.signal });
-      await this.credentials.setOAuthToken(tokens.access_token); this.draftGeneration++; this.refresh();
+      callbackReceived = true;
+      const issuedClientId = response.clientId?.trim();
+      if (requestedClientId !== OPENAI_DYNAMIC_CLIENT_ID && issuedClientId && issuedClientId !== requestedClientId) {
+        throw new AIError('auth_expired');
+      }
+      const effectiveClientId = issuedClientId || requestedClientId;
+      if (effectiveClientId === OPENAI_DYNAMIC_CLIENT_ID) {
+        throw new AIError('auth_expired');
+      }
+      const tokens = await exchangeAuthorizationCode({
+        clientId: effectiveClientId,
+        port: session.port,
+        code: response.code,
+        state: response.state,
+        codeVerifier: pkce.codeVerifier,
+        expectedState: pkce.state,
+        fetch: this.deps.aiFetch,
+        signal: timeout.signal,
+      });
+      if (!hasRequiredOAuthScope(tokens.scope)) {
+        return {
+          ok: false,
+          message: 'Your ChatGPT plan did not grant direct token access for this app. Check your ChatGPT plan settings or connect an OpenAI API key.',
+        };
+      }
+      if (!tokens.id_token) {
+        throw new AIError('auth_expired');
+      }
+      const verifiedIdentity = await verifyOAuthIdToken({
+        idToken: tokens.id_token,
+        expectedNonce: pkce.nonce,
+        expectedAudience: effectiveClientId,
+        fetch: this.deps.aiFetch,
+        pkceCrypto: this.deps.pkceCrypto ?? undefined,
+        signal: timeout.signal,
+      });
+      if (
+        existingSession?.accountSubject &&
+        existingSession.clientId === effectiveClientId &&
+        verifiedIdentity.sub !== existingSession.accountSubject
+      ) {
+        return {
+          ok: false,
+          message: 'Signed in to a different ChatGPT account than the active session. Disconnect first to switch accounts.',
+        };
+      }
+      const committed = await this.withCredentialLock(async () => {
+        if (cancelledByUser || timeout.signal.aborted || this.oauthConnectAttempt !== attemptId || this.credentialGeneration !== startGen) {
+          return false;
+        }
+        this.pendingCredentialMutations++;
+        this.invalidateCredentials();
+        try {
+          await this.saveOAuthSession({
+            accessToken: tokens.access_token,
+            refreshToken: tokens.refresh_token,
+            expiresAtMs: tokens.expires_in ? Date.now() + tokens.expires_in * 1000 : undefined,
+            clientId: effectiveClientId,
+            accountSubject: verifiedIdentity.sub,
+          });
+          await this.credentials.setOAuthRegistration?.({
+            clientId: effectiveClientId,
+            accountSubject: verifiedIdentity.sub,
+          });
+          await this.credentials.clearApiKey();
+          this.draftGeneration++;
+          this.refresh();
+          return true;
+        } finally {
+          this.pendingCredentialMutations--;
+        }
+      });
+      if (!committed) {
+        if (cancelledByUser) return { ok: false, message: 'ChatGPT sign-in was cancelled.' };
+        return { ok: false, message: 'AI settings changed during sign-in. Try connecting again if needed.' };
+      }
       return { ok: true, message: 'Connected with ChatGPT.' };
     } catch (error) {
       if (cancelledByUser) return { ok: false, message: 'ChatGPT sign-in was cancelled.' };
       return { ok: false, message: error instanceof AIError ? error.message : 'ChatGPT sign-in could not finish. Try again or connect an OpenAI API key.' };
     }
-    finally { clearTimeout(timer); await session?.close(); }
+    finally {
+      clearTimeout(timer);
+      if (this.activeOAuthCancel === cancelAttempt) this.activeOAuthCancel = null;
+      if (this.activeOAuthCallbackCancel === cancelIfAwaitingCallback) this.activeOAuthCallbackCancel = null;
+      await session?.close();
+    }
   }
-  async disconnectAI(): Promise<void> {
-    this.draftGeneration++;
-    await Promise.all([this.credentials.clearOAuthToken(), this.credentials.clearApiKey()]); this.refresh();
+  async disconnectAI(): Promise<{ revokedRemote: boolean }> {
+    this.pendingCredentialMutations++;
+    this.invalidateCredentials();
+    let revokedContext: { clientId: string | undefined; tokenToRevoke: string | undefined };
+    try {
+      revokedContext = await this.withCredentialLock(async () => {
+        this.invalidateCredentials();
+        this.draftGeneration++;
+        const session = await this.readOAuthSession();
+        const clientId = session?.clientId ?? process.env.EXPO_PUBLIC_OPENAI_OAUTH_CLIENT_ID?.trim();
+        const tokenToRevoke = session?.refreshToken ?? session?.accessToken;
+        const results = await Promise.allSettled([
+          this.credentials.clearOAuthToken(),
+          this.credentials.clearApiKey(),
+        ]);
+        this.refresh();
+        const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+        if (failed) throw failed.reason;
+        return { clientId, tokenToRevoke };
+      });
+    } finally {
+      this.pendingCredentialMutations--;
+    }
+    if (!revokedContext.clientId || !revokedContext.tokenToRevoke) {
+      return { revokedRemote: true };
+    }
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 5_000);
+    try {
+      const revokedRemote = await revokeOAuthToken({
+        clientId: revokedContext.clientId,
+        token: revokedContext.tokenToRevoke,
+        fetch: this.deps.aiFetch,
+        signal: abort.signal,
+      });
+      return { revokedRemote };
+    } finally {
+      clearTimeout(timer);
+    }
   }
   private async connectedProvider() {
-    const connection = await this.aiConnection(); if (!connection) throw new AIError('not_connected');
+    if (this.pendingCredentialMutations > 0) throw new AIError('not_connected');
+    const capturedGen = this.credentialGeneration;
+    const capturedConsentGen = this.aiConsentGeneration;
+    const authAbortSignal = this.credentialAbortController.signal;
+    const connection = await this.aiConnection();
+    if (!connection || this.pendingCredentialMutations > 0 || this.credentialGeneration !== capturedGen) throw new AIError('not_connected');
     const preferences = await this.getPreferences();
-    if (!preferences.aiConsentAccepted) throw new AIError('refusal');
+    if (this.pendingCredentialMutations > 0 || this.credentialGeneration !== capturedGen) throw new AIError('not_connected');
+    if (this.aiConsentGeneration !== capturedConsentGen || !preferences.aiConsentAccepted) throw new AIError('refusal');
     const provider = this.deps.aiProviderFactory?.(connection.token, connection.mode)
-      ?? new OpenAIResponsesProvider({ authMode: connection.mode, getAccessToken: () => connection.mode === 'api_key' ? this.credentials.getApiKey() : this.credentials.getOAuthToken() });
+      ?? new OpenAIResponsesProvider({
+        authMode: connection.mode,
+        getAccessToken: async signal => {
+          if (this.pendingCredentialMutations > 0 || this.credentialGeneration !== capturedGen || this.aiConsentGeneration !== capturedConsentGen) return null;
+          if (connection.mode === 'api_key') {
+            const key = await this.credentials.getApiKey();
+            return this.pendingCredentialMutations === 0 && this.credentialGeneration === capturedGen && this.aiConsentGeneration === capturedConsentGen ? key : null;
+          }
+          return this.resolveValidOAuthAccessToken(false, capturedGen, signal);
+        },
+        onAuthExpiredRetry:
+          connection.mode === 'chatgpt_oauth'
+            ? signal => {
+                if (this.pendingCredentialMutations > 0 || this.aiConsentGeneration !== capturedConsentGen) return Promise.resolve(null);
+                return this.resolveValidOAuthAccessToken(true, capturedGen, signal);
+              }
+            : undefined,
+        canSendRequest: () =>
+          this.pendingCredentialMutations === 0 && this.credentialGeneration === capturedGen && this.aiConsentGeneration === capturedConsentGen,
+        authAbortSignal,
+        fetch: this.deps.aiFetch,
+      });
     return { provider, model: preferences.aiModel };
   }
   async captureMealWithAI(input: { text: string; imageDataUrl?: string; meal: string; date?: string; signal?: AbortSignal }): Promise<MealDraftProposal> {
@@ -847,9 +1373,8 @@ export class AppController {
     const { unknownCount } = sumNutrients([nutrients]);
     const updated = { ...item, quantity, nutrients, unknownCount, portion_certainty: 'stated' as const, estimate_range: null };
     const items = [...draft.proposal.items]; items[itemIndex] = updated;
-    const baseItems = [...draft.proposal.base_items];
-    if (itemIndex < baseItems.length) baseItems[itemIndex] = updated;
-    this.activeDraft = { ...draft, proposal: { ...draft.proposal, items, base_items: baseItems, totals: this.draftTotals(items) } };
+    const manualQuantities = { ...(draft.proposal.manual_quantities ?? {}), [String(itemIndex)]: quantity };
+    this.activeDraft = { ...draft, proposal: { ...draft.proposal, items, manual_quantities: manualQuantities, totals: this.draftTotals(items) } };
     this.draftGeneration++; this.refresh();
   }
   async saveActiveDraftAsMeal(name: string): Promise<SavedMeal> {
@@ -867,6 +1392,12 @@ export class AppController {
     const proposal = draft.proposal;
     let baseItems = proposal.base_items;
     let questions = proposal.clarifying_questions;
+    const nextManual: Record<string, Quantity> = {};
+    for (const [key, qty] of Object.entries(proposal.manual_quantities ?? {})) {
+      const idx = Number(key);
+      if (!Number.isInteger(idx) || idx === index) continue;
+      nextManual[String(idx > index ? idx - 1 : idx)] = qty;
+    }
     if (index < baseItems.length) {
       baseItems = baseItems.filter((_, baseIndex) => baseIndex !== index);
       questions = questions.filter(question => !question.options.some(option => option.effect.targetItemIndex === index))
@@ -884,7 +1415,10 @@ export class AppController {
     // If only clarification additions remain, freeze those as the reviewed starting point.
     if (!baseItems.length) { baseItems = items; questions = []; }
     const answers = Object.fromEntries(Object.entries(proposal.answers).filter(([id]) => questions.some(question => question.id === id)));
-    this.activeDraft = items.length ? { ...draft, proposal: { ...proposal, items, base_items: baseItems,
+    const { manual_quantities: _removedManual, ...restProposal } = proposal;
+    void _removedManual;
+    this.activeDraft = items.length ? { ...draft, proposal: { ...restProposal, items, base_items: baseItems,
+      ...(Object.keys(nextManual).length ? { manual_quantities: nextManual } : {}),
       totals: this.draftTotals(items), answers, clarifying_questions: questions } } : null;
     this.draftGeneration++; this.refresh();
   }
@@ -908,7 +1442,6 @@ export class AppController {
       }
       return { entries, newlyConfirmed };
     }).then(async ({ entries, newlyConfirmed }) => {
-      for (const entry of newlyConfirmed) await this.healthEngine.syncEntryConfirmed(entry);
       if (this.activeDraft === draft) this.activeDraft = null;
       if (newlyConfirmed.length) {
         this.setUndoAction({
@@ -920,11 +1453,17 @@ export class AppController {
             await this.deps.userDb.withTransactionAsync(async tx => {
               const diary = new DiaryRepo(tx); for (const entry of newlyConfirmed) await diary.deleteEntry(entry.id);
             });
-            for (const entry of newlyConfirmed) await this.healthEngine.syncEntryDeleted(entry.id);
+            await Promise.all(
+              newlyConfirmed.map(entry => this.enqueueEntryHealthSync(entry.id, () => this.healthEngine.syncEntryDeleted(entry.id))),
+            );
           },
         });
       }
-      this.refresh(); return entries;
+      this.refresh();
+      await Promise.all(
+        newlyConfirmed.map(entry => this.enqueueEntryHealthSync(entry.id, () => this.healthEngine.syncEntryConfirmed(entry))),
+      );
+      return entries;
     }).finally(() => { this.confirmingDraft = null; });
     this.confirmingDraft = confirmation; return confirmation;
   }
@@ -935,13 +1474,18 @@ export class AppController {
     } catch (error) { throw error instanceof AIError ? error : new AIError(signal?.aborted ? 'timeout' : 'network'); }
   }
   async saveGoal(input: Omit<GoalPeriod, 'id' | 'effective_from_date'>, date = localDate()) {
-    // A same-day edit replaces today's period, never a period effective in the past.
-    const sameDay = (await this.deps.goals.listGoalPeriods()).find(goal => goal.effective_from_date === date);
-    await this.deps.goals.upsertGoalPeriod({ ...input, id: sameDay?.id ?? generateId(), effective_from_date: date });
+    // A same-day edit replaces today's period atomically, never creating duplicate dates.
+    await this.deps.userDb.withTransactionAsync(async tx => {
+      const goals = new GoalsRepo(tx);
+      const sameDay = (await goals.listGoalPeriods()).find(goal => goal.effective_from_date === date);
+      await goals.upsertGoalPeriod({ ...input, id: sameDay?.id ?? generateId(), effective_from_date: date });
+    });
     this.refresh();
   }
-  async weighIn(weightKg: number, date = localDate()) {
-    await this.deps.goals.recordWeighIn({ id: generateId(), measured_at: new Date().toISOString(), date,
+  async weighIn(weightKg: number, date = localDate(), measuredAt?: string) {
+    isoDateSchema.parse(date);
+    const resolvedMeasuredAt = measuredAt ?? (date === localDate() ? new Date().toISOString() : new Date(`${date}T12:00:00`).toISOString());
+    await this.deps.goals.recordWeighIn({ id: generateId(), measured_at: resolvedMeasuredAt, date,
       weight_kg: weightKg, source: 'manual', external_source_id: null }); this.refresh();
   }
   async progress(range: number, end = localDate()) {
@@ -954,7 +1498,7 @@ export class AppController {
       this.deps.goals.listGoalPeriods(),
       this.deps.goals.listWeighIns(),
     ]);
-    const complete = days.filter(day => day.completeness === 'complete' && sumNutrients(day.entries).entryCount > 0);
+    const complete = days.filter(day => sumNutrients(day.entries).entryCount > 0);
     const total = sumNutrients(complete.flatMap(day => day.entries));
     return {
       completeDays: complete.length,
@@ -989,15 +1533,94 @@ export class AppController {
   async exportWeightCsv(): Promise<string> { return formatWeightTrendsCsv(calculateWeightTrend(await this.deps.goals.listWeighIns())); }
   previewRestore(json: string) {
     const bundle = exportBundleV1Schema.parse(JSON.parse(json));
+    for (const recipe of bundle.recipes) {
+      for (const ingredient of recipe.ingredients) calculateNutrition(ingredient.food, ingredient.quantity);
+    }
+    for (const batch of bundle.recipe_batches) {
+      for (const ingredient of batch.ingredients) calculateNutrition(ingredient.food, ingredient.quantity);
+    }
+    for (const meal of bundle.saved_meals ?? []) {
+      for (const ingredient of meal.items) calculateNutrition(ingredient.food, ingredient.quantity);
+    }
+    const { goals, dropped } = deduplicateGoalPeriods(bundle.goal_periods);
     return { bundle, days: bundle.diary_days.length, entries: bundle.diary_days.reduce((sum, day) => sum + day.entries.length, 0),
-      foods: bundle.custom_foods.length, packs: bundle.packs.length, goals: bundle.goal_periods.length, weighIns: bundle.weigh_ins.length,
-      waterLogs: bundle.water_logs.length };
+      foods: bundle.custom_foods.length, packs: bundle.packs.length, goals: goals.length, droppedDuplicateGoals: dropped,
+      weighIns: bundle.weigh_ins.length, waterLogs: bundle.water_logs.length };
   }
-  async restoreJson(json: string, mode: 'merge' | 'replace') {
+  async restoreJson(json: string, mode: 'merge' | 'replace'): Promise<{ packErrors: string[] }> {
     const { bundle } = this.previewRestore(json);
     await restoreBundleV1(this.deps.userDb, bundle, { mode });
-    if (mode === 'replace') { await this.deps.catalog.close(); this.foodCounts.clear(); }
+    const packErrors: string[] = [];
+    if (mode === 'replace') {
+      this.activeDraft = null;
+      this.draftGeneration++;
+      this.setUndoAction(null);
+      await this.deps.catalog.close();
+      this.foodCounts.clear();
+      this.refresh();
+      if (this.deps.resolveBundledPack) {
+        const installed = await this.deps.packs.listInstalledPacks();
+        let usdaMounted = false;
+        const tryRemount = async (packId: string, priority: number) => {
+          let bundledPack: { db: SqlDatabase; filePath: string } | null = null;
+          try {
+            bundledPack = await this.deps.resolveBundledPack!(packId);
+          } catch (error) {
+            packErrors.push(`${packId}: ${error instanceof Error ? error.message : 'Could not load bundled pack'}`);
+            return false;
+          }
+          if (!bundledPack) return false;
+          try {
+            await this.installPack(bundledPack.db, bundledPack.filePath, priority);
+            return true;
+          } catch (error) {
+            packErrors.push(`${packId}: ${error instanceof Error ? error.message : 'Could not mount bundled pack'}`);
+            return false;
+          }
+        };
+        for (const pack of installed) {
+          if (pack.file_path) continue;
+          const mounted = await tryRemount(pack.pack_id, pack.priority);
+          if (mounted && pack.pack_id === 'usda-fdc-starter') usdaMounted = true;
+        }
+        if (!usdaMounted) {
+          await tryRemount('usda-fdc-starter', 100);
+        }
+      }
+      return { packErrors };
+    }
     this.setUndoAction(null); this.refresh();
+    return { packErrors };
+  }
+  async deleteLocalData(options?: { clearSandboxExports?: (() => Promise<void>) | undefined }): Promise<void> {
+    this.invalidateCredentials();
+    this.invalidateAIConsent();
+    this.activeDraft = null;
+    this.setUndoAction(null);
+    await this.restoreJson(
+      JSON.stringify({
+        schema_version: 1,
+        exported_at: new Date().toISOString(),
+        diary_days: [],
+        custom_foods: [],
+        recipes: [],
+        recipe_batches: [],
+        goal_periods: [],
+        weigh_ins: [],
+        packs: [],
+        water_logs: [],
+        saved_meals: [],
+        user_food_units: [],
+        custom_food_barcodes: [],
+        learned_portions: [],
+      }),
+      'replace',
+    );
+    if (this.deps.offCacheDb) {
+      await this.deps.offCacheDb.runAsync('DELETE FROM off_products').catch(() => undefined);
+    }
+    await options?.clearSandboxExports?.();
+    await this.disconnectAI();
   }
   async close() {
     this.clearUndoTimer();

@@ -5,12 +5,16 @@ import {
   appendFallbackUnits,
   buildCustomFoodUnit,
   buildPortionCandidates,
+  computeResultsPerPage,
   defaultBaseUnit,
+  formatAddToMealsLabel,
   formatQuantityLabel,
   mergeSelectedPortion,
+  orderSelectedMeals,
   previewCustomUnitKcal,
   pricePortionCandidates,
   supportedBaseUnits,
+  toggleMealSelection,
 } from '../customUnitMath';
 
 const baseNutrients = {
@@ -200,5 +204,33 @@ describe('customUnitMath', () => {
     ]);
     // Food-specific density (1 g/ml) wins over fallback global density (2 g/ml)
     expect(calculateNutrition(merged, { amount: 100, unit: 'ml' }).kcal).toBe(200);
+  });
+
+  it('toggles, orders, and formats multi-meal destination selections cleanly', () => {
+    expect(toggleMealSelection(['Breakfast'], 'Snack')).toEqual(['Breakfast', 'Snack']);
+    expect(toggleMealSelection(['Breakfast', 'Snack'], 'Breakfast')).toEqual(['Snack']);
+    expect(toggleMealSelection(['Snack'], 'Snack')).toEqual([]);
+
+    expect(
+      orderSelectedMeals(['Dinner', 'Breakfast', 'Extra'], ['Breakfast', 'Lunch', 'Snack', 'Dinner']),
+    ).toEqual(['Breakfast', 'Dinner', 'Extra']);
+
+    expect(formatAddToMealsLabel([], '78 kcal')).toBe('Select a meal');
+    expect(formatAddToMealsLabel(['Breakfast'], '78 kcal')).toBe('Add to Breakfast · 78 kcal');
+    expect(formatAddToMealsLabel(['Breakfast', 'Snack'], '78 kcal')).toBe('Add to Breakfast & Snack · 78 kcal');
+    expect(formatAddToMealsLabel(['Breakfast', 'Lunch', 'Dinner'], '78 kcal')).toBe('Add to 3 meals · 78 kcal each');
+    expect(formatAddToMealsLabel(['Breakfast'], null)).toBe('Add to Breakfast');
+  });
+
+  it('computes dynamic search results per page from available container height', () => {
+    expect(computeResultsPerPage(0)).toBe(4);
+    expect(computeResultsPerPage(180)).toBe(4);
+    expect(computeResultsPerPage(120, 56, 36, 1, 12)).toBe(1);
+    expect(computeResultsPerPage(200, 56, 36, 1, 12)).toBe(2);
+    expect(computeResultsPerPage(244, 56, 36, 1, 12)).toBe(3);
+    expect(computeResultsPerPage(260, 56, 36, 1, 12)).toBe(4);
+    expect(computeResultsPerPage(372, 56, 36)).toBe(6);
+    expect(computeResultsPerPage(540, 56, 36)).toBe(9);
+    expect(computeResultsPerPage(1200, 56, 36, 4, 12)).toBe(12);
   });
 });

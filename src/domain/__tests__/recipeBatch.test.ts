@@ -42,4 +42,7 @@ describe('recipe batches', () => {
   it('rejects fractions greater than a whole batch', () => {
     expect(() => calculateBatchServing(batch(), { fraction: 1.1 })).toThrow();
   });
+  it('rejects gram portions greater than the cooked batch weight', () => {
+    expect(() => calculateBatchServing(batch(600, 75), { grams: 150 })).toThrow(/cooked batch weight/i);
+  });
 });

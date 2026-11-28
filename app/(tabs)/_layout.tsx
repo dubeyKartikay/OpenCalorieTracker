@@ -1,6 +1,7 @@
 import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RailIcon } from '../../src/ui/components/RailIcon';
+import { notifyTabBarPress } from '../../src/ui/components/tabAbandon';
 import { hapticSelection } from '../../src/ui/haptics';
 import { colors, fontFace, fontSize } from '../../src/ui/tokens';
 
@@ -14,6 +15,7 @@ export default function TabLayout() {
       screenListeners={{
         tabPress: () => {
           hapticSelection();
+          notifyTabBarPress();
         },
       }}
       screenOptions={{

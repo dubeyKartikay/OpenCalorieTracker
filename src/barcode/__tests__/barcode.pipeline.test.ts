@@ -160,6 +160,7 @@ describe('direct Open Food Facts mapping', () => {
   it.each([
     [{ nutrition_data_per: '100ml', serving_size: '1 glass (200 ml)', serving_quantity: 200 }, core, 'per_100ml', null, 200],
     [{ nutrition_data_per: '100g', serving_size: '2 cookies (30 g)' }, core, 'per_100g', 30, null],
+    [{ nutrition_data_per: '100g', quantity: '500 ml', serving_size: '30 g' }, core, 'per_100g', 30, null],
     [{ nutrition_data_per: 'serving', serving_size: '1 scoop (25 g)' }, { 'energy-kcal_serving': 80, proteins_serving: 4, carbohydrates_serving: 5, fat_serving: 2 }, 'per_serving', 25, null],
     [{ nutrition_data_per: 'serving', serving_size: '30 g' }, core, 'per_100g', 30, null],
   ] as const)('maps basis and serving dimensions truthfully (%j)', async (product, nutriments, basis, grams, ml) => {
@@ -210,6 +211,13 @@ describe('offline nutrition-label text parser', () => {
     const parsed = parseNutritionLabelText('Per 100 g | Per serving\nEnergy 418.4 kJ / 110 kcal | 55 kcal\nFat 3 g | 1.5 g\nProtein 2 g | 1 g\nCarbohydrate 10 g | 5 g\nSalt 1 g | 0.5 g\nSodium 0 mg | 0 mg');
     expect(parsed).toMatchObject({ basis: 'per_100g', nutrients: { kcal: 110, fat_g: 3, protein_g: 2, carbs_g: 10, sodium_mg: 0 } });
     expect(parsed.warnings[0]).toMatch(/Multiple nutrition columns/);
+  });
+  it('handles outer-piped tables, empty first cells, and mismatched kJ/kcal columns cleanly', () => {
+    const piped = parseNutritionLabelText('| Per 100 g | Per serving |\n| Energy | 200 kcal | 50 kcal |\n| Protein | | 3 g |\n| Fat | 4 g | 1 g |');
+    expect(piped).toMatchObject({ basis: 'per_100g', nutrients: { kcal: 200, protein_g: null, fat_g: 4 } });
+
+    const emptyFirst = parseNutritionLabelText('Per 100 g | Per serving\nEnergy 0 kJ 50 kcal\nProtein || 3 g');
+    expect(emptyFirst).toMatchObject({ basis: 'per_100g', nutrients: { kcal: 0, protein_g: null } });
   });
   it('does not invent serving measurements or assume density', () => {
     const parsed = parseNutritionLabelText('Per serving\nCalories 0\nProtein 0g\nCarbohydrate 0g\nFat 0g');

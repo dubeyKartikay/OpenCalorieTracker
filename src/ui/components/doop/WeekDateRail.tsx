@@ -45,7 +45,7 @@ export interface RailTrendDayCellProps {
 
 export function RailTrendDayCell({ day, selected, onPress, disabled, energyUnit = 'kcal' }: RailTrendDayCellProps) {
   const label = dateObject(day.date).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
-  return <Pressable accessibilityRole="button" accessibilityLabel={`${label}, ${day.completeness === 'none' ? 'nothing logged' : day.completeness}, ${energy(day.kcal, energyUnit)}`}
+  return <Pressable accessibilityRole="button" accessibilityLabel={`${label}, ${day.completeness === 'none' ? 'nothing logged' : 'logged'}, ${energy(day.kcal, energyUnit)}`}
     accessibilityState={{ selected, disabled: !!disabled }} disabled={disabled} onPress={() => { hapticSelection(); onPress(); }}
     style={({ pressed }) => [styles.cell, selected && styles.cellSelected, pressed && styles.pressed]}>
     <Text style={styles.initial}>{day.weekdayInitial}</Text>

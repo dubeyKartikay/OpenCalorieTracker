@@ -32,10 +32,11 @@ function BatchDetail({
   const energyUnit = preferences.value?.energyUnit ?? 'kcal';
   const pickerMeals = mealsForDay(preferences.value?.mealSections ?? [...MEALS], [], [targetMeal]);
   const action = useAction();
+  const cookedWeightG = batch.cooked_weight_g;
   const [amount, setAmount] = useState<BatchServingAmount>(
-    batch.cooked_weight_g === null
+    cookedWeightG === null
       ? { mode: 'fraction', fraction: batch.servings_count && batch.servings_count >= 1 ? 1 / batch.servings_count : 0.25 }
-      : { mode: 'grams', grams: 150 },
+      : { mode: 'grams', grams: Math.min(150, cookedWeightG) },
   );
   const [customOpen, setCustomOpen] = useState(false);
   const [customDraft, setCustomDraft] = useState('');
@@ -43,16 +44,23 @@ function BatchDetail({
 
   const total = controller.previewRecipeTotals(batch.ingredients);
   const portion = controller.previewBatchServing(batch, amount);
-  const density = formatEnergyDensity(total.nutrients?.kcal, batch.cooked_weight_g, energyUnit);
+  const density = formatEnergyDensity(total.nutrients?.kcal, cookedWeightG, energyUnit);
   const recipeName = recipe?.name ?? 'Recipe batch';
 
   const updateAmount = (next: BatchServingAmount) => {
     if (next.mode === 'fraction' && (!Number.isFinite(next.fraction) || next.fraction <= 0 || next.fraction > MAX_BATCH_FRACTION)) return;
-    if (next.mode === 'grams' && (!Number.isFinite(next.grams) || next.grams <= 0)) return;
+    if (next.mode === 'grams' && (!Number.isFinite(next.grams) || next.grams <= 0 || (cookedWeightG !== null && next.grams > cookedWeightG))) return;
     setAmount(next);
   };
 
-  const choices: { label: string; value: BatchServingAmount }[] = batch.cooked_weight_g === null
+  const gramChoices: { label: string; value: BatchServingAmount }[] = cookedWeightG === null
+    ? []
+    : [...new Set([Math.min(150, cookedWeightG), Math.min(100, cookedWeightG), Math.round((cookedWeightG / 2) * 10) / 10])]
+        .filter(grams => grams > 0 && grams <= cookedWeightG)
+        .slice(0, 2)
+        .map(grams => ({ label: `${number(grams, 0)} g`, value: { mode: 'grams' as const, grams } }));
+
+  const choices: { label: string; value: BatchServingAmount }[] = cookedWeightG === null
     ? ([
         ...(batch.servings_count && batch.servings_count >= 1
           ? [{ label: '1 serving', value: { mode: 'fraction' as const, fraction: 1 / batch.servings_count } }]
@@ -62,8 +70,7 @@ function BatchDetail({
         { label: '½ batch', value: { mode: 'fraction' as const, fraction: 0.5 } },
       ] as { label: string; value: BatchServingAmount }[]).slice(0, 3)
     : [
-        { label: '150 g', value: { mode: 'grams', grams: 150 } },
-        { label: '100 g', value: { mode: 'grams', grams: 100 } },
+        ...gramChoices,
         batch.servings_count && batch.servings_count >= 1
           ? { label: '1 serving', value: { mode: 'fraction', fraction: 1 / batch.servings_count } }
           : { label: '¼ batch', value: { mode: 'fraction', fraction: 0.25 } },
@@ -77,7 +84,9 @@ function BatchDetail({
   const customValid = customDraft.trim() !== ''
     && Number.isFinite(customNumeric)
     && customNumeric > 0
-    && (amount.mode === 'grams' || customNumeric <= MAX_BATCH_FRACTION);
+    && (amount.mode === 'grams'
+      ? (cookedWeightG === null || customNumeric <= cookedWeightG)
+      : customNumeric <= MAX_BATCH_FRACTION);
 
   const log = (meal: string) => void action.run(async () => {
     await controller.logBatchServing({
@@ -157,8 +166,9 @@ function BatchDetail({
                 onChange={nextMode => {
                   hapticSelection();
                   if (nextMode === 'grams') {
-                    updateAmount({ mode: 'grams', grams: 100 });
-                    setCustomDraft('100');
+                    const nextGrams = cookedWeightG !== null ? Math.min(100, cookedWeightG) : 100;
+                    updateAmount({ mode: 'grams', grams: nextGrams });
+                    setCustomDraft(String(nextGrams));
                   } else {
                     updateAmount({ mode: 'fraction', fraction: 0.25 });
                     setCustomDraft('0.25');

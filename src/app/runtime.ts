@@ -5,5 +5,7 @@ export interface AppRuntime {
   importSampleCustomPack(): Promise<void>;
   readTextFile(uri: string): Promise<string>;
   saveBackup(contents: string, filename?: string): Promise<string>;
+  shareBackup?(contents: string, filename: string, savedPath?: string): Promise<string | null>;
+  clearSandboxExports?(): Promise<void>;
   notices: string[];
 }
